@@ -86,6 +86,23 @@ function Start()
         "fixed PCG mode did not reset to the empty-scene baseline")
     Check(app:GenerationOptions(false).emptyScene == true,
         "fixed PCG mode did not mark the generation request as emptyScene")
+    panel.callbacks.onSetting("hospital")
+    Check(app.topicMode == "base" and app.activeFixedThemeId == nil and app.activeCustomSettingId == nil,
+        "base topic was not mutually exclusive with fixed PCG")
+    Check(panel.callbacks.onFixedPCG(), "fixed PCG callback failed after base topic")
+    Check(app.topicMode == "fixedPCG" and app.activeFixedThemeId == FixedThemes.MODE_ID
+            and app.activeCustomSettingId == nil,
+        "fixed PCG retained a base or custom topic selection")
+    Check(app:ApplyCustomizationData({
+        customSettings = {
+            { id = "cloud-topic", label = "浜戠棰樻潗", baseSettingKey = "school", packStatus = "ready" },
+        },
+        activeCustomSettingId = "cloud-topic",
+    }, true), "cloud customization reload failed")
+    Check(app.topicMode == "fixedPCG" and app.activeFixedThemeId == FixedThemes.MODE_ID
+            and app.activeCustomSettingId == nil,
+        "cloud customization reload broke fixed PCG exclusivity")
+    app.customSettings = {}
     local genericGenerated, genericReason = panel.callbacks.onCustomSettingSave({
         label = "深海研究站", prompt = "海沟中的金属研究站和观景窗",
         baseSettingKey = "hospital", floorHeight = 4.2,
@@ -100,6 +117,8 @@ function Start()
         "generic theme did not retain its selected base generation system")
     Check(app.customSettings[1].floorHeight == 4.2 and app.floorHeight == 4.2,
         "generic theme did not save and activate its configured floor height")
+    Check(app.topicMode == "custom" and app.activeFixedThemeId == nil,
+        "custom topic was not mutually exclusive with fixed PCG")
     Check(#app.roomGroups == 0, "generic theme invented room groups without room definitions")
     local genericTopicId = app.activeCustomSettingId
     Check(panel.callbacks.onCustomSettingDelete(genericTopicId), "generic topic deletion failed")

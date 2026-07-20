@@ -25,6 +25,9 @@ local CUSTOMIZATION_CLOUD_KEY = "procedural_dungeon_customizations_v1"
 -- lightweight editor visuals, while authoritative generation is coalesced
 -- after the gesture has finished.
 local EDITOR_REBUILD_DEBOUNCE_SECONDS = 0.18
+local TOPIC_MODE_BASE = "base"
+local TOPIC_MODE_CUSTOM = "custom"
+local TOPIC_MODE_FIXED_PCG = "fixedPCG"
 
 local function HexColor(value, brightness)
     local factor = brightness or 1
@@ -58,6 +61,7 @@ function DungeonApp.new()
         customSettings = {}, roomGroups = {}, customPalettes = {},
         nextCustomSettingId = 1, nextRoomGroupId = 1, nextCustomPaletteId = 1,
         activeCustomSettingId = nil, customSettingName = nil, activeFixedThemeId = nil,
+        topicMode = TOPIC_MODE_BASE, topicSelectionVersion = 0,
         customizationRevision = 0, customizationUpdatedAt = "", cloudLoadPending = false,
         customizationSaveInFlight = false, customizationSaveQueued = false, queuedSaveCallback = nil,
         editorActive = false, editorMode = "3d", editorTransition = nil, editorEntryMode = nil,
@@ -72,8 +76,71 @@ function DungeonApp.new()
     }, DungeonApp)
 end
 
-function DungeonApp:ApplyCustomizationData(data)
+function DungeonApp:NormalizeTopicSelection()
+    if self.activeFixedThemeId == FixedThemes.MODE_ID then
+        self.topicMode = TOPIC_MODE_FIXED_PCG
+        self.activeFixedThemeId = FixedThemes.MODE_ID
+        self.activeCustomSettingId, self.customSettingName = nil, nil
+    elseif self.activeCustomSettingId ~= nil then
+        self.topicMode = TOPIC_MODE_CUSTOM
+        self.activeFixedThemeId = nil
+    else
+        self.topicMode = TOPIC_MODE_BASE
+        self.activeCustomSettingId, self.customSettingName = nil, nil
+        self.activeFixedThemeId = nil
+    end
+    return self.topicMode
+end
+
+function DungeonApp:MarkTopicSelectionChanged()
+    self.topicSelectionVersion = (self.topicSelectionVersion or 0) + 1
+end
+
+function DungeonApp:RestoreTopicSelection(selection)
+    if not selection or selection.mode == TOPIC_MODE_FIXED_PCG then
+        self.topicMode = TOPIC_MODE_FIXED_PCG
+        self.activeFixedThemeId = FixedThemes.MODE_ID
+        self.activeCustomSettingId, self.customSettingName = nil, nil
+        self.settingKey, self.themeKey = "dungeon", "ancient"
+        self.floorHeight = MultiFloor.FLOOR_HEIGHT
+        return
+    end
+
+    self.activeFixedThemeId = nil
+    if selection.mode == TOPIC_MODE_CUSTOM then
+        local record = CustomizationStore.FindById(self.customSettings, selection.customId)
+        if record and record.packStatus ~= "draft" then
+            self.topicMode = TOPIC_MODE_CUSTOM
+            self.activeCustomSettingId, self.customSettingName = record.id, record.label
+            self.settingKey = Themes.settings[record.baseSettingKey] and record.baseSettingKey or "dungeon"
+            self.floorHeight = MultiFloor.NormalizeFloorHeight(record.floorHeight)
+            local palettes = Themes.GetSetting(self.settingKey).palettes
+            self.themeKey = Themes.IsPaletteForSetting(selection.themeKey, self.settingKey)
+                and selection.themeKey or palettes[1]
+            return
+        end
+    end
+
+    self.topicMode = TOPIC_MODE_BASE
+    self.activeCustomSettingId, self.customSettingName = nil, nil
+    self.settingKey = Themes.settings[selection.settingKey] and selection.settingKey or "dungeon"
+    self.floorHeight = MultiFloor.FLOOR_HEIGHT
+    self.themeKey = Themes.IsPaletteForSetting(selection.themeKey, self.settingKey)
+        and selection.themeKey or Themes.GetSetting(self.settingKey).palettes[1]
+end
+
+function DungeonApp:ApplyCustomizationData(data, preserveTopicSelection)
     if type(data) ~= "table" then return false end
+    local selection
+    if preserveTopicSelection then
+        self:NormalizeTopicSelection()
+        selection = {
+            mode = self.topicMode,
+            customId = self.activeCustomSettingId,
+            settingKey = self.settingKey,
+            themeKey = self.themeKey,
+        }
+    end
     local normalized = CustomizationStore.Normalize(data)
     self.customSettings = normalized.customSettings
     self.roomGroups = normalized.roomGroups
@@ -89,21 +156,26 @@ function DungeonApp:ApplyCustomizationData(data)
     local restored = CustomizationStore.RestoreImages(normalized)
     if restored > 0 then print("[DungeonForge] restored reference images=" .. restored) end
 
-    local active = CustomizationStore.FindById(self.customSettings, self.activeCustomSettingId)
-    if active and active.packStatus ~= "draft" then
-        self.customSettingName = active.label
-        self.settingKey = active.baseSettingKey
-        self.floorHeight = MultiFloor.NormalizeFloorHeight(active.floorHeight)
-        local setting = Themes.GetSetting(self.settingKey)
-        local validPalette = false
-        for _, palette in ipairs(setting.palettes) do if palette == self.themeKey then validPalette = true; break end end
-        if not validPalette then self.themeKey = setting.palettes[1] end
+    if selection then
+        self:RestoreTopicSelection(selection)
     else
-        self.activeCustomSettingId, self.customSettingName = nil, nil
-        self.floorHeight = MultiFloor.FLOOR_HEIGHT
-    end
-    if not Themes.IsPaletteForSetting(self.themeKey, self.settingKey) then
-        self.themeKey = Themes.GetSetting(self.settingKey).palettes[1]
+        local active = CustomizationStore.FindById(self.customSettings, self.activeCustomSettingId)
+        if active and active.packStatus ~= "draft" then
+            self.topicMode = TOPIC_MODE_CUSTOM
+            self.customSettingName = active.label
+            self.settingKey = active.baseSettingKey
+            self.floorHeight = MultiFloor.NormalizeFloorHeight(active.floorHeight)
+            local setting = Themes.GetSetting(self.settingKey)
+            local validPalette = false
+            for _, palette in ipairs(setting.palettes) do if palette == self.themeKey then validPalette = true; break end end
+            if not validPalette then self.themeKey = setting.palettes[1] end
+        else
+            self.topicMode = TOPIC_MODE_BASE
+            self.activeCustomSettingId, self.customSettingName = nil, nil
+            self.floorHeight = MultiFloor.FLOOR_HEIGHT
+        end
+        self.activeFixedThemeId = nil
+        self:NormalizeTopicSelection()
     end
     return true
 end
@@ -141,6 +213,7 @@ end
 function DungeonApp:LoadCloudCustomizations(onComplete)
     local finished = false
     local revisionAtStart = self.customizationRevision
+    local topicSelectionVersionAtStart = self.topicSelectionVersion or 0
     local function Finish(success, source, reason)
         if finished then return end
         finished = true
@@ -182,7 +255,8 @@ function DungeonApp:LoadCloudCustomizations(onComplete)
                     return
                 end
 
-                self:ApplyCustomizationData(data)
+                self:ApplyCustomizationData(data,
+                    self.topicSelectionVersion ~= topicSelectionVersionAtStart)
                 self:SaveLocalCustomizations()
                 print(string.format("[DungeonForge] cloud customization loaded themes=%d palettes=%d groups=%d",
                     #self.customSettings, #self.customPalettes, #self.roomGroups))
@@ -327,6 +401,7 @@ function DungeonApp:LoadLightingPreset(settingKey)
 end
 
 function DungeonApp:State()
+    self:NormalizeTopicSelection()
     return {
         seed = self.seed, floorCount = self.floorCount, floorHeight = self.floorHeight,
         currentFloor = self.currentFloor,
@@ -335,6 +410,7 @@ function DungeonApp:State()
         customSettings = self.customSettings, roomGroups = self.roomGroups, customPalettes = self.customPalettes,
         activeCustomSettingId = self.activeCustomSettingId, customSettingName = self.customSettingName,
         activeFixedThemeId = self.activeFixedThemeId,
+        topicMode = self.topicMode,
         editorActive = self.editorActive, editorMode = self.editorMode,
         selectedEditorRoom = self.selectedEditorRoom,
         selectedEditorRoomGroupId = self.selectedEditorRoomGroupId,
@@ -354,6 +430,8 @@ end
 function DungeonApp:UseCustomSetting(record)
     if not record or record.packStatus == "draft" then return false end
     self.activeFixedThemeId = nil
+    self.topicMode = TOPIC_MODE_CUSTOM
+    self:MarkTopicSelectionChanged()
     self.activeCustomSettingId, self.customSettingName = record.id, record.label
     self.settingKey = Themes.settings[record.baseSettingKey] and record.baseSettingKey or "dungeon"
     self.floorHeight = MultiFloor.NormalizeFloorHeight(record.floorHeight)
@@ -381,6 +459,8 @@ function DungeonApp:CreatePanel()
             self.editorRooms = nil; self:Generate(false, true)
         end,
         onFixedPCG = function()
+            self:MarkTopicSelectionChanged()
+            self.topicMode = TOPIC_MODE_FIXED_PCG
             self.activeFixedThemeId = FixedThemes.MODE_ID
             self.activeCustomSettingId, self.customSettingName = nil, nil
             self.settingKey, self.themeKey = "dungeon", "ancient"
@@ -395,6 +475,8 @@ function DungeonApp:CreatePanel()
             return true
         end,
         onSetting = function(key)
+            self:MarkTopicSelectionChanged()
+            self.topicMode = TOPIC_MODE_BASE
             local oldId, oldName, oldSetting, oldTheme =
                 self.activeCustomSettingId, self.customSettingName, self.settingKey, self.themeKey
             local oldFloorHeight = self.floorHeight
@@ -418,6 +500,8 @@ function DungeonApp:CreatePanel()
             self.editorRooms = nil; self:ApplyTheme(); self:Generate(false, false)
         end,
         onRandomSetting = function()
+            self:MarkTopicSelectionChanged()
+            self.topicMode = TOPIC_MODE_BASE
             local oldId, oldName, oldSetting, oldTheme =
                 self.activeCustomSettingId, self.customSettingName, self.settingKey, self.themeKey
             local oldFloorHeight = self.floorHeight
@@ -445,6 +529,7 @@ function DungeonApp:CreatePanel()
             local previousActiveId, previousName = self.activeCustomSettingId, self.customSettingName
             local previousSetting, previousTheme = self.settingKey, self.themeKey
             local previousFloorHeight = self.floorHeight
+            local previousFixedId, previousTopicMode = self.activeFixedThemeId, self.topicMode
             local pack, generationMode = nil, nil
             if mode == "generate" then
                 local resolvedKey
@@ -510,6 +595,8 @@ function DungeonApp:CreatePanel()
             if mode == "generate" then
                 self:UseCustomSetting(prepared)
             elseif self.activeCustomSettingId == prepared.id then
+                self:MarkTopicSelectionChanged()
+                self.topicMode = TOPIC_MODE_BASE
                 self.activeCustomSettingId, self.customSettingName = nil, nil
                 self.floorHeight = MultiFloor.FLOOR_HEIGHT
             end
@@ -519,6 +606,7 @@ function DungeonApp:CreatePanel()
                 CustomizationStore.DeleteById(self.customSettings, prepared.id)
                 if replaced then CustomizationStore.UpsertById(self.customSettings, replaced) end
                 self.activeCustomSettingId, self.customSettingName = previousActiveId, previousName
+                self.activeFixedThemeId, self.topicMode = previousFixedId, previousTopicMode
                 self.settingKey, self.themeKey = previousSetting, previousTheme
                 self.floorHeight = previousFloorHeight
                 self.roomGroups = previousRoomGroups
@@ -578,6 +666,7 @@ function DungeonApp:CreatePanel()
             if not record then return false, "题材组不存在或已被删除。" end
             if record.packStatus == "draft" then return false, "该题材仍是草稿，请先生成题材包。" end
             local oldId, oldName, oldSetting, oldTheme = self.activeCustomSettingId, self.customSettingName, self.settingKey, self.themeKey
+            local oldFixedId, oldTopicMode = self.activeFixedThemeId, self.topicMode
             local oldFloorHeight = self.floorHeight
             self:UseCustomSetting(record)
             self.customizationRevision = self.customizationRevision + 1
@@ -585,6 +674,7 @@ function DungeonApp:CreatePanel()
             local saved, reason = self:SaveLocalCustomizations()
             if not saved then
                 self.activeCustomSettingId, self.customSettingName = oldId, oldName
+                self.activeFixedThemeId, self.topicMode = oldFixedId, oldTopicMode
                 self.settingKey, self.themeKey = oldSetting, oldTheme
                 self.floorHeight = oldFloorHeight
                 self.customizationRevision = self.customizationRevision - 1
@@ -612,7 +702,9 @@ function DungeonApp:CreatePanel()
             self.roomGroups = remainingGroups
             local wasActive = self.activeCustomSettingId == id
             if wasActive then
+                self:MarkTopicSelectionChanged()
                 self.activeCustomSettingId, self.customSettingName = nil, nil
+                self.topicMode = TOPIC_MODE_BASE
                 self.floorHeight = MultiFloor.FLOOR_HEIGHT
             end
             self.customizationRevision = self.customizationRevision + 1
@@ -639,6 +731,7 @@ function DungeonApp:CreatePanel()
             local oldSetting, oldTheme = self.settingKey, self.themeKey
             local oldActiveId, oldActiveName = self.activeCustomSettingId, self.customSettingName
             local oldFloorHeight = self.floorHeight
+            local oldFixedId, oldTopicMode = self.activeFixedThemeId, self.topicMode
             if not palette.id then
                 palette.id = "custom-palette-" .. self.nextCustomPaletteId
                 self.nextCustomPaletteId = self.nextCustomPaletteId + 1
@@ -647,6 +740,8 @@ function DungeonApp:CreatePanel()
             Themes.SetCustomPalettes(self.customPalettes)
             self.settingKey, self.themeKey = palette.baseSettingKey, palette.id
             if self.activeCustomSettingId and self.settingKey ~= oldSetting then
+                self:MarkTopicSelectionChanged()
+                self.topicMode = TOPIC_MODE_BASE
                 self.activeCustomSettingId, self.customSettingName = nil, nil
                 self.floorHeight = MultiFloor.FLOOR_HEIGHT
             end
@@ -662,6 +757,7 @@ function DungeonApp:CreatePanel()
                 Themes.SetCustomPalettes(self.customPalettes)
                 self.settingKey, self.themeKey = oldSetting, oldTheme
                 self.activeCustomSettingId, self.customSettingName = oldActiveId, oldActiveName
+                self.activeFixedThemeId, self.topicMode = oldFixedId, oldTopicMode
                 self.floorHeight = oldFloorHeight
                 self.customizationRevision = math.max(0, self.customizationRevision - 1)
                 self:RefreshPanel()
@@ -696,10 +792,18 @@ function DungeonApp:CreatePanel()
         end,
         onTheme = function(key)
             if not Themes.IsPaletteForSetting(key, self.settingKey) then return false, "该配色不适用于当前题材。" end
+            if self.activeFixedThemeId == FixedThemes.MODE_ID then
+                self:MarkTopicSelectionChanged()
+                self.topicMode = TOPIC_MODE_BASE
+            end
             self.activeFixedThemeId = nil
             self.themeKey = key; self:ApplyTheme(); self:RebuildView(); self:RefreshPanel(); return true
         end,
         onRandomTheme = function()
+            if self.activeFixedThemeId == FixedThemes.MODE_ID then
+                self:MarkTopicSelectionChanged()
+                self.topicMode = TOPIC_MODE_BASE
+            end
             self.activeFixedThemeId = nil
             self.themeKey = Themes.RandomPalette(self.settingKey, self.themeKey)
             self:ApplyTheme(); self:RebuildView(); self:RefreshPanel()
@@ -1223,7 +1327,10 @@ function DungeonApp:HandleUpdate(timeStep)
     end
     if input:GetKeyPress(KEY_T) then
         if input:GetKeyDown(KEY_LSHIFT) or input:GetKeyDown(KEY_RSHIFT) then
+            self:MarkTopicSelectionChanged()
+            self.topicMode = TOPIC_MODE_BASE
             self.activeCustomSettingId, self.customSettingName = nil, nil
+            self.activeFixedThemeId = nil
             self.floorHeight = MultiFloor.FLOOR_HEIGHT
             self.settingKey = Themes.NextSetting(self.settingKey); self.themeKey = Themes.GetSetting(self.settingKey).palettes[1]
             self.editorRooms = nil; self:ApplyTheme(); self:Generate(false, false)

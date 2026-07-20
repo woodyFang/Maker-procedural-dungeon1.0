@@ -1569,7 +1569,8 @@ function ControlPanel:RebuildCustomSettingList(items)
     self.customSettingHint:SetVisible(self.customSettingExpanded and #(items or {}) > 0)
     for _, item in ipairs(items or {}) do
         local saved = item
-        local active = (self.currentState or {}).activeCustomSettingId == saved.id
+        local active = (self.currentState or {}).topicMode == "custom"
+            and (self.currentState or {}).activeCustomSettingId == saved.id
         local isDraft = saved.packStatus == "draft"
         local visual = UI.Panel {
             width = 38, height = 38, backgroundColor = { 44, 34, 27, 255 },
@@ -1615,7 +1616,8 @@ end
 
 function ControlPanel:RebuildRoomGroupList(items)
     self.roomGroupList:ClearChildren()
-    local activeTopicId = (self.currentState or {}).activeCustomSettingId
+    local currentState = self.currentState or {}
+    local activeTopicId = currentState.topicMode == "custom" and currentState.activeCustomSettingId or nil
     for _, item in ipairs(items or {}) do
         if (activeTopicId and item.topicId == activeTopicId) or (not activeTopicId and not item.topicId) then
             local saved = item
@@ -1711,7 +1713,8 @@ function ControlPanel:SetState(state)
     self.seedField:SetValue(tostring(self.seed))
     local setting = Themes.GetSetting(state.settingKey)
     local theme = Themes.Get(state.themeKey)
-    local fixedActive = state.activeFixedThemeId ~= nil
+    local fixedActive = state.topicMode == "fixedPCG"
+        or (state.topicMode == nil and state.activeFixedThemeId ~= nil)
     self.fixedSettingModeButton:SetText((fixedActive and "● " or "") .. "固定 PCG")
     self.fixedSettingModeButton:SetStyle({
         backgroundColor = fixedActive and { 48, 36, 29, 255 } or C.input,
@@ -1730,7 +1733,9 @@ function ControlPanel:SetState(state)
         self.subtitle:SetText("固定 PCG · 空场景 · " .. theme.label)
     end
     for key, button in pairs(self.settingButtons) do
-        local active = key == state.settingKey and state.activeCustomSettingId == nil and state.activeFixedThemeId == nil
+        local active = key == state.settingKey
+            and (state.topicMode == "base"
+                or (state.topicMode == nil and state.activeCustomSettingId == nil and state.activeFixedThemeId == nil))
         button:SetText((active and "● " or "") .. Themes.GetSetting(key).label)
         button:SetStyle({
             backgroundColor = active and { 48, 36, 29, 255 } or C.input,
@@ -1768,8 +1773,9 @@ function ControlPanel:SetState(state)
     self:RebuildRoomGroupList(state.roomGroups)
     local roomGroupOptions = { { value = "", label = "不赋予房间组" } }
     for _, group in ipairs(state.roomGroups or {}) do
-        if (state.activeCustomSettingId and group.topicId == state.activeCustomSettingId)
-            or (not state.activeCustomSettingId and not group.topicId) then
+        local activeTopicId = state.topicMode == "custom" and state.activeCustomSettingId or nil
+        if (activeTopicId and group.topicId == activeTopicId)
+            or (not activeTopicId and not group.topicId) then
             roomGroupOptions[#roomGroupOptions + 1] = { value = group.id, label = group.name }
         end
     end
