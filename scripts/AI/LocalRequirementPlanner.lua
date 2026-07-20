@@ -4,6 +4,7 @@ local LocalRequirementPlanner = {
 }
 
 local GeometryRules = require("Generation.GeometryRules")
+local RoomGroupColors = require("Config.RoomGroupColors")
 
 local function CopyRules(rules)
     local result = {}
@@ -31,6 +32,7 @@ local function Group(topic, pack, revision, spec)
         id = string.format("generated-%s-%s", topic.id, spec.key),
         topicId = topic.id,
         name = spec.name,
+        color = RoomGroupColors.Default(spec, spec.sortOrder),
         prompt = TopicPrompt(topic, spec.name, spec.purpose),
         source = "ai",
         locked = false,

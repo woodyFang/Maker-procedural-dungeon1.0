@@ -11,6 +11,7 @@ local RoomEditing = require("UI.Editor.RoomEditing")
 local CanvasViewport = require("UI.Editor.CanvasViewport")
 local ContextMenu = require("UI.Editor.ContextMenu")
 local MultiFloor = require("Generation.MultiFloor")
+local RoomGroupColors = require("Config.RoomGroupColors")
 
 local LayoutEditor = {}
 LayoutEditor.__index = LayoutEditor
@@ -45,6 +46,7 @@ function LayoutEditor.new(eventObject, callbacks)
         stairPlacing = false, stairPlacementStyle = "l-turn", gizmoDescriptors = {},
         editorViewport = CanvasViewport.new(), editorInteraction = EditorInteraction.new(),
         contextMenu = ContextMenu.new(),
+        roomGroupsById = {},
     }, LayoutEditor)
     self.vg = nvgCreate(1)
     if self.vg then
@@ -57,9 +59,13 @@ function LayoutEditor.new(eventObject, callbacks)
     return self
 end
 
-function LayoutEditor:SyncDungeon(dungeon, floor)
+function LayoutEditor:SyncDungeon(dungeon, floor, roomGroups)
     local selected = self.selected
     local selectedKey = EditorData.LinkKey(self.links[self.selectedLink])
+    self.roomGroupsById = {}
+    for _, group in ipairs(roomGroups or {}) do
+        if group and group.id then self.roomGroupsById[group.id] = group end
+    end
     self.rooms = CopyRooms(dungeon and dungeon.rooms or {})
     self.links = {}
     for _, edge in ipairs(dungeon and dungeon.edges or {}) do
@@ -841,7 +847,11 @@ function LayoutEditor:LegacyRender()
             w = room.w * self.scale, h = room.h * self.scale }
         self.roomRects[#self.roomRects + 1] = rect
         local selected = self.selected == i
-        local color = selected and { 231, 145, 58, 235 } or (room.locked and { 77, 86, 105, 240 } or { 46, 63, 78, 245 })
+        local group = self.roomGroupsById[room.roomGroupId]
+        local groupColor = group and RoomGroupColors.ToRGBA(
+            RoomGroupColors.Parse(group.color, RoomGroupColors.Default(group, 1)), 245)
+        local color = selected and { 231, 145, 58, 235 }
+            or (room.locked and { 77, 86, 105, 240 } or groupColor or { 46, 63, 78, 245 })
         RoundedRect(self.vg, rect.x, rect.y, rect.w, rect.h, 3, color)
         nvgBeginPath(self.vg); nvgRoundedRect(self.vg, rect.x, rect.y, rect.w, rect.h, 3)
         Stroke(self.vg, selected and 255 or 114, selected and 215 or 132, selected and 157 or 151, 255, selected and 2 or 1); nvgStroke(self.vg)
@@ -959,8 +969,12 @@ function LayoutEditor:Render()
             local rect = { index = index, x = p.x, y = p.y, w = room.w * self.scale, h = room.h * self.scale }
             self.roomRects[#self.roomRects + 1] = rect
             local selected = self.selected == index
+            local group = self.roomGroupsById[room.roomGroupId]
+            local groupColor = group and RoomGroupColors.ToRGBA(
+                RoomGroupColors.Parse(group.color, RoomGroupColors.Default(group, 1)), 245)
             local color = selected and { 231, 145, 58, 235 }
                 or (room.locked and { 77, 86, 105, 240 }
+                    or groupColor
                     or (room.roleHint == "secret" and { 112, 65, 151, 238 } or { 46, 63, 78, 245 }))
             RoundedRect(self.vg, rect.x, rect.y, rect.w, rect.h, 3, color)
             nvgBeginPath(self.vg); nvgRoundedRect(self.vg, rect.x, rect.y, rect.w, rect.h, 3)

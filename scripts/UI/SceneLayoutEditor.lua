@@ -12,6 +12,7 @@ local EditorGesture = require("UI.Editor.EditorGesture")
 local RoomEditing = require("UI.Editor.RoomEditing")
 local EditorSession = require("UI.Editor.EditorSession")
 local MultiFloor = require("Generation.MultiFloor")
+local RoomGroupColors = require("Config.RoomGroupColors")
 
 local SceneLayoutEditor = {}
 SceneLayoutEditor.__index = SceneLayoutEditor
@@ -92,6 +93,7 @@ function SceneLayoutEditor.new(scene, camera, eventObject, callbacks)
         stairPlacing = false,
         stairPlacementStyle = "l-turn",
         groupMaterials = {},
+        roomGroupsById = {},
         gizmoDescriptors = {},
         hoveredGizmo = nil,
         editorViewport = EditorViewport.new(camera),
@@ -178,9 +180,14 @@ function SceneLayoutEditor:SetFloor(floor)
     self:NotifySelection()
 end
 
-function SceneLayoutEditor:SyncDungeon(dungeon, floor)
+function SceneLayoutEditor:SyncDungeon(dungeon, floor, roomGroups)
     local selectedRoom = self.selected
     local selectedKey = LinkKey(self.links[self.selectedLink])
+    self.roomGroupsById = {}
+    for _, group in ipairs(roomGroups or {}) do
+        if group and group.id then self.roomGroupsById[group.id] = group end
+    end
+    self.groupMaterials = {}
     self.rooms = CopyRooms(dungeon and dungeon.rooms or {})
     self.links = {}
     for _, edge in ipairs(dungeon and dungeon.edges or {}) do
@@ -452,23 +459,22 @@ function SceneLayoutEditor:RoomMaterial(room, selected, hovered)
     if selected then return self.materials.selected end
     if hovered then return self.materials.hover end
     if room.locked then return self.materials.locked end
+    if room.roomGroupId then
+        local group = self.roomGroupsById[room.roomGroupId]
+        if group then
+            local material = self.groupMaterials[room.roomGroupId]
+            if not material then
+                local color = RoomGroupColors.Parse(group.color,
+                    RoomGroupColors.Default(group, 1))
+                material = CreateOverlayMaterial(color, 0.44, color)
+                self.groupMaterials[room.roomGroupId] = material
+            end
+            return material
+        end
+    end
     if room.roleHint == "entrance" then return self.materials.entrance end
     if room.roleHint == "boss" then return self.materials.boss end
     if room.roleHint == "secret" then return self.materials.secret end
-    if room.roomGroupId then
-        local material = self.groupMaterials[room.roomGroupId]
-        if not material then
-            local palette = { 0x6eb4ff, 0x8bd96b, 0xf3c15f, 0xd58cff, 0xff8f70, 0x55d5c5 }
-            local hash = 2166136261
-            for index = 1, #room.roomGroupId do
-                hash = ((hash ~ room.roomGroupId:byte(index)) * 16777619) & 0xffffffff
-            end
-            local color = palette[(hash % #palette) + 1]
-            material = CreateOverlayMaterial(color, 0.44, color)
-            self.groupMaterials[room.roomGroupId] = material
-        end
-        return material
-    end
     return self.materials.normal
 end
 

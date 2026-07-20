@@ -11,6 +11,7 @@ local FixedThemes = require("Config.FixedThemes")
 local ThemePacks = require("Config.ThemePacks")
 local GenericThemeRules = require("Config.GenericThemeRules")
 local CustomizationStore = require("Config.CustomizationStore")
+local RoomGroupColors = require("Config.RoomGroupColors")
 local DungeonGeometryLibrary = require("Rendering.DungeonGeometryLibrary")
 local ProceduralMaterialRules = require("Rendering.ProceduralMaterialRules")
 local LocalRequirementPlanner = require("AI.LocalRequirementPlanner")
@@ -817,7 +818,7 @@ function DungeonApp:CreatePanel()
             if previous then
                 for _, field in ipairs({ "topicId", "plannerSource", "compiledFromRevision", "compiledSpecVersion",
                     "sortOrder", "roleKeys", "defaultGroup", "minCount", "maxCount", "minArea", "maxArea",
-                    "propRules" }) do
+                    "propRules", "color" }) do
                     if group[field] == nil then group[field] = previous[field] end
                 end
                 group.source, group.locked = "manual", true
@@ -825,6 +826,8 @@ function DungeonApp:CreatePanel()
                 group.topicId = group.topicId or self.activeCustomSettingId
                 group.source, group.locked = "manual", true
             end
+            group.color = RoomGroupColors.Parse(group.color,
+                RoomGroupColors.Default(group, #self.roomGroups + 1))
             local prepared, oldImageOrError = CustomizationStore.PrepareImage(
                 group, previous, "room", self.customizationRevision + 1)
             if not prepared then return false, oldImageOrError end
@@ -840,10 +843,16 @@ function DungeonApp:CreatePanel()
                 if replaced then CustomizationStore.UpsertById(self.roomGroups, replaced) end
                 self.customizationRevision = self.customizationRevision - 1
                 CustomizationStore.DeleteImageIfUnused(prepared.imagePath, self:CustomizationData())
+                self:RebuildView()
                 self:RefreshPanel()
                 return false, "本地保存失败：" .. tostring(reason)
             end
             CustomizationStore.DeleteImageIfUnused(oldImageOrError, self:CustomizationData())
+            self:RebuildView()
+            if self.dungeon then
+                if self.editor2D then self.editor2D:SyncDungeon(self.dungeon, self.currentFloor, self:ActiveRoomGroups()) end
+                if self.editor3D then self.editor3D:SyncDungeon(self.dungeon, self.currentFloor, self:ActiveRoomGroups()) end
+            end
             self:RefreshPanel()
             return true
         end,
@@ -1018,6 +1027,7 @@ function DungeonApp:RebuildView(animate)
     self.dungeonRenderer:Build(self.dungeon, self.themeKey, {
         currentFloor = self.currentFloor, viewMode = self.floorViewMode,
         graphVisible = self.graphVisible, heatVisible = self.heatVisible, settingKey = self.settingKey,
+        roomGroups = self:ActiveRoomGroups(),
         animate = animate == true,
     })
 end
@@ -1055,8 +1065,8 @@ function DungeonApp:Generate(useEditor, frameCamera, changedFloor, preserveDunge
     self:RebuildView(frameCamera == true)
     if frameCamera then self.forgeCamera:FrameDungeon(dungeon, self.currentFloor) end
     self.panel:SetDungeon(dungeon, generationMs); self:RefreshPanel()
-    if self.editor2D then self.editor2D:SyncDungeon(dungeon, self.currentFloor) end
-    if self.editor3D then self.editor3D:SyncDungeon(dungeon, self.currentFloor) end
+    if self.editor2D then self.editor2D:SyncDungeon(dungeon, self.currentFloor, self:ActiveRoomGroups()) end
+    if self.editor3D then self.editor3D:SyncDungeon(dungeon, self.currentFloor, self:ActiveRoomGroups()) end
     if self.editor then
         local editorShouldBeVisible = self.editorActive and not self.editorTransition
         -- SyncDungeon already refreshes the overlay. Re-entering the same visible
@@ -1196,8 +1206,8 @@ function DungeonApp:ToggleEditor(force, preferredMode)
         self.floorViewBeforeEditor = self.floorViewMode
         self.floorViewMode = "current"
         self:RebuildView()
-        self.editor2D:SyncDungeon(self.dungeon, self.currentFloor)
-        self.editor3D:SyncDungeon(self.dungeon, self.currentFloor)
+        self.editor2D:SyncDungeon(self.dungeon, self.currentFloor, self:ActiveRoomGroups())
+        self.editor3D:SyncDungeon(self.dungeon, self.currentFloor, self:ActiveRoomGroups())
         self.editorEntryMode = entryMode
         self.editorMode = entryMode
         self.editor = entryMode == "2d" and self.editor2D or self.editor3D

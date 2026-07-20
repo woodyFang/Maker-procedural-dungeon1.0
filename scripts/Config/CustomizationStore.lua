@@ -1,10 +1,11 @@
 local Themes = require("Config.Themes")
 local PaletteData = require("Config.PaletteData")
+local RoomGroupColors = require("Config.RoomGroupColors")
 local MultiFloor = require("Generation.MultiFloor")
 
 local CustomizationStore = {}
 
-CustomizationStore.SCHEMA_VERSION = 7
+CustomizationStore.SCHEMA_VERSION = 8
 CustomizationStore.IMAGE_DIRECTORY = "customization-images"
 CustomizationStore.MAX_SOURCE_BYTES = 20 * 1024 * 1024
 CustomizationStore.MAX_IMAGE_BYTES = CustomizationStore.MAX_SOURCE_BYTES
@@ -112,6 +113,8 @@ local function NormalizeRecords(items, kind)
                     record.compiledRoomGroupCount = math.max(0, math.floor(tonumber(source.compiledRoomGroupCount) or 0))
                 else
                     record.name = name
+                    record.color = RoomGroupColors.Parse(source.color,
+                        RoomGroupColors.Default(source, #result + 1))
                     record.topicId = topicId ~= "" and topicId or nil
                     record.source = source.source == "ai" and "ai" or "manual"
                     record.locked = source.locked == true

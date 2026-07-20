@@ -2,6 +2,7 @@ local UI = require("urhox-libs/UI")
 local Themes = require("Config.Themes")
 local ThemePacks = require("Config.ThemePacks")
 local GenericThemeRules = require("Config.GenericThemeRules")
+local RoomGroupColors = require("Config.RoomGroupColors")
 local MultiFloor = require("Generation.MultiFloor")
 local PaletteData = require("Config.PaletteData")
 local TextArea = require("UI.TextArea")
@@ -719,6 +720,13 @@ function ControlPanel.new(callbacks, initial)
         borderRadius = 8, borderColor = { 52, 58, 77, 255 }, focusedBorderColor = C.accent,
         paddingHorizontal = 11, fontSize = 13,
     }
+    self.roomGroupColorHex = RoomGroupColors.ToHex(RoomGroupColors.FALLBACK)
+    self.roomGroupColorPicker = UI.ColorPicker {
+        width = "100%", size = "sm", color = self.roomGroupColorHex,
+        showAlpha = false, showInput = true, showPresets = true,
+        presets = { "#43D7AF", "#56B8D0", "#E0B657", "#E85D62", "#A783E8", "#FF8F70" },
+        onChange = function(_, value) self.roomGroupColorHex = value.hex end,
+    }
     self.roomGroupPromptField = TextArea {
         width = "100%", height = 122, value = "", maxLength = 1000,
         backgroundColor = { 22, 26, 38, 255 }, borderRadius = 8,
@@ -792,6 +800,7 @@ function ControlPanel.new(callbacks, initial)
             FieldLabel("组名称"), self.roomGroupNameField,
             FieldLabel("自定义提示词"), self.roomGroupPromptField,
             FieldLabel("上传参考图", "可选"), self.roomGroupImageInputBox, self.roomGroupImageRow,
+            FieldLabel("Room color"), self.roomGroupColorPicker,
             self.roomGroupError,
         },
     }
@@ -1513,6 +1522,10 @@ function ControlPanel:OpenRoomGroupModal(item)
     self.roomGroupModalTitle:SetText(item and "编辑房间组" or "添加房间组")
     self.roomGroupNameField:SetValue(item and item.name or "")
     self.roomGroupPromptField:SetValue(item and item.prompt or "")
+    local color = RoomGroupColors.Parse(item and item.color,
+        RoomGroupColors.Default(item, 1))
+    self.roomGroupColorHex = RoomGroupColors.ToHex(color)
+    self.roomGroupColorPicker:SetHex(self.roomGroupColorHex)
     self:SetReferenceImage("room", item and item.imagePath or nil, item and item.imageName or nil)
     self.roomGroupDeleteButton:SetVisible(item ~= nil)
     self.roomGroupError:SetText("")
@@ -1543,6 +1556,7 @@ function ControlPanel:ApplyRoomGroup()
     local ok, reason = self.callbacks.onRoomGroupSave({
         id = self.editingRoomGroupId, name = name, prompt = prompt,
         imagePath = self.roomGroupImagePath, imageName = self.roomGroupImageFileName,
+        color = RoomGroupColors.Parse(self.roomGroupColorHex),
     })
     if ok == false then self.roomGroupError:SetText(reason or "房间组保存失败，请重试。"); return end
     print("[ControlPanel] room group saved name=" .. name)
@@ -1622,17 +1636,22 @@ function ControlPanel:RebuildRoomGroupList(items)
         if (activeTopicId and item.topicId == activeTopicId) or (not activeTopicId and not item.topicId) then
             local saved = item
             self.roomGroupList:AddChild(UI.Panel {
-                width = "100%", height = 54, padding = 7, flexDirection = "row", alignItems = "center", gap = 8,
+                width = "100%", height = 44, padding = 5, flexDirection = "row", alignItems = "center", gap = 6,
                 backgroundColor = C.section, borderColor = { 41, 47, 64, 255 }, borderWidth = 1, borderRadius = 8,
                 children = {
-                    UI.Panel { flexGrow = 1, gap = 3, children = {
-                        Label(saved.name, 11, C.text, {
+                    UI.Panel {
+                        width = 16, height = 16, flexShrink = 0,
+                        backgroundColor = RoomGroupColors.ToRGBA(saved.color),
+                        borderColor = { 255, 255, 255, 64 }, borderWidth = 1, borderRadius = 4,
+                    },
+                    UI.Panel { flexGrow = 1, gap = 2, children = {
+                        Label(saved.name, 10, C.text, {
                             fontWeight = "bold", whiteSpace = "nowrap", overflow = "hidden",
                         }),
                         Label("可分配到房间", 8.5, C.dim),
                     } },
                     SmallButton("编辑", function() self:OpenRoomGroupModal(saved) end,
-                        { width = 44, height = 27, fontSize = 9 }),
+                        { width = 38, height = 24, fontSize = 8.5 }),
                 },
             })
         end

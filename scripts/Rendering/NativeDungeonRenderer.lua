@@ -5,6 +5,7 @@ local ExactGeometryBatcher = require("Rendering.ExactGeometryBatcher")
 local Random = require("Generation.Random")
 local MultiFloor = require("Generation.MultiFloor")
 local EditorSelectionHighlight = require("Rendering.EditorSelectionHighlight")
+local RoomGroupColors = require("Config.RoomGroupColors")
 
 local NativeDungeonRenderer = {}
 NativeDungeonRenderer.__index = NativeDungeonRenderer
@@ -243,6 +244,35 @@ end
 
 function NativeDungeonRenderer:AddBatch(parent, transforms, material, name)
     return self:AddModelBatch(parent, transforms, self.modelCache:Get("box"), material, name, true)
+end
+
+function NativeDungeonRenderer:AddRoomGroupHighlights(root, dungeon, floorVisible, roomGroups)
+    local groupsById = {}
+    for index, group in ipairs(roomGroups or {}) do
+        if group and group.id then groupsById[group.id] = { group = group, index = index } end
+    end
+
+    local batches = {}
+    for _, room in ipairs(dungeon.rooms or {}) do
+        local entry = groupsById[room.roomGroupId]
+        if entry and floorVisible(room.floor) then
+            local color = RoomGroupColors.Parse(entry.group.color,
+                RoomGroupColors.Default(entry.group, entry.index))
+            local key = tostring(entry.group.id)
+            batches[key] = batches[key] or { color = color, transforms = {} }
+            local x, y, z = self:WorldPosition(dungeon, room.cx, room.cy, room.floor, 0.08)
+            batches[key].transforms[#batches[key].transforms + 1] = {
+                x = x, y = y, z = z,
+                sx = math.max(0.8, room.w - 0.32), sy = 0.045, sz = math.max(0.8, room.h - 0.32),
+            }
+        end
+    end
+
+    for key, batch in pairs(batches) do
+        local material = CreateAlphaMaterial(batch.color, 0.42, batch.color, 0.36)
+        self:AddModelBatch(root, batch.transforms, self.modelCache:Get("box"), material,
+            "RoomGroupHighlight-" .. key, false)
+    end
 end
 
 function NativeDungeonRenderer:AddMarker(parent, name, x, y, z, color, scale)
@@ -728,6 +758,7 @@ function NativeDungeonRenderer:Build(dungeon, themeKey, options)
     local exactInstances, exactBatches, stagedEntries = exact:Flush(root, stagingConfig)
     self.instanceCount = self.instanceCount + exactInstances
     self.batchCount = self.batchCount + exactBatches
+    self:AddRoomGroupHighlights(root, dungeon, FloorVisible, options.roomGroups)
 
     local stairs = {}
     for _, connector in ipairs(dungeon.connectors) do

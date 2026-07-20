@@ -97,7 +97,9 @@ function Start()
             roomGroups = plan.roomGroups,
         })
         assert(dungeon.valid, table.concat(dungeon.errors, "; "))
-        NativeDungeonRenderer.new(scene):Build(dungeon, "schoolDay", { settingKey = "school" })
+        NativeDungeonRenderer.new(scene):Build(dungeon, "schoolDay", {
+            settingKey = "school", roomGroups = plan.roomGroups,
+        })
         SubscribeToEvent("Update", "HandleSchoolRendererUpdate")
         print(string.format("[school-render-smoke] built rooms=%d groups=%d props=%d hash=%s",
             #dungeon.rooms, #plan.roomGroups, CountProps(dungeon), tostring(dungeon.hash)))
