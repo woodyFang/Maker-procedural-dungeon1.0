@@ -940,7 +940,7 @@ function ControlPanel.new(callbacks, initial)
         children = { UI.ScrollView { width = "100%", height = "100%", scrollY = true, showScrollbar = true, children = { content } } },
     }
     self.expandButton = SmallButton("展开", function() self:SetCollapsed(false) end,
-        { position = "absolute", right = 14, top = 14, width = 52, height = 38 })
+        { position = "absolute", left = 12, top = 12, width = 52, height = 38 })
     self.expandButton:SetVisible(false)
 
     self.customContextMenuLayer = UI.Panel {
