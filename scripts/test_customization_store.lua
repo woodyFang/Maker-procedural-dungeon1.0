@@ -26,6 +26,7 @@ local function Run()
         id = "custom-image-test",
         label = "Image Test",
         baseSettingKey = "dungeon",
+        floorHeight = 4.2,
         prompt = "test",
         imagePath = sourcePath,
         imageName = "customization-source-test.png",
@@ -44,6 +45,8 @@ local function Run()
 
     local loaded = CustomizationStore.Load(jsonPath)
     Check(loaded and loaded.customSettings[1], "saved customization did not load")
+    Check(loaded.customSettings[1].floorHeight == 4.2,
+        "saved theme floor height did not round-trip")
     local restoredPath = loaded.customSettings[1].imagePath
     fileSystem:Delete(restoredPath)
     fileSystem:Delete(sourcePath)
