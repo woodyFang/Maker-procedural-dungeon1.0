@@ -1,5 +1,6 @@
 local DungeonApp = require("App.DungeonApp")
 local FixedThemes = require("Config.FixedThemes")
+local DungeonGenerator = require("Generation.DungeonGenerator")
 
 local function Check(condition, message)
     if not condition then error(message, 2) end
@@ -20,23 +21,25 @@ function Start()
         Check(button.props.borderRadius ~= 999, name .. " random control still uses the pill appearance")
     end
     Check(panel.diceButton == nil, "legacy dice-only random seed control is still present")
-    Check(panel.fixedSettingModeButton and panel.fixedSettingList and panel.fixedSettingToggleButton
-            and panel.fixedSettingList:GetNumChildren() == #FixedThemes.order,
-        "fixed PCG theme controls were not built at topic level")
-    panel:SetCustomSettingExpanded(true)
-    panel:SetFixedSettingExpanded(true)
-    Check(not panel.customSettingExpanded and panel.fixedSettingExpanded,
-        "fixed PCG and custom theme expanders are not mutually exclusive")
-    panel:SetFixedSettingExpanded(false)
-    panel:SetCustomSettingExpanded(true)
-    Check(not panel.fixedSettingExpanded and panel.customSettingExpanded,
-        "custom theme and fixed PCG expanders are not mutually exclusive")
-    panel:SetCustomSettingExpanded(false)
+    Check(panel.fixedSettingModeButton and panel.fixedSettingList == nil and panel.fixedSettingToggleButton == nil,
+        "fixed PCG still exposes an expandable topic list")
     Check(app.dungeon and app.dungeon.sceneInfo, "generated dungeon has no basic scene information")
     Check(app.dungeon.sceneInfo.floorHeight == 5.0 and app.dungeon.sceneInfo.cellSize == 1.0,
         "basic scene information diverged from the authoritative geometry contract")
     Check(panel.sceneFloorHeightValue == nil,
         "floor height is still displayed in the side result panel instead of theme generation")
+    local empty = DungeonGenerator.Generate({
+        seed = 20260720, floorCount = 2, roomCountsByFloor = { 21, 21 },
+        emptyScene = true, floorHeight = 5.0, settingKey = "dungeon", theme = "ancient",
+    })
+    Check(empty.valid and #empty.rooms == 0 and #empty.edges == 0 and #empty.connectors == 0,
+        "fixed PCG empty scene is not a valid roomless generation shell")
+    Check(empty.roomCountsByFloor[1] == 0 and empty.roomCountsByFloor[2] == 0,
+        "fixed PCG empty scene still contains generated room counts")
+    local actualFixed, actualFixedReason = panel.callbacks.onFixedPCG()
+    Check(actualFixed, actualFixedReason or "fixed PCG runtime callback failed")
+    Check(app.activeFixedThemeId == FixedThemes.MODE_ID and app.dungeon and #app.dungeon.rooms == 0,
+        "fixed PCG runtime callback did not install the empty scene")
 
     panel:OpenCustomSettingModal()
     Check(panel.customFloorHeightField:GetValue() == "5.00",
@@ -75,14 +78,14 @@ function Start()
     app.customSettings = {}
     app.roomGroups = {}
     app.activeCustomSettingId = nil
-    local fixedGenerated, fixedReason = panel.callbacks.onFixedSetting("frozenSanctum")
+    local fixedGenerated, fixedReason = panel.callbacks.onFixedPCG()
     Check(fixedGenerated, fixedReason or "fixed PCG theme callback failed")
-    Check(app.activeFixedThemeId == "frozenSanctum" and app.activeCustomSettingId == nil,
-        "fixed PCG theme did not become active without creating a custom theme")
-    Check(app.settingKey == "dungeon" and app.themeKey == "frost" and app.floorHeight == 5.6,
-        "fixed PCG theme did not apply its authored scene rules")
-    Check(app.roomCounts[1] == 15 and app.loopRates[1] == 6 and app.decorDensities[1] == 38,
-        "fixed PCG theme did not apply its authored generation parameters")
+    Check(app.activeFixedThemeId == FixedThemes.MODE_ID and app.activeCustomSettingId == nil,
+        "fixed PCG mode did not become active without creating a custom theme")
+    Check(app.settingKey == "dungeon" and app.themeKey == "ancient" and app.floorHeight == 5.0,
+        "fixed PCG mode did not reset to the empty-scene baseline")
+    Check(app:GenerationOptions(false).emptyScene == true,
+        "fixed PCG mode did not mark the generation request as emptyScene")
     local genericGenerated, genericReason = panel.callbacks.onCustomSettingSave({
         label = "深海研究站", prompt = "海沟中的金属研究站和观景窗",
         baseSettingKey = "hospital", floorHeight = 4.2,

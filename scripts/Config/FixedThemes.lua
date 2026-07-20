@@ -3,6 +3,9 @@
 
 local FixedThemes = {}
 
+FixedThemes.MODE_ID = "fixedPCG"
+FixedThemes.GENERATION_MODE = "fixed-programmatic"
+
 FixedThemes.order = {
     "shadowCastle",
     "frozenSanctum",

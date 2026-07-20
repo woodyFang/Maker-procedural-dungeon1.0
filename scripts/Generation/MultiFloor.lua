@@ -1075,7 +1075,17 @@ function MultiFloor.Validate(layers, rooms, connectors, entranceId, width, heigh
         AddTransition(upperGlobal, lowerGlobal)
     end
 
-    local entranceRoom = rooms[entranceId]
+    local entranceRoom = entranceId and rooms[entranceId]
+    if not entranceRoom then
+        for _, layer in ipairs(layers) do
+            layer.bfs = FilledArray(floorSize, -1)
+            layer.maxBfs = 0
+        end
+        return {
+            valid = #invalidConnectors == 0, distance = distance, reach = 0,
+            unreachableRooms = {}, unreachableConnectors = {}, invalidConnectors = invalidConnectors,
+        }
+    end
     local startCell = Index(entranceRoom.cx, entranceRoom.cy, width)
     local start = GlobalIndex(entranceRoom.floor, startCell)
     local queue, head = { start }, 1

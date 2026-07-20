@@ -1223,6 +1223,7 @@ end
 local function GenerateAttempt(seed, parameters)
     local floorCount = Clamp(math.floor((parameters.floorCount or 2) + 0.5), 1, 6)
     local floorHeight = MultiFloor.NormalizeFloorHeight(parameters.floorHeight)
+    local emptyScene = parameters.emptyScene == true
     local stableSeed = Random.U32(parameters.stableSeed or seed)
     local changedFloor = parameters.changedFloor
     local floorSeeds = {}
@@ -1231,19 +1232,27 @@ local function GenerateAttempt(seed, parameters)
     end
     local sourceCounts = parameters.roomCountsByFloor or {}
     local roomCounts = {}
-    for floor = 1, #sourceCounts do roomCounts[floor] = sourceCounts[floor] end
-    if #roomCounts == 0 then
-        local total = math.max(6, math.floor((parameters.roomCount or 42) + 0.5))
-        local base = math.floor(total / floorCount)
-        for floor = 1, floorCount do roomCounts[floor] = base end
-        for floor = 1, total - base * floorCount do roomCounts[floor] = roomCounts[floor] + 1 end
+    if emptyScene then
+        for floor = 1, floorCount do roomCounts[floor] = 0 end
+    else
+        for floor = 1, #sourceCounts do roomCounts[floor] = sourceCounts[floor] end
+        if #roomCounts == 0 then
+            local total = math.max(6, math.floor((parameters.roomCount or 42) + 0.5))
+            local base = math.floor(total / floorCount)
+            for floor = 1, floorCount do roomCounts[floor] = base end
+            for floor = 1, total - base * floorCount do roomCounts[floor] = roomCounts[floor] + 1 end
+        end
+        for floor = 1, floorCount do roomCounts[floor] = Clamp(math.floor((roomCounts[floor] or 21) + 0.5), 3, 50) end
     end
-    for floor = 1, floorCount do roomCounts[floor] = Clamp(math.floor((roomCounts[floor] or 21) + 0.5), 3, 50) end
     local loopRates = parameters.loopRatesByFloor or { parameters.loopRate or 0.15 }
     local densities = parameters.decorDensitiesByFloor or { parameters.decorDensity or 0.6 }
 
     local rooms, nextId = {}, 1
-    if parameters.editorEnabled and parameters.editorRooms and #parameters.editorRooms > 0 then
+    if emptyScene then
+        -- Fixed PCG hands an intentionally empty, renderer-valid shell to the
+        -- next generation stage. Colleagues can replace this branch with their
+        -- authored room and prop rules without changing the UI contract.
+    elseif parameters.editorEnabled and parameters.editorRooms and #parameters.editorRooms > 0 then
         for index, source in ipairs(parameters.editorRooms) do
             local width, height = Clamp(math.floor((source.w or 7) + 0.5), 5, 24), Clamp(math.floor((source.h or 7) + 0.5), 5, 24)
             rooms[index] = {
@@ -1294,7 +1303,7 @@ local function GenerateAttempt(seed, parameters)
     end
     -- Authored layouts are authoritative. Running the scatter separation pass here
     -- made a room jump again as soon as the user released the resize/move drag.
-    if not parameters.editorEnabled then
+    if not emptyScene and not parameters.editorEnabled then
         SeparateRooms(rooms, nil, parameters.preserveDungeon and changedFloor or nil)
     end
     local edges = nil
@@ -1350,7 +1359,10 @@ local function GenerateAttempt(seed, parameters)
         edges = BuildGraph(rooms, floorCount, loopRates, floorSeeds)
         edges = MergePreservedFloorEdges(rooms, edges, parameters.preserveDungeon, changedFloor)
     end
-    local entrance, boss, maxDepth, criticalLength = AssignSemantics(rooms, edges, floorCount, floorSeeds)
+    local entrance, boss, maxDepth, criticalLength = nil, nil, 1, 0
+    if not emptyScene then
+        entrance, boss, maxDepth, criticalLength = AssignSemantics(rooms, edges, floorCount, floorSeeds)
+    end
     local roomGroupsById, roomGroupCounts = AssignRoomGroups(rooms, parameters.roomGroups)
     local theme = Themes.Get(parameters.theme or "ancient")
     if (parameters.settingKey or "dungeon") == "dungeon" then
@@ -1383,7 +1395,9 @@ local function GenerateAttempt(seed, parameters)
             parameters.preserveDungeon and changedFloor or nil)
     end
     local width, height, editorOffset
-    if parameters.editorEnabled then
+    if emptyScene then
+        width, height = 1, 1
+    elseif parameters.editorEnabled then
         width, height, editorOffset = RebaseRooms(rooms, edges)
     else
         width, height = RebaseGeneratedRoomsByFloor(rooms, edges, floorCount)
@@ -1436,14 +1450,18 @@ local function GenerateAttempt(seed, parameters)
     end
     dungeon.stats.floorTiles = floorTiles
     dungeon.sceneInfo.floorArea = floorTiles * GeometryRules.CELL_SIZE * GeometryRules.CELL_SIZE
-    local nameA = { "沉没", "遗忘", "寂静", "空洞", "古老", "破碎", "无名", "陨落" }
-    local nameB = { "大厅", "病区", "中庭", "深层", "节点", "回廊", "核心区", "资料库" }
-    if parameters.settingKey == "hospital" then
-        nameA = { "废弃", "静默", "隔离", "苍白", "失序", "封锁", "无菌", "深夜" }
-        nameB = { "病区", "诊疗楼", "手术区", "急诊层", "隔离舱", "住院部", "地下病房", "档案室" }
+    if emptyScene then
+        dungeon.name = "固定 PCG 空场景"
+    else
+        local nameA = { "沉没", "遗忘", "寂静", "空洞", "古老", "破碎", "无名", "陨落" }
+        local nameB = { "大厅", "病区", "中庭", "深层", "节点", "回廊", "核心区", "资料库" }
+        if parameters.settingKey == "hospital" then
+            nameA = { "废弃", "静默", "隔离", "苍白", "失序", "封锁", "无菌", "深夜" }
+            nameB = { "病区", "诊疗楼", "手术区", "急诊层", "隔离舱", "住院部", "地下病房", "档案室" }
+        end
+        local nameRng = Random.new(StreamSeed(stableSeed, 0, STREAM_NAME))
+        dungeon.name = nameA[nameRng:Int(1, #nameA)] .. nameB[nameRng:Int(1, #nameB)]
     end
-    local nameRng = Random.new(StreamSeed(stableSeed, 0, STREAM_NAME))
-    dungeon.name = nameA[nameRng:Int(1, #nameA)] .. nameB[nameRng:Int(1, #nameB)]
     dungeon.hash = MultiFloor.StructuralHash(dungeon)
     return dungeon
 end

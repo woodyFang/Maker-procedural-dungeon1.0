@@ -380,23 +380,17 @@ function DungeonApp:CreatePanel()
             self.seed = ((os.time() * 1103515245 + math.floor(os.clock() * 1000000)) & 0xffffffff)
             self.editorRooms = nil; self:Generate(false, true)
         end,
-        onFixedSetting = function(id)
-            local preset = FixedThemes.Get(id)
-            if not preset then return false, "固定题材不存在" end
-            self.activeFixedThemeId = preset.id
+        onFixedPCG = function()
+            self.activeFixedThemeId = FixedThemes.MODE_ID
             self.activeCustomSettingId, self.customSettingName = nil, nil
-            self.settingKey, self.themeKey = preset.settingKey, preset.themeKey
-            self.floorHeight = MultiFloor.NormalizeFloorHeight(preset.floorHeight)
-            for floor = 1, self.floorCount do
-                self.roomCounts[floor] = preset.roomCount
-                self.loopRates[floor] = preset.loopRate
-                self.decorDensities[floor] = preset.decorDensity
-            end
+            self.settingKey, self.themeKey = "dungeon", "ancient"
+            self.floorHeight = MultiFloor.FLOOR_HEIGHT
             self.editorRooms = nil
+            self.editorLinks = nil
             self:ApplyTheme()
-            self:Generate(false, false)
+            self:Generate(false, true)
             if self.panel then
-                self.panel:SetStatus("固定题材“" .. preset.label .. "”已按 PCG 规则生成")
+                self.panel:SetStatus("固定 PCG 已进入空场景，等待 PCG 规则接入")
             end
             return true
         end,
@@ -936,6 +930,7 @@ function DungeonApp:GenerationOptions(useEditor, changedFloor, preserveDungeon)
         loopRatesByFloor = loops, decorDensitiesByFloor = densities,
         theme = self.themeKey, settingKey = self.settingKey,
         roomGroups = self:ActiveRoomGroups(),
+        emptyScene = self.activeFixedThemeId == FixedThemes.MODE_ID,
         changedFloor = changedFloor,
         preserveDungeon = preserveDungeon,
         editorEnabled = useEditor, editorRooms = useEditor and self.editorRooms or nil,
