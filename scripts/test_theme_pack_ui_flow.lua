@@ -20,8 +20,9 @@ function Start()
         Check(button.props.borderRadius ~= 999, name .. " random control still uses the pill appearance")
     end
     Check(panel.diceButton == nil, "legacy dice-only random seed control is still present")
-    Check(panel.fixedSettingList and panel.fixedSettingToggleButton and panel.fixedSettingList:GetNumChildren() == #FixedThemes.order,
-        "fixed PCG theme controls were not built")
+    Check(panel.fixedSettingModeButton and panel.fixedSettingList and panel.fixedSettingToggleButton
+            and panel.fixedSettingList:GetNumChildren() == #FixedThemes.order,
+        "fixed PCG theme controls were not built at topic level")
     panel:SetCustomSettingExpanded(true)
     panel:SetFixedSettingExpanded(true)
     Check(not panel.customSettingExpanded and panel.fixedSettingExpanded,

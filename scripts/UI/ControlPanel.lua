@@ -323,7 +323,10 @@ function ControlPanel.new(callbacks, initial)
     self.settingButtons = {}
     for _, key in ipairs(Themes.settingOrder) do
         local setting = Themes.GetSetting(key)
-        self.settingButtons[key] = PillButton(setting.label, function() callbacks.onSetting(key) end, { flexGrow = 1 })
+        self.settingButtons[key] = PillButton(setting.label, function()
+            self:SetFixedSettingExpanded(false)
+            callbacks.onSetting(key)
+        end, { width = 44, paddingHorizontal = 2, fontSize = 9.5 })
     end
 
     self.paletteExpanded = false
@@ -335,11 +338,17 @@ function ControlPanel.new(callbacks, initial)
     self.paletteToggleButton = ExpandButton(function() self:SetPaletteExpanded(not self.paletteExpanded) end)
     self.paletteToggleTooltip = TooltipButton(self.paletteToggleButton, "展开色调")
     self.paletteCustomButton = AddButton("＋ 自定义", function() self:OpenCustomPaletteModal() end)
-    self.randomSettingButton = RandomButton(function() callbacks.onRandomSetting() end)
+    self.randomSettingButton = RandomButton(function()
+        self:SetFixedSettingExpanded(false)
+        callbacks.onRandomSetting()
+    end)
     self.randomThemeButton = RandomButton(function() callbacks.onRandomTheme() end)
     self.randomSettingTooltip = TooltipButton(self.randomSettingButton, "随机题材")
     self.randomThemeTooltip = TooltipButton(self.randomThemeButton, "随机色调")
-    self.customSettingButton = AddButton("＋ 自定义", function() self:OpenCustomSettingModal() end)
+    self.customSettingButton = AddButton("＋ 自定义", function()
+        self:SetFixedSettingExpanded(false)
+        self:OpenCustomSettingModal()
+    end)
     self.customSettingExpanded = false
     self.customSettingToggleButton = ExpandButton(function()
         self:SetCustomSettingExpanded(not self.customSettingExpanded)
@@ -347,10 +356,11 @@ function ControlPanel.new(callbacks, initial)
     self.customSettingToggleTooltip = TooltipButton(self.customSettingToggleButton, "展开题材")
 
     self.fixedSettingExpanded = false
+    self.fixedSettingModeButton = PillButton("固定 PCG", function()
+        self:SetFixedSettingExpanded(not self.fixedSettingExpanded)
+    end, { width = 56, paddingHorizontal = 2, fontSize = 9.5 })
     self.fixedSettingList = UI.Panel { width = "100%", gap = 5 }
     self.fixedSettingList:SetVisible(false)
-    self.fixedSettingTitle = Label("固定 PCG", 10.5, C.dim, { flexGrow = 1, letterSpacing = 0.5 })
-    self.fixedSettingStatus = Label("固定规则", 8.5, C.teal, { fontWeight = "bold", letterSpacing = 0.5 })
     self.fixedSettingHint = Label("固定规则 PCG：不依赖 AI，选择后直接生成", 8.5, C.dim, {
         whiteSpace = "normal",
     })
@@ -928,12 +938,8 @@ function ControlPanel.new(callbacks, initial)
                 Row({ Label("题材", 10.5, C.dim, { flexGrow = 1, letterSpacing = 0.5 }),
                     self.customSettingButton, self.customSettingToggleTooltip }),
                 Row({ self.settingButtons.dungeon, self.settingButtons.hospital, self.settingButtons.school,
-                    self.randomSettingTooltip }, { gap = 5 }),
+                    self.fixedSettingModeButton, self.fixedSettingToggleTooltip, self.randomSettingTooltip }, { gap = 1 }),
                 self.customSettingHint, self.customSettingList,
-            }),
-            Section({
-                Row({ self.fixedSettingTitle, self.fixedSettingStatus, self.fixedSettingToggleTooltip },
-                    { alignItems = "center" }),
                 self.fixedSettingHint, self.fixedSettingList,
             }),
             Section({
@@ -1634,7 +1640,12 @@ function ControlPanel:RebuildCustomSettingList(items)
             onClick = function(_, event)
                 if event and event.button == MOUSEB_RIGHT then return end
                 self:CloseCustomSettingContextMenu()
-                if isDraft then self:OpenCustomSettingModal(saved); return end
+                if isDraft then
+                    self:SetFixedSettingExpanded(false)
+                    self:OpenCustomSettingModal(saved)
+                    return
+                end
+                self:SetFixedSettingExpanded(false)
                 local ok, reason = self.callbacks.onCustomSettingSelect(saved.id)
                 if ok == false then self:SetStatus(reason or "题材切换失败") end
             end,
@@ -1736,6 +1747,13 @@ function ControlPanel:SetFixedSettingExpanded(expanded)
     self.fixedSettingList:SetVisible(self.fixedSettingExpanded)
     self.fixedSettingToggleButton:SetExpanded(self.fixedSettingExpanded)
     self.fixedSettingToggleTooltip:SetContent(self.fixedSettingExpanded and "收起固定题材" or "展开固定题材")
+    local fixedActive = self.fixedSettingExpanded or ((self.currentState or {}).activeFixedThemeId ~= nil)
+    self.fixedSettingModeButton:SetText((fixedActive and "● " or "") .. "固定 PCG")
+    self.fixedSettingModeButton:SetStyle({
+        backgroundColor = fixedActive and { 48, 36, 29, 255 } or C.input,
+        borderColor = fixedActive and { 139, 91, 52, 255 } or C.inputLine,
+        textColor = fixedActive and { 255, 209, 157, 255 } or { 165, 173, 191, 255 },
+    })
 end
 
 function ControlPanel:RebuildFixedSettingList(items)
@@ -1801,9 +1819,13 @@ function ControlPanel:SetState(state)
     local setting = Themes.GetSetting(state.settingKey)
     local theme = Themes.Get(state.themeKey)
     local fixedTheme = FixedThemes.Get(state.activeFixedThemeId)
-    self.fixedSettingTitle:SetStyle({ fontColor = fixedTheme and { 255, 209, 157, 255 } or C.dim })
-    self.fixedSettingStatus:SetText(fixedTheme and "当前使用" or "固定规则")
-    self.fixedSettingStatus:SetStyle({ fontColor = fixedTheme and { 255, 209, 157, 255 } or C.teal })
+    local fixedActive = fixedTheme ~= nil or self.fixedSettingExpanded
+    self.fixedSettingModeButton:SetText((fixedActive and "● " or "") .. "固定 PCG")
+    self.fixedSettingModeButton:SetStyle({
+        backgroundColor = fixedActive and { 48, 36, 29, 255 } or C.input,
+        borderColor = fixedActive and { 139, 91, 52, 255 } or C.inputLine,
+        textColor = fixedActive and { 255, 209, 157, 255 } or { 165, 173, 191, 255 },
+    })
     if fixedTheme and self.customSettingExpanded then self:SetCustomSettingExpanded(false) end
     if state.activeCustomSettingId and self.fixedSettingExpanded then self:SetFixedSettingExpanded(false) end
     self.currentPaletteButton:SetText("● " .. theme.label)
