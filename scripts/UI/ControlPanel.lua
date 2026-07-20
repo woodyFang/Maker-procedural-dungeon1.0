@@ -1604,7 +1604,7 @@ function ControlPanel:RebuildCustomSettingList(items)
             children = {
                 visual,
                 UI.Panel { flexGrow = 1, gap = 3, children = {
-                    Label((active and "● " or "") .. saved.label, 11, { 232, 235, 242, 255 }, { fontWeight = "bold" }),
+                    Label(saved.label, 11, { 232, 235, 242, 255 }, { fontWeight = "bold" }),
                     Label(isDraft and "草稿 · 单击继续编辑" or "已生成 · 单击切换", 8.5,
                         isDraft and { 199, 158, 103, 255 } or { 122, 185, 171, 255 }),
                 } },
@@ -1658,7 +1658,7 @@ function ControlPanel:RebuildPaletteExpandedList(state)
             PaletteSwatch(theme.accentObject), PaletteSwatch(theme.flame),
         }, { width = 90, gap = 3, alignItems = "center" })
         local topChildren = {
-            Label((active and "● " or "") .. theme.label, 10.5, active and { 255, 215, 168, 255 } or C.text,
+            Label(theme.label, 10.5, active and { 255, 215, 168, 255 } or C.text,
                 { flexGrow = 1, fontWeight = "bold", whiteSpace = "nowrap", overflow = "hidden" }),
             SmallButton(active and "使用中" or "使用", function()
                 local ok, reason = self.callbacks.onTheme(paletteKey)
@@ -1715,13 +1715,13 @@ function ControlPanel:SetState(state)
     local theme = Themes.Get(state.themeKey)
     local fixedActive = state.topicMode == "fixedPCG"
         or (state.topicMode == nil and state.activeFixedThemeId ~= nil)
-    self.fixedSettingModeButton:SetText((fixedActive and "● " or "") .. "固定 PCG")
+    self.fixedSettingModeButton:SetText("固定 PCG")
     self.fixedSettingModeButton:SetStyle({
         backgroundColor = fixedActive and { 48, 36, 29, 255 } or C.input,
         borderColor = fixedActive and { 139, 91, 52, 255 } or C.inputLine,
         textColor = fixedActive and { 255, 209, 157, 255 } or { 165, 173, 191, 255 },
     })
-    self.currentPaletteButton:SetText("● " .. theme.label)
+    self.currentPaletteButton:SetText(theme.label)
     self.currentPaletteButton:SetStyle({
         backgroundColor = { 48, 36, 29, 255 },
         borderColor = { 139, 91, 52, 255 },
@@ -1736,7 +1736,7 @@ function ControlPanel:SetState(state)
         local active = key == state.settingKey
             and (state.topicMode == "base"
                 or (state.topicMode == nil and state.activeCustomSettingId == nil and state.activeFixedThemeId == nil))
-        button:SetText((active and "● " or "") .. Themes.GetSetting(key).label)
+        button:SetText(Themes.GetSetting(key).label)
         button:SetStyle({
             backgroundColor = active and { 48, 36, 29, 255 } or C.input,
             borderColor = active and { 139, 91, 52, 255 } or C.inputLine,
@@ -1762,7 +1762,7 @@ function ControlPanel:SetState(state)
     self.decorSlider:SetValue(decor); self.decorValue:SetText(string.format("%d%%", decor))
     for key, button in pairs(self.viewButtons) do
         local active = key == state.floorViewMode
-        button:SetText((active and "● " or "") .. ({current="当前",neighbors="相邻",all="全部",explode="展开"})[key])
+        button:SetText(({current="当前",neighbors="相邻",all="全部",explode="展开"})[key])
         button:SetStyle({
             backgroundColor = active and { 48, 36, 29, 255 } or C.input,
             borderColor = active and { 139, 91, 52, 255 } or C.inputLine,
