@@ -253,16 +253,16 @@ function ExactGeometryBatcher:QueueStructure(layer, floorSpacing)
                 local room = rid > 0 and self.dungeon.rooms[rid] or nil
                 local color
                 if self.hospital then
-                    color = layer.corridor[c] and 0x93aaa5 or 0xcbd6d2
-                    if room and room.type == "boss" then color = LerpColor(color, 0xe2ebe7, 0.12) end
-                    if room and room.type == "entrance" then color = LerpColor(color, 0xb7ccc7, 0.10) end
-                    if layer.doorway[c] then color = LerpColor(color, 0xe6eeea, 0.12) end
+                    color = layer.corridor[c] and 0x93aaa5 or 0xb4c1bb
+                    if room and room.type == "boss" then color = LerpColor(color, 0xcbd8d2, 0.12) end
+                    if room and room.type == "entrance" then color = LerpColor(color, 0xa8bbb4, 0.10) end
+                    if layer.doorway[c] then color = LerpColor(color, 0xc5d3cd, 0.12) end
                     if rng:Chance(0.02) then color = LerpColor(color, 0x7b8783, 0.12) end
                 elseif self.school then
                     color = layer.corridor[c] and self.theme.corridor or self.theme.floor
-                    if room and room.type == "entrance" then color = LerpColor(color, 0xdce7df, 0.10) end
-                    if room and room.type == "treasure" then color = LerpColor(color, 0xc5af87, 0.10) end
-                    if layer.doorway[c] then color = LerpColor(color, 0xf0eee5, 0.08) end
+                    if room and room.type == "entrance" then color = LerpColor(color, 0xc4d1c9, 0.10) end
+                    if room and room.type == "treasure" then color = LerpColor(color, 0xb09b78, 0.10) end
+                    if layer.doorway[c] then color = LerpColor(color, 0xd0d1c3, 0.08) end
                 else
                     color = layer.corridor[c] and self.theme.corridor or self.theme.floor
                     if room and room.type ~= "combat" then color = LerpColor(color, ROOM_TINT[room.type] or color, 0.17) end
@@ -299,7 +299,7 @@ function ExactGeometryBatcher:QueueStructure(layer, floorSpacing)
                 local wallColor = self.hospital and MultiplyColor(0xaebdb8, rng:Float(0.99, 1.02))
                     or (self.school and MultiplyColor(self.theme.wall, rng:Float(0.98, 1.02)))
                     or MultiplyColor(self.theme.wall, rng:Float(0.90, 1.08))
-                local capColor = self.hospital and MultiplyColor(0xd0d9d5, rng:Float(0.995, 1.02))
+                local capColor = self.hospital and MultiplyColor(0xb8c4bf, rng:Float(0.995, 1.02))
                     or (self.school and MultiplyColor(self.theme.cap, rng:Float(0.99, 1.02)))
                     or MultiplyColor(self.theme.cap, rng:Float(0.92, 1.10))
                 local wallMaterial = structure and structure.wallMaterial
@@ -330,18 +330,18 @@ function ExactGeometryBatcher:QueueStructure(layer, floorSpacing)
 end
 
 local PROP_SPEC = {
-    hospitalBed = { "hospitalBed", "hospitalWall", 0xd8e0dc },
+    hospitalBed = { "hospitalBed", "hospitalWall", 0xb7c3be },
     ivStand = { "ivStand", "hospitalTrim", 0x9aa8a4 },
-    medCabinet = { "medCabinet", "hospitalWall", 0xd1d9d5 },
+    medCabinet = { "medCabinet", "hospitalWall", 0xb2beb9 },
     receptionDesk = { "receptionDesk", "hospitalWall", 0xb9c4bf },
     nurseCounter = { "nurseCounter", "hospitalWall", 0xb6c5c0 },
     doctorDesk = { "doctorDesk", "hospitalWall", 0xb9b8aa },
-    examTable = { "examTable", "hospitalWall", 0xd3ded9 },
+    examTable = { "examTable", "hospitalWall", 0xb8c5bf },
     waitingBench = { "waitingBench", "hospitalWall", 0x7d8a86 },
     medCart = { "medCart", "hospitalTrim", 0xa8b7b2 },
     monitor = { "monitor", "hospitalTrim", 0x1f2f31 },
-    privacyCurtain = { "privacyCurtain", "cloth", 0xd9f0ec },
-    surgicalLamp = { "surgicalLamp", "hospitalTrim", 0xe7f8f4 },
+    privacyCurtain = { "privacyCurtain", "cloth", 0xb4c7c1 },
+    surgicalLamp = { "surgicalLamp", "hospitalTrim", 0xc5d7d1 },
     mriScanner = { "mriScanner", "hospitalWall", 0xc7d4d0 },
     oxygenTank = { "oxygenTank", "hospitalTrim", 0x8fd3cf },
     bioBin = { "bioBin", "hospitalWall", 0xd8a12d },
@@ -360,11 +360,11 @@ local PROP_SPEC = {
 }
 
 local WALL_PROPS = {
-    wallLight = { "wallLight", "glow", 0xd9fff7, 1.65 },
-    wallChart = { "wallChart", "hospitalWall", 0xe7efe9, 1.42 },
+    wallLight = { "wallLight", "glow", 0xb7d8d1, 1.65 },
+    wallChart = { "wallChart", "hospitalWall", 0xb8c6bf, 1.42 },
     noticeBoard = { "noticeBoard", "hospitalWall", 0xb9a97b, 1.38 },
-    clock = { "clock", "hospitalTrim", 0xf0f3ef, 1.64 },
-    wallPanel = { "wallPanel", "stone", 0xd6e4df, 1.20 },
+    clock = { "clock", "hospitalTrim", 0xc0cbc5, 1.64 },
+    wallPanel = { "wallPanel", "stone", 0xb8c7c0, 1.20 },
     hospitalSign = { "hospitalSign", "glow", 0xff3b35, 1.50 },
 }
 
@@ -411,13 +411,13 @@ function ExactGeometryBatcher:QueueProp(layer, prop, floorSpacing, rng)
         self:Add(geometryKey, spec[2], { x = x, y = baseY, z = z, scale = scale, ry = rot, color = color })
 
         if prop.kind == "hospitalBed" then
-            self:Add("bannerCloth", "cloth", { x=x, y=baseY+0.6, z=z, sx=scale*1.08, sy=scale*0.66, sz=scale, ry=rot, color=0xf2f5f2 })
+            self:Add("bannerCloth", "cloth", { x=x, y=baseY+0.6, z=z, sx=scale*1.08, sy=scale*0.66, sz=scale, ry=rot, color=0xc0cec7 })
         elseif prop.kind == "examTable" then
-            self:Add("bannerCloth", "cloth", { x=x, y=baseY+0.7, z=z, sx=scale*0.8, sy=scale*0.42, sz=scale, ry=rot, color=0xf4f7f4 })
+            self:Add("bannerCloth", "cloth", { x=x, y=baseY+0.7, z=z, sx=scale*0.8, sy=scale*0.42, sz=scale, ry=rot, color=0xc4d2cb })
         elseif prop.kind == "gurney" then
-            self:Add("bannerCloth", "cloth", { x=x, y=baseY+0.75, z=z, sx=scale*1.2, sy=scale*0.45, sz=scale, ry=rot, color=0xf2f6f2 })
+            self:Add("bannerCloth", "cloth", { x=x, y=baseY+0.75, z=z, sx=scale*1.2, sy=scale*0.45, sz=scale, ry=rot, color=0xc0d0c8 })
         elseif prop.kind == "surgeryTable" then
-            self:Add("bannerCloth", "cloth", { x=x, y=baseY+0.9, z=z, sx=scale*1.2, sy=scale*0.55, sz=scale, ry=rot, color=0xe9fff9 })
+            self:Add("bannerCloth", "cloth", { x=x, y=baseY+0.9, z=z, sx=scale*1.2, sy=scale*0.55, sz=scale, ry=rot, color=0xc5d8cf })
         elseif prop.kind == "medCabinet" then
             self:Add("emblem","glow",{x=x,y=baseY+1.02*scale,z=z+0.25*math.cos(rot),scale=scale*0.9,ry=rot,color=0xd96a62})
         elseif prop.kind == "receptionDesk" then
@@ -429,7 +429,7 @@ function ExactGeometryBatcher:QueueProp(layer, prop, floorSpacing, rng)
         elseif prop.kind == "monitor" then
             self:Add("emblem","glow",{x=x,y=baseY+0.84*scale,z=z+0.04,scale=scale*1.1,ry=rot,color=0x58c8bf})
         elseif prop.kind == "surgicalLamp" then
-            self:Add("emblem","glow",{x=x+0.68*scale,y=baseY+1.08*scale,z=z,scale=scale*1.6,ry=rot,color=0xf6fff8})
+            self:Add("emblem","glow",{x=x+0.68*scale,y=baseY+1.08*scale,z=z,scale=scale*1.6,ry=rot,color=0xc8ddd4})
         elseif prop.kind == "mriScanner" then
             self:Add("emblem","glow",{x=x,y=baseY+0.78*scale,z=z+0.48*math.cos(rot),scale=scale*1.3,ry=rot,color=0x58c8bf})
         elseif prop.kind == "bioBin" then

@@ -27,7 +27,7 @@ end
 local function CreateMaterial(color, roughness, metallic, emissive)
     local material = Material:new()
     material:SetTechnique(0, cache:GetResource("Technique", "Techniques/PBR/PBRNoTexture.xml"))
-    material:SetShaderParameter("MatDiffColor", Variant(HexColor(color, 1.2)))
+    material:SetShaderParameter("MatDiffColor", Variant(HexColor(color, 1.0)))
     material:SetShaderParameter("MatSpecColor", Variant(Color(0.35, 0.35, 0.35, 1)))
     material:SetShaderParameter("Metallic", Variant(metallic or 0.0))
     material:SetShaderParameter("Roughness", Variant(roughness or 0.8))
@@ -54,7 +54,7 @@ end
 local function CreateAlphaMaterial(color, roughness, emissive, alpha)
     local material = Material:new()
     material:SetTechnique(0, cache:GetResource("Technique", "Techniques/PBR/PBRNoTextureAlpha.xml"))
-    material:SetShaderParameter("MatDiffColor", Variant(HexColor(color, 1.1, alpha or 0.68)))
+    material:SetShaderParameter("MatDiffColor", Variant(HexColor(color, 1.0, alpha or 0.68)))
     material:SetShaderParameter("Roughness", Variant(roughness or 0.55))
     if emissive then
         material:SetShaderParameter("MatEmissiveColor", Variant(HexColor(emissive, 1.25)))

@@ -342,6 +342,16 @@ local function TestSchoolThemePackStability()
     badMount.props.schoolWallLight.height = 3.0
     Check(not ThemePacks.Validate(badMount, nil, MaterialRules.PROFILES),
         "ThemePack validation accepted a wall fixture above the minimum wall top")
+    local brightProp = {}
+    for key, value in pairs(pack) do brightProp[key] = value end
+    brightProp.props = {}
+    for key, value in pairs(pack.props) do brightProp.props[key] = value end
+    brightProp.props.schoolClock = {}
+    for key, value in pairs(pack.props.schoolClock) do brightProp.props.schoolClock[key] = value end
+    brightProp.props.schoolClock.color = 0xf4f4f4
+    local validBrightProp, brightPropReason = ThemePacks.Validate(brightProp, nil, MaterialRules.PROFILES)
+    Check(not validBrightProp and tostring(brightPropReason):find("too bright", 1, true) ~= nil,
+        "ThemePack validation accepted an over-bright non-emissive prop color")
     local falseFullHeight = {}
     for key, value in pairs(pack) do falseFullHeight[key] = value end
     falseFullHeight.verticalProfile = {}

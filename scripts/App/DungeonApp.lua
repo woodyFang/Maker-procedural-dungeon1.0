@@ -7,6 +7,7 @@ local LayoutEditor = require("UI.LayoutEditor")
 local SceneLayoutEditor = require("UI.SceneLayoutEditor")
 local CameraPreviewController = require("Gameplay.CameraPreviewController")
 local Themes = require("Config.Themes")
+local FixedThemes = require("Config.FixedThemes")
 local ThemePacks = require("Config.ThemePacks")
 local GenericThemeRules = require("Config.GenericThemeRules")
 local CustomizationStore = require("Config.CustomizationStore")
@@ -56,7 +57,7 @@ function DungeonApp.new()
         roomCounts = { 21, 21 }, loopRates = { 15, 15 }, decorDensities = { 60, 60 },
         customSettings = {}, roomGroups = {}, customPalettes = {},
         nextCustomSettingId = 1, nextRoomGroupId = 1, nextCustomPaletteId = 1,
-        activeCustomSettingId = nil, customSettingName = nil,
+        activeCustomSettingId = nil, customSettingName = nil, activeFixedThemeId = nil,
         customizationRevision = 0, customizationUpdatedAt = "", cloudLoadPending = false,
         customizationSaveInFlight = false, customizationSaveQueued = false, queuedSaveCallback = nil,
         editorActive = false, editorMode = "3d", editorTransition = nil, editorEntryMode = nil,
@@ -81,6 +82,7 @@ function DungeonApp:ApplyCustomizationData(data)
     self.nextRoomGroupId = normalized.nextRoomGroupId
     self.nextCustomPaletteId = normalized.nextCustomPaletteId
     self.activeCustomSettingId = normalized.activeCustomSettingId
+    self.activeFixedThemeId = nil
     self.customizationRevision = normalized.revision
     self.customizationUpdatedAt = normalized.updatedAt
     Themes.SetCustomPalettes(self.customPalettes)
@@ -332,6 +334,7 @@ function DungeonApp:State()
         roomCounts = self.roomCounts, loopRates = self.loopRates, decorDensities = self.decorDensities,
         customSettings = self.customSettings, roomGroups = self.roomGroups, customPalettes = self.customPalettes,
         activeCustomSettingId = self.activeCustomSettingId, customSettingName = self.customSettingName,
+        activeFixedThemeId = self.activeFixedThemeId,
         editorActive = self.editorActive, editorMode = self.editorMode,
         selectedEditorRoom = self.selectedEditorRoom,
         selectedEditorRoomGroupId = self.selectedEditorRoomGroupId,
@@ -350,6 +353,7 @@ end
 
 function DungeonApp:UseCustomSetting(record)
     if not record or record.packStatus == "draft" then return false end
+    self.activeFixedThemeId = nil
     self.activeCustomSettingId, self.customSettingName = record.id, record.label
     self.settingKey = Themes.settings[record.baseSettingKey] and record.baseSettingKey or "dungeon"
     self.floorHeight = MultiFloor.NormalizeFloorHeight(record.floorHeight)
@@ -376,11 +380,32 @@ function DungeonApp:CreatePanel()
             self.seed = ((os.time() * 1103515245 + math.floor(os.clock() * 1000000)) & 0xffffffff)
             self.editorRooms = nil; self:Generate(false, true)
         end,
+        onFixedSetting = function(id)
+            local preset = FixedThemes.Get(id)
+            if not preset then return false, "固定题材不存在" end
+            self.activeFixedThemeId = preset.id
+            self.activeCustomSettingId, self.customSettingName = nil, nil
+            self.settingKey, self.themeKey = preset.settingKey, preset.themeKey
+            self.floorHeight = MultiFloor.NormalizeFloorHeight(preset.floorHeight)
+            for floor = 1, self.floorCount do
+                self.roomCounts[floor] = preset.roomCount
+                self.loopRates[floor] = preset.loopRate
+                self.decorDensities[floor] = preset.decorDensity
+            end
+            self.editorRooms = nil
+            self:ApplyTheme()
+            self:Generate(false, false)
+            if self.panel then
+                self.panel:SetStatus("固定题材“" .. preset.label .. "”已按 PCG 规则生成")
+            end
+            return true
+        end,
         onSetting = function(key)
             local oldId, oldName, oldSetting, oldTheme =
                 self.activeCustomSettingId, self.customSettingName, self.settingKey, self.themeKey
             local oldFloorHeight = self.floorHeight
             self.activeCustomSettingId, self.customSettingName = nil, nil
+            self.activeFixedThemeId = nil
             self.floorHeight = MultiFloor.FLOOR_HEIGHT
             self.settingKey = key; self.themeKey = Themes.GetSetting(key).palettes[1]
             if oldId then
@@ -404,6 +429,7 @@ function DungeonApp:CreatePanel()
             local oldFloorHeight = self.floorHeight
             local hadCustom = self.activeCustomSettingId ~= nil
             self.activeCustomSettingId, self.customSettingName = nil, nil
+            self.activeFixedThemeId = nil
             self.floorHeight = MultiFloor.FLOOR_HEIGHT
             self.settingKey = Themes.NextSetting(self.settingKey)
             self.themeKey = Themes.RandomPalette(self.settingKey)
@@ -618,6 +644,7 @@ function DungeonApp:CreatePanel()
         onCustomPaletteSave = function(palette)
             local oldSetting, oldTheme = self.settingKey, self.themeKey
             local oldActiveId, oldActiveName = self.activeCustomSettingId, self.customSettingName
+            local oldFloorHeight = self.floorHeight
             if not palette.id then
                 palette.id = "custom-palette-" .. self.nextCustomPaletteId
                 self.nextCustomPaletteId = self.nextCustomPaletteId + 1
@@ -641,6 +668,7 @@ function DungeonApp:CreatePanel()
                 Themes.SetCustomPalettes(self.customPalettes)
                 self.settingKey, self.themeKey = oldSetting, oldTheme
                 self.activeCustomSettingId, self.customSettingName = oldActiveId, oldActiveName
+                self.floorHeight = oldFloorHeight
                 self.customizationRevision = math.max(0, self.customizationRevision - 1)
                 self:RefreshPanel()
                 return false, "本地保存失败：" .. tostring(reason)
@@ -674,9 +702,11 @@ function DungeonApp:CreatePanel()
         end,
         onTheme = function(key)
             if not Themes.IsPaletteForSetting(key, self.settingKey) then return false, "该配色不适用于当前题材。" end
+            self.activeFixedThemeId = nil
             self.themeKey = key; self:ApplyTheme(); self:RebuildView(); self:RefreshPanel(); return true
         end,
         onRandomTheme = function()
+            self.activeFixedThemeId = nil
             self.themeKey = Themes.RandomPalette(self.settingKey, self.themeKey)
             self:ApplyTheme(); self:RebuildView(); self:RefreshPanel()
         end,

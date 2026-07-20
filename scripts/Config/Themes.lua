@@ -43,12 +43,12 @@ Themes.abandoned = Theme("abandoned", "灰绿", 0x79b65f, 0x050807, 0x47654d, 0x
     0x747c72, 0x626c63, 0x535c53, 0x60685d, 0x79b65f, 0x83d86b, 0xe8ffd8)
 Themes.emergency = Theme("emergency", "警示红", 0xff5b4f, 0x0a0607, 0x7a4544, 0x080505, 0.42, 0xffc1b8, 0.52,
     0x756e6e, 0x675f5f, 0x5d5353, 0x695b59, 0xff5b4f, 0xff6d5f, 0xffeee8)
-Themes.schoolDay = Theme("schoolDay", "晴日青", 0x3f9b84, 0x101719, 0x8da5ad, 0x18201e, 0.48, 0xfff3dc, 0.62,
-    0xb8c3bd, 0xa7b3ad, 0xc8d0c7, 0xb5beb7, 0x3f9b84, 0xffcf6e, 0xfff4c7)
-Themes.schoolClassic = Theme("schoolClassic", "学院绿", 0x356f52, 0x121713, 0x87988b, 0x1c211c, 0.46, 0xffe5bf, 0.58,
-    0xb7aa91, 0xa69b84, 0xd0cbbb, 0xb7b19f, 0x356f52, 0xffbd62, 0xffebbd)
-Themes.schoolEvening = Theme("schoolEvening", "放学橙", 0xe0a545, 0x11151b, 0x667588, 0x17191f, 0.43, 0xffd3a3, 0.52,
-    0x89969a, 0x7c898d, 0xa7afae, 0x929c9b, 0xe0a545, 0xffaa52, 0xffe0a8)
+Themes.schoolDay = Theme("schoolDay", "晴日青", 0x3f9b84, 0x101719, 0x7d9597, 0x18201e, 0.38, 0xd7e0d4, 0.47,
+    0x919e98, 0x84928a, 0x9ca7a0, 0x929e96, 0x3f9b84, 0xd7bd8e, 0xd9e1c7)
+Themes.schoolClassic = Theme("schoolClassic", "学院绿", 0x356f52, 0x121713, 0x788a7d, 0x1c211c, 0.37, 0xd4c6a6, 0.45,
+    0x918571, 0x837a66, 0x9c968b, 0x918c7e, 0x356f52, 0xd6b789, 0xd8c9a7)
+Themes.schoolEvening = Theme("schoolEvening", "放学橙", 0xe0a545, 0x11151b, 0x5e6d7a, 0x17191f, 0.36, 0xc9b39a, 0.42,
+    0x707d81, 0x667279, 0x828c8b, 0x737f7f, 0xe0a545, 0xc7a16c, 0xcbb58d)
 
 -- Rendering values are kept byte-for-byte with the Three.js palette specs.
 -- The compact constructor above supplies UI-friendly defaults; this table
@@ -90,18 +90,18 @@ local exact = {
         cloth = 0x8c2f2a, torchLight = { 0xff4d42, 0.85, 8.5 },
         pools = { mode = 3, colA = 0x160706, colB = 0x74322d, glow = 0.45, amount = 0.035, pits = 1 },
         particles = { kind = 0, color = 0xffb3aa, n = 120 } },
-    schoolDay = { fog = 0x101719, fogDensity = 0.0018, floor = 0xb8c3bd, corridor = 0xa7b3ad,
-        wall = 0xc8d0c7, cap = 0xd9ded5, pillar = 0xb5beb7, ambient = 0.48, sunIntensity = 0.62,
-        debris = { 0x707b76, 0xa08769 }, cloth = 0x356f52,
-        torchLight = { 0xffedc2, 0.72, 8.0 }, particles = { kind = 0, color = 0xdde7e1, n = 80 } },
-    schoolClassic = { fog = 0x121713, fogDensity = 0.0020, floor = 0xb7aa91, corridor = 0xa69b84,
-        wall = 0xd0cbbb, cap = 0xe0dac7, pillar = 0xb7b19f, ambient = 0.46, sunIntensity = 0.58,
-        debris = { 0x6d6758, 0x9a744e }, cloth = 0x2e6047,
-        torchLight = { 0xffddb0, 0.74, 8.0 }, particles = { kind = 0, color = 0xe7dfcc, n = 80 } },
-    schoolEvening = { fog = 0x11151b, fogDensity = 0.0022, floor = 0x89969a, corridor = 0x7c898d,
-        wall = 0xa7afae, cap = 0xc1c6c2, pillar = 0x929c9b, ambient = 0.43, sunIntensity = 0.52,
-        debris = { 0x60696c, 0x8b7256 }, cloth = 0x8a5d2d,
-        torchLight = { 0xffbd73, 0.82, 8.5 }, particles = { kind = 0, color = 0xc8d0d4, n = 90 } },
+    schoolDay = { fog = 0x101719, fogDensity = 0.0018, floor = 0x919e98, corridor = 0x84928a,
+        wall = 0x9ca7a0, cap = 0xacb5ae, pillar = 0x929e96, ambient = 0.38, sunIntensity = 0.47,
+        debris = { 0x65716c, 0x8b7558 }, cloth = 0x356f52,
+        torchLight = { 0xd7bd8e, 0.58, 8.0 }, particles = { kind = 0, color = 0xb8c8bf, n = 80 } },
+    schoolClassic = { fog = 0x121713, fogDensity = 0.0020, floor = 0x918571, corridor = 0x837a66,
+        wall = 0x9c968b, cap = 0xaea898, pillar = 0x918c7e, ambient = 0.37, sunIntensity = 0.45,
+        debris = { 0x625d50, 0x80613f }, cloth = 0x2e6047,
+        torchLight = { 0xd6b789, 0.60, 8.0 }, particles = { kind = 0, color = 0xc4bca8, n = 80 } },
+    schoolEvening = { fog = 0x11151b, fogDensity = 0.0022, floor = 0x707d81, corridor = 0x667279,
+        wall = 0x828c8b, cap = 0x979d98, pillar = 0x737f7f, ambient = 0.36, sunIntensity = 0.42,
+        debris = { 0x535b5e, 0x765f47 }, cloth = 0x8a5d2d,
+        torchLight = { 0xc7a16c, 0.64, 8.5 }, particles = { kind = 0, color = 0xaeb8bd, n = 90 } },
 }
 for key, values in pairs(exact) do
     for field, value in pairs(values) do Themes[key][field] = value end

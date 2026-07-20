@@ -76,11 +76,11 @@ ThemePacks.packs.school = {
             mount = "wall", height = 1.48,
         },
         schoolClock = {
-            geometry = "clock", material = "schoolTrim", color = 0xe7e2d5,
+            geometry = "clock", material = "schoolTrim", color = 0xc4c0b4,
             mount = "wall", height = 1.78,
         },
         schoolWallLight = {
-            geometry = "wallLight", material = "glow", color = 0xfff4cf,
+            geometry = "wallLight", material = "glow", color = 0xd5b77b,
             mount = "wall", height = 1.88, emitsLight = true,
         },
     },
@@ -135,6 +135,19 @@ local function ValidateRule(rule, props, label)
     return true
 end
 
+local function ValidateModelColor(value, label)
+    if type(value) ~= "number" or value < 0 or value > 0xffffff then
+        return false, label .. " color is not a valid #RRGGBB value"
+    end
+    local red = (value >> 16) & 0xff
+    local green = (value >> 8) & 0xff
+    local blue = value & 0xff
+    if math.max(red, green, blue) > 0xdc then
+        return false, label .. " non-emissive color is too bright"
+    end
+    return true
+end
+
 function ThemePacks.Validate(pack, geometry, profiles)
     if type(pack) ~= "table" then return false, "theme pack is not a table" end
     if pack.schemaVersion ~= ThemePacks.SCHEMA_VERSION then return false, "theme pack schema mismatch" end
@@ -153,6 +166,18 @@ function ThemePacks.Validate(pack, geometry, profiles)
     for index, rule in ipairs(pack.wallRules or {}) do
         local valid, reason = ValidateRule(rule, pack.props, "wall rule " .. index)
         if not valid then return false, reason end
+    end
+    for kind, spec in pairs(pack.props) do
+        if spec.material ~= "glow" and spec.color ~= nil then
+            local valid, reason = ValidateModelColor(spec.color, kind)
+            if not valid then return false, reason end
+        end
+    end
+    if pack.spawnVisual and pack.spawnVisual.colors then
+        for index, color in ipairs(pack.spawnVisual.colors) do
+            local valid, reason = ValidateModelColor(color, "spawn visual " .. index)
+            if not valid then return false, reason end
+        end
     end
     if geometry then
         for name, key in pairs(pack.structure) do

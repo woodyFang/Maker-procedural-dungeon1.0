@@ -16,15 +16,15 @@ local ProceduralMaterialRules = {
         dungeonWall = { color = 0xd2cdc5, roughness = 0.88, metalness = 0.00, specular = 0.18 },
         dungeonCap = { color = 0xe2ddd5, roughness = 0.82, metalness = 0.01, specular = 0.24 },
         stone = { color = 0xe2ded7, roughness = 0.86, metalness = 0.00, specular = 0.26 },
-        hospitalFloor = { color = 0xf2ffff, roughness = 0.56, metalness = 0.01, specular = 0.52 },
-        hospitalWall = { color = 0xd8dfdc, roughness = 0.82, metalness = 0.00, specular = 0.22 },
-        hospitalTrim = { color = 0xf4fffd, roughness = 0.12, metalness = 0.90, specular = 0.94 },
-        schoolFloor = { color = 0xe8eee9, roughness = 0.48, metalness = 0.00, specular = 0.50 },
-        schoolWall = { color = 0xe5e7df, roughness = 0.86, metalness = 0.00, specular = 0.20 },
-        schoolTrim = { color = 0xdce4df, roughness = 0.38, metalness = 0.62, specular = 0.66 },
-        schoolWood = { color = 0xc39361, roughness = 0.58, metalness = 0.00, specular = 0.36 },
+        hospitalFloor = { color = 0xaab5b1, roughness = 0.56, metalness = 0.01, specular = 0.52 },
+        hospitalWall = { color = 0x98a39e, roughness = 0.82, metalness = 0.00, specular = 0.22 },
+        hospitalTrim = { color = 0xbac5c1, roughness = 0.12, metalness = 0.90, specular = 0.94 },
+        schoolFloor = { color = 0xb0bcb5, roughness = 0.48, metalness = 0.00, specular = 0.50 },
+        schoolWall = { color = 0xa5afa8, roughness = 0.86, metalness = 0.00, specular = 0.20 },
+        schoolTrim = { color = 0xaebbb4, roughness = 0.38, metalness = 0.62, specular = 0.66 },
+        schoolWood = { color = 0xa97e53, roughness = 0.58, metalness = 0.00, specular = 0.36 },
         schoolBoard = { color = 0x315b50, roughness = 0.74, metalness = 0.00, specular = 0.18 },
-        schoolCounter = { color = 0xc8d2cf, roughness = 0.42, metalness = 0.04, specular = 0.46 },
+        schoolCounter = { color = 0xaab7b2, roughness = 0.42, metalness = 0.04, specular = 0.46 },
         schoolAccent = { color = 0x4e91a8, roughness = 0.46, metalness = 0.02, specular = 0.44 },
         metalTrim = { color = 0xfff4df, roughness = 0.12, metalness = 0.92, specular = 0.92 },
         cloth = { roughness = 0.88, metalness = 0.0, specular = 0.36, side = 2 },
@@ -53,6 +53,13 @@ local function CheckProfile(profile, name)
     return true
 end
 
+local function MaxColorChannel(color)
+    local red = (color >> 16) & 0xff
+    local green = (color >> 8) & 0xff
+    local blue = color & 0xff
+    return math.max(red, green, blue) / 255
+end
+
 function ProceduralMaterialRules.Validate()
     for name, profile in pairs(ProceduralMaterialRules.PROFILES) do
         local valid, reason = CheckProfile(profile, name)
@@ -60,6 +67,16 @@ function ProceduralMaterialRules.Validate()
     end
 
     local profiles = ProceduralMaterialRules.PROFILES
+    local restrainedColors = {
+        hospitalFloor = 0.76, hospitalWall = 0.70, hospitalTrim = 0.80,
+        schoolFloor = 0.80, schoolWall = 0.76, schoolTrim = 0.80,
+        schoolCounter = 0.80,
+    }
+    for name, limit in pairs(restrainedColors) do
+        if MaxColorChannel(profiles[name].color) > limit then
+            return false, name .. " structural color is too bright"
+        end
+    end
     local dungeonRoughnessGap = profiles.dungeonWall.roughness - profiles.dungeonFloor.roughness
     if dungeonRoughnessGap < 0.12 or dungeonRoughnessGap > 0.24 then
         return false, "dungeon stone bricks must be only slightly smoother than the wall"

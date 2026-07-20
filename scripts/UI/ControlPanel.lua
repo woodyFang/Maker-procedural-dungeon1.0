@@ -1,5 +1,6 @@
 local UI = require("urhox-libs/UI")
 local Themes = require("Config.Themes")
+local FixedThemes = require("Config.FixedThemes")
 local ThemePacks = require("Config.ThemePacks")
 local GenericThemeRules = require("Config.GenericThemeRules")
 local MultiFloor = require("Generation.MultiFloor")
@@ -57,16 +58,143 @@ local function PillButton(text, onClick, extra)
     return SmallButton(text, onClick, props)
 end
 
+local function AddButton(text, onClick)
+    return SmallButton(text, onClick, {
+        width = 66, height = 27, fontSize = 9.0,
+        backgroundColor = { 17, 26, 25, 255 },
+        borderColor = { 53, 80, 72, 255 },
+        textColor = { 169, 207, 197, 255 },
+        borderRadius = 7,
+    })
+end
+
+local function DiceIcon(color)
+    local icon = UI.Panel {
+        width = 18, height = 18, position = "relative", pointerEvents = "none",
+    }
+    icon:AddChild(UI.Panel {
+        position = "absolute", left = 1, top = 1, width = 16, height = 16,
+        backgroundColor = { 0, 0, 0, 0 }, borderColor = color,
+        borderWidth = 2, borderRadius = 4, pointerEvents = "none",
+    })
+    local dotSize = 3
+    for _, point in ipairs({
+        { x = 4, y = 4 }, { x = 11, y = 4 }, { x = 7.5, y = 7.5 },
+        { x = 4, y = 11 }, { x = 11, y = 11 },
+    }) do
+        icon:AddChild(UI.Panel {
+            position = "absolute", left = point.x, top = point.y,
+            width = dotSize, height = dotSize, backgroundColor = color,
+            borderRadius = dotSize * 0.5, pointerEvents = "none",
+        })
+    end
+    return icon
+end
+
+local function TriangleIcon(color)
+    local icon = UI.Panel {
+        width = 16, height = 16, position = "relative", pointerEvents = "none",
+    }
+    local transparent = { 0, 0, 0, 0 }
+    local down = UI.Panel {
+        position = "absolute", left = 2, top = 4, width = 0, height = 0,
+        borderLeftWidth = 6, borderRightWidth = 6, borderTopWidth = 8,
+        borderLeftColor = transparent, borderRightColor = transparent,
+        borderTopColor = color, pointerEvents = "none",
+    }
+    local up = UI.Panel {
+        position = "absolute", left = 2, top = 4, width = 0, height = 0,
+        borderLeftWidth = 6, borderRightWidth = 6, borderBottomWidth = 8,
+        borderLeftColor = transparent, borderRightColor = transparent,
+        borderBottomColor = color, pointerEvents = "none",
+    }
+    up:SetVisible(false)
+    icon:AddChild(down)
+    icon:AddChild(up)
+    icon.downTriangle, icon.upTriangle = down, up
+    return icon
+end
+
+local function FixedThemeIcon(kind, color)
+    local icon = UI.Panel {
+        width = 34, height = 34, position = "relative", pointerEvents = "none",
+    }
+    local dark = { 18, 24, 34, 255 }
+    local function block(left, top, width, height, fill, radius)
+        return UI.Panel {
+            position = "absolute", left = left, top = top,
+            width = width, height = height, backgroundColor = fill or color,
+            borderRadius = radius or 2, pointerEvents = "none",
+        }
+    end
+    if kind == "castle" then
+        icon:AddChild(block(5, 13, 7, 16))
+        icon:AddChild(block(22, 13, 7, 16))
+        icon:AddChild(block(10, 17, 14, 12))
+        icon:AddChild(block(15, 22, 4, 7, dark, 1))
+    elseif kind == "ice" then
+        icon:AddChild(block(15, 4, 4, 26))
+        icon:AddChild(block(7, 15, 20, 4))
+        icon:AddChild(block(10, 9, 14, 4))
+        icon:AddChild(block(10, 21, 14, 4))
+    elseif kind == "hospital" then
+        icon:AddChild(block(6, 6, 22, 22, color, 4))
+        icon:AddChild(block(14, 9, 6, 16, dark, 1))
+        icon:AddChild(block(9, 14, 16, 6, dark, 1))
+    else
+        icon:AddChild(block(5, 11, 24, 18))
+        icon:AddChild(block(3, 8, 28, 4))
+        icon:AddChild(block(9, 16, 4, 5, dark, 1))
+        icon:AddChild(block(16, 16, 4, 5, dark, 1))
+        icon:AddChild(block(23, 16, 2, 5, dark, 1))
+    end
+    return icon
+end
+
 local function RandomButton(onClick, extra)
     local props = extra or {}
-    props.width = props.width or 66
+    props.width = props.width or 32
     props.height = props.height or 27
-    props.fontSize = props.fontSize or 9.5
+    props.fontSize = props.fontSize or 16
     props.backgroundColor = props.backgroundColor or { 40, 31, 27, 255 }
     props.borderColor = props.borderColor or { 112, 77, 48, 255 }
     props.textColor = props.textColor or { 255, 209, 157, 255 }
     props.borderRadius = props.borderRadius or 7
-    return SmallButton("↻ 随机", onClick, props)
+    props.paddingHorizontal, props.paddingVertical = 0, 0
+    props.alignItems, props.justifyContent = "center", "center"
+    props.children = { DiceIcon(props.textColor) }
+    return SmallButton(nil, onClick, props)
+end
+
+local function TooltipButton(button, content)
+    return UI.Tooltip {
+        content = content, position = "top", delay = 0.18,
+        children = { button },
+    }
+end
+
+local function ExpandButton(onClick)
+    local icon = TriangleIcon(C.dim)
+    local button = SmallButton(nil, onClick, {
+        width = 32, height = 27, fontSize = 16,
+        paddingHorizontal = 0, paddingVertical = 0,
+        alignItems = "center", justifyContent = "center",
+        backgroundColor = C.input, borderColor = C.inputLine,
+        textColor = C.dim, borderRadius = 7, children = { icon },
+    })
+    function button:SetExpanded(expanded)
+        local triangle = self.props.children[1]
+        local iconColor = expanded and C.accent or C.dim
+        triangle.downTriangle:SetVisible(not expanded)
+        triangle.upTriangle:SetVisible(expanded)
+        triangle.downTriangle:SetStyle({ borderTopColor = iconColor })
+        triangle.upTriangle:SetStyle({ borderBottomColor = iconColor })
+        self:SetStyle({
+            backgroundColor = expanded and { 48, 36, 29, 255 } or C.input,
+            borderColor = expanded and C.accent or C.inputLine,
+        })
+    end
+    return button
 end
 
 local function FloorSetting(labelText, valueLabel, slider)
@@ -188,8 +316,9 @@ function ControlPanel.new(callbacks, initial)
         onSubmit = function(_, value) local n = tonumber(value); if n then callbacks.onGenerate(math.floor(n)) end end,
     }
     self.randomSeedButton = RandomButton(function() callbacks.onRandomSeed() end, {
-        width = 66, height = 31, fontSize = 10.5,
+        width = 34, height = 31, fontSize = 17,
     })
+    self.randomSeedTooltip = TooltipButton(self.randomSeedButton, "随机种子")
 
     self.settingButtons = {}
     for _, key in ipairs(Themes.settingOrder) do
@@ -203,23 +332,33 @@ function ControlPanel.new(callbacks, initial)
     end, { flexGrow = 1, height = 28, fontSize = 10, textAlign = "left" })
     self.paletteExpandedList = UI.Panel { width = "100%", gap = 6 }
     self.paletteExpandedList:SetVisible(false)
-    self.paletteToggleButton = PillButton("▾ 展开", function() self:SetPaletteExpanded(not self.paletteExpanded) end, {
-        width = 58, height = 23, fontSize = 9.5,
-    })
-    self.paletteCustomButton = PillButton("＋ 自定义", function() self:OpenCustomPaletteModal() end, {
-        width = 66, height = 23, fontSize = 9.0, backgroundColor = { 17, 26, 25, 255 },
-        borderColor = { 53, 80, 72, 255 }, textColor = { 169, 207, 197, 255 },
-    })
+    self.paletteToggleButton = ExpandButton(function() self:SetPaletteExpanded(not self.paletteExpanded) end)
+    self.paletteToggleTooltip = TooltipButton(self.paletteToggleButton, "展开色调")
+    self.paletteCustomButton = AddButton("＋ 自定义", function() self:OpenCustomPaletteModal() end)
     self.randomSettingButton = RandomButton(function() callbacks.onRandomSetting() end)
     self.randomThemeButton = RandomButton(function() callbacks.onRandomTheme() end)
-    self.customSettingButton = SmallButton("＋ 自定义", function() self:OpenCustomSettingModal() end, {
-        width = 66, height = 27, fontSize = 9.0, backgroundColor = { 17, 26, 25, 255 },
-        borderColor = { 53, 80, 72, 255 }, textColor = { 169, 207, 197, 255 }, borderRadius = 7,
-    })
+    self.randomSettingTooltip = TooltipButton(self.randomSettingButton, "随机题材")
+    self.randomThemeTooltip = TooltipButton(self.randomThemeButton, "随机色调")
+    self.customSettingButton = AddButton("＋ 自定义", function() self:OpenCustomSettingModal() end)
     self.customSettingExpanded = false
-    self.customSettingToggleButton = PillButton("▾ 展开", function()
+    self.customSettingToggleButton = ExpandButton(function()
         self:SetCustomSettingExpanded(not self.customSettingExpanded)
-    end, { width = 58, height = 23, fontSize = 9.5 })
+    end)
+    self.customSettingToggleTooltip = TooltipButton(self.customSettingToggleButton, "展开题材")
+
+    self.fixedSettingExpanded = false
+    self.fixedSettingList = UI.Panel { width = "100%", gap = 5 }
+    self.fixedSettingList:SetVisible(false)
+    self.fixedSettingTitle = Label("固定 PCG", 10.5, C.dim, { flexGrow = 1, letterSpacing = 0.5 })
+    self.fixedSettingStatus = Label("固定规则", 8.5, C.teal, { fontWeight = "bold", letterSpacing = 0.5 })
+    self.fixedSettingHint = Label("固定规则 PCG：不依赖 AI，选择后直接生成", 8.5, C.dim, {
+        whiteSpace = "normal",
+    })
+    self.fixedSettingHint:SetVisible(false)
+    self.fixedSettingToggleButton = ExpandButton(function()
+        self:SetFixedSettingExpanded(not self.fixedSettingExpanded)
+    end)
+    self.fixedSettingToggleTooltip = TooltipButton(self.fixedSettingToggleButton, "展开固定题材")
 
     self.floorSummary = Label("共 2 层 · 42 区", 11, C.accent, { fontWeight = "bold" })
     self.floorDropdown = UI.Dropdown {
@@ -734,13 +873,11 @@ function ControlPanel.new(callbacks, initial)
     self.roomGroupList:SetVisible(false)
     self.roomGroupHint = Label("房间组：展开后管理可复用的房间布局", 8.5, C.dim)
     self.roomGroupHint:SetVisible(false)
-    self.roomGroupAddButton = SmallButton("＋ 添加", function() self:OpenRoomGroupModal() end, {
-        width = 66, height = 27, fontSize = 9.0, backgroundColor = { 17, 26, 25, 255 },
-        borderColor = { 53, 80, 72, 255 }, textColor = { 169, 207, 197, 255 }, borderRadius = 7,
-    })
-    self.roomGroupToggleButton = PillButton("▾ 展开", function()
+    self.roomGroupAddButton = AddButton("＋ 添加", function() self:OpenRoomGroupModal() end)
+    self.roomGroupToggleButton = ExpandButton(function()
         self:SetRoomGroupExpanded(not self.roomGroupExpanded)
-    end, { width = 58, height = 23, fontSize = 9.5 })
+    end)
+    self.roomGroupToggleTooltip = TooltipButton(self.roomGroupToggleButton, "展开房间")
     self.roomSelectionLabel = Label("未选择房间", 10, C.dim, { flexGrow = 1 })
     self.roomGroupAssignmentDropdown = UI.Dropdown {
         width = "100%", value = "", maxVisibleItems = 8,
@@ -781,7 +918,7 @@ function ControlPanel.new(callbacks, initial)
             Section({
                 Label("种子", 10.5, C.dim, { letterSpacing = 0.5 }),
                 Row({
-                    self.seedField, self.randomSeedButton,
+                    self.seedField, self.randomSeedTooltip,
                     UI.Button { text = "生成场景", width = 92, height = 31, fontSize = 12, fontWeight = "bold",
                         backgroundColor = C.accent, borderColor = C.accent, borderWidth = 1, borderRadius = 8,
                         textColor = { 19, 11, 5, 255 }, onClick = function() callbacks.onGenerate(self.seed) end },
@@ -789,22 +926,27 @@ function ControlPanel.new(callbacks, initial)
             }),
             Section({
                 Row({ Label("题材", 10.5, C.dim, { flexGrow = 1, letterSpacing = 0.5 }),
-                    self.customSettingButton, self.customSettingToggleButton }),
+                    self.customSettingButton, self.customSettingToggleTooltip }),
                 Row({ self.settingButtons.dungeon, self.settingButtons.hospital, self.settingButtons.school,
-                    self.randomSettingButton }, { gap = 5 }),
+                    self.randomSettingTooltip }, { gap = 5 }),
                 self.customSettingHint, self.customSettingList,
             }),
             Section({
+                Row({ self.fixedSettingTitle, self.fixedSettingStatus, self.fixedSettingToggleTooltip },
+                    { alignItems = "center" }),
+                self.fixedSettingHint, self.fixedSettingList,
+            }),
+            Section({
                 Row({ Label("色调", 10.5, C.dim, { flexGrow = 1, letterSpacing = 0.5 }),
-                    self.paletteCustomButton, self.paletteToggleButton }),
+                    self.paletteCustomButton, self.paletteToggleTooltip }),
                 Row({ Label("当前颜色", 9, C.dim, { width = 54 }), self.currentPaletteButton,
-                    self.randomThemeButton },
+                    self.randomThemeTooltip },
                     { alignItems = "center", gap = 6 }),
                 self.paletteExpandedList,
             }),
             Section({
                 Row({ Label("房间", 10.5, C.dim, { flexGrow = 1, letterSpacing = 0.5 }),
-                    self.roomGroupAddButton, self.roomGroupToggleButton }),
+                    self.roomGroupAddButton, self.roomGroupToggleTooltip }),
                 self.roomGroupHint,
                 self.roomGroupList,
             }),
@@ -1536,7 +1678,8 @@ end
 function ControlPanel:SetPaletteExpanded(expanded)
     self.paletteExpanded = expanded == true
     self.paletteExpandedList:SetVisible(self.paletteExpanded)
-    self.paletteToggleButton:SetText(self.paletteExpanded and "▴ 收起" or "▾ 展开")
+    self.paletteToggleButton:SetExpanded(self.paletteExpanded)
+    self.paletteToggleTooltip:SetContent(self.paletteExpanded and "收起色调" or "展开色调")
 end
 
 function ControlPanel:RebuildPaletteExpandedList(state)
@@ -1584,18 +1727,71 @@ function ControlPanel:SetCollapsed(collapsed)
     self.expandButton:SetVisible(collapsed)
 end
 
+function ControlPanel:SetFixedSettingExpanded(expanded)
+    self.fixedSettingExpanded = expanded == true
+    if self.fixedSettingExpanded and self.customSettingExpanded then
+        self:SetCustomSettingExpanded(false)
+    end
+    self.fixedSettingHint:SetVisible(self.fixedSettingExpanded)
+    self.fixedSettingList:SetVisible(self.fixedSettingExpanded)
+    self.fixedSettingToggleButton:SetExpanded(self.fixedSettingExpanded)
+    self.fixedSettingToggleTooltip:SetContent(self.fixedSettingExpanded and "收起固定题材" or "展开固定题材")
+end
+
+function ControlPanel:RebuildFixedSettingList(items)
+    self.fixedSettingList:ClearChildren()
+    for _, item in ipairs(items or {}) do
+        local saved = item
+        local active = (self.currentState or {}).activeFixedThemeId == saved.id
+        local icon = FixedThemeIcon(saved.icon, active and { 255, 215, 168, 255 } or C.accent)
+        icon:SetStyle({
+            backgroundColor = active and { 63, 45, 31, 255 } or { 27, 32, 45, 255 },
+            borderColor = active and C.accent or { 67, 76, 99, 255 },
+            borderWidth = active and 2 or 1, borderRadius = 8,
+        })
+        local card = UI.Panel {
+            width = "100%", minHeight = 54, padding = 7, flexDirection = "row",
+            alignItems = "center", gap = 8, pointerEvents = "box-only",
+            backgroundColor = active and { 34, 31, 31, 255 } or C.section,
+            borderColor = active and { 139, 91, 52, 255 } or { 41, 47, 64, 255 },
+            borderWidth = 1, borderRadius = 8,
+            onClick = function()
+                local ok, reason = self.callbacks.onFixedSetting(saved.id)
+                if ok == false then self:SetStatus(reason or "固定题材生成失败") end
+            end,
+            children = {
+                icon,
+                UI.Panel { flexGrow = 1, gap = 3, children = {
+                    Label((active and "● " or "") .. saved.label, 10.5,
+                        active and { 255, 215, 168, 255 } or C.text, { fontWeight = "bold" }),
+                    Label(saved.description or "固定规则 PCG", 8.5, C.dim, {
+                        whiteSpace = "normal", lineHeight = 1.15,
+                    }),
+                } },
+                Label("固定规则", 8, C.teal, { flexShrink = 0 }),
+            },
+        }
+        self.fixedSettingList:AddChild(card)
+    end
+end
+
 function ControlPanel:SetCustomSettingExpanded(expanded)
     self.customSettingExpanded = expanded == true
+    if self.customSettingExpanded and self.fixedSettingExpanded then
+        self:SetFixedSettingExpanded(false)
+    end
     self.customSettingHint:SetVisible(self.customSettingExpanded)
     self.customSettingList:SetVisible(self.customSettingExpanded)
-    self.customSettingToggleButton:SetText(self.customSettingExpanded and "▴ 收起" or "▾ 展开")
+    self.customSettingToggleButton:SetExpanded(self.customSettingExpanded)
+    self.customSettingToggleTooltip:SetContent(self.customSettingExpanded and "收起题材" or "展开题材")
 end
 
 function ControlPanel:SetRoomGroupExpanded(expanded)
     self.roomGroupExpanded = expanded == true
     self.roomGroupHint:SetVisible(self.roomGroupExpanded)
     self.roomGroupList:SetVisible(self.roomGroupExpanded)
-    self.roomGroupToggleButton:SetText(self.roomGroupExpanded and "▴ 收起" or "▾ 展开")
+    self.roomGroupToggleButton:SetExpanded(self.roomGroupExpanded)
+    self.roomGroupToggleTooltip:SetContent(self.roomGroupExpanded and "收起房间" or "展开房间")
 end
 
 function ControlPanel:SetState(state)
@@ -1604,6 +1800,12 @@ function ControlPanel:SetState(state)
     self.seedField:SetValue(tostring(self.seed))
     local setting = Themes.GetSetting(state.settingKey)
     local theme = Themes.Get(state.themeKey)
+    local fixedTheme = FixedThemes.Get(state.activeFixedThemeId)
+    self.fixedSettingTitle:SetStyle({ fontColor = fixedTheme and { 255, 209, 157, 255 } or C.dim })
+    self.fixedSettingStatus:SetText(fixedTheme and "当前使用" or "固定规则")
+    self.fixedSettingStatus:SetStyle({ fontColor = fixedTheme and { 255, 209, 157, 255 } or C.teal })
+    if fixedTheme and self.customSettingExpanded then self:SetCustomSettingExpanded(false) end
+    if state.activeCustomSettingId and self.fixedSettingExpanded then self:SetFixedSettingExpanded(false) end
     self.currentPaletteButton:SetText("● " .. theme.label)
     self.currentPaletteButton:SetStyle({
         backgroundColor = { 48, 36, 29, 255 },
@@ -1612,8 +1814,11 @@ function ControlPanel:SetState(state)
     })
     self.subtitle:SetText(string.format("%s · %s · 种子 %u · %s", state.customSettingName or setting.label, theme.label,
         self.seed & 0xffffffff, state.valid == false and "生成失败" or "已连通 ✓"))
+    if fixedTheme then
+        self.subtitle:SetText(fixedTheme.label .. " · " .. theme.label .. " · Fixed PCG")
+    end
     for key, button in pairs(self.settingButtons) do
-        local active = key == state.settingKey and state.activeCustomSettingId == nil
+        local active = key == state.settingKey and state.activeCustomSettingId == nil and state.activeFixedThemeId == nil
         button:SetText((active and "● " or "") .. Themes.GetSetting(key).label)
         button:SetStyle({
             backgroundColor = active and { 48, 36, 29, 255 } or C.input,
@@ -1647,6 +1852,7 @@ function ControlPanel:SetState(state)
             textColor = active and { 255, 209, 157, 255 } or C.dim,
         })
     end
+    self:RebuildFixedSettingList(FixedThemes.All())
     self:RebuildCustomSettingList(state.customSettings)
     self:RebuildRoomGroupList(state.roomGroups)
     local roomGroupOptions = { { value = "", label = "不赋予房间组" } }

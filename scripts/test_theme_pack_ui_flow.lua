@@ -1,4 +1,5 @@
 local DungeonApp = require("App.DungeonApp")
+local FixedThemes = require("Config.FixedThemes")
 
 local function Check(condition, message)
     if not condition then error(message, 2) end
@@ -14,10 +15,22 @@ function Start()
         setting = panel.randomSettingButton,
         theme = panel.randomThemeButton,
     }) do
-        Check(button ~= nil and button.props.text == "↻ 随机", name .. " random control is not an explicit button")
+        Check(button ~= nil and button.props.text == nil and button:GetNumChildren() > 0,
+            name .. " random control is not a graphic icon button")
         Check(button.props.borderRadius ~= 999, name .. " random control still uses the pill appearance")
     end
     Check(panel.diceButton == nil, "legacy dice-only random seed control is still present")
+    Check(panel.fixedSettingList and panel.fixedSettingToggleButton and panel.fixedSettingList:GetNumChildren() == #FixedThemes.order,
+        "fixed PCG theme controls were not built")
+    panel:SetCustomSettingExpanded(true)
+    panel:SetFixedSettingExpanded(true)
+    Check(not panel.customSettingExpanded and panel.fixedSettingExpanded,
+        "fixed PCG and custom theme expanders are not mutually exclusive")
+    panel:SetFixedSettingExpanded(false)
+    panel:SetCustomSettingExpanded(true)
+    Check(not panel.fixedSettingExpanded and panel.customSettingExpanded,
+        "custom theme and fixed PCG expanders are not mutually exclusive")
+    panel:SetCustomSettingExpanded(false)
     Check(app.dungeon and app.dungeon.sceneInfo, "generated dungeon has no basic scene information")
     Check(app.dungeon.sceneInfo.floorHeight == 5.0 and app.dungeon.sceneInfo.cellSize == 1.0,
         "basic scene information diverged from the authoritative geometry contract")
@@ -61,6 +74,14 @@ function Start()
     app.customSettings = {}
     app.roomGroups = {}
     app.activeCustomSettingId = nil
+    local fixedGenerated, fixedReason = panel.callbacks.onFixedSetting("frozenSanctum")
+    Check(fixedGenerated, fixedReason or "fixed PCG theme callback failed")
+    Check(app.activeFixedThemeId == "frozenSanctum" and app.activeCustomSettingId == nil,
+        "fixed PCG theme did not become active without creating a custom theme")
+    Check(app.settingKey == "dungeon" and app.themeKey == "frost" and app.floorHeight == 5.6,
+        "fixed PCG theme did not apply its authored scene rules")
+    Check(app.roomCounts[1] == 15 and app.loopRates[1] == 6 and app.decorDensities[1] == 38,
+        "fixed PCG theme did not apply its authored generation parameters")
     local genericGenerated, genericReason = panel.callbacks.onCustomSettingSave({
         label = "深海研究站", prompt = "海沟中的金属研究站和观景窗",
         baseSettingKey = "hospital", floorHeight = 4.2,
