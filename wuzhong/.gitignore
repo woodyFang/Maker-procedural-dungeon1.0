@@ -1,0 +1,22 @@
+uuid_mappings.json
+.cache
+
+# Local AI development kits and engine reference copies
+.agents/
+.claude/
+.codex/
+.cursor/
+.emmylua/
+.gemini/
+engine-docs/
+examples/
+schemas/
+skills/
+templates/
+tools/
+urhox-libs/
+
+# Local runtime, editor, and diagnostic output
+.tmp/
+logs/
+*.log

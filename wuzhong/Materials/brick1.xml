@@ -1,0 +1,5 @@
+<material>
+	<surfaceshader name="Shaders/BLGL/Generated/mat_pommaterial_e660b7c2.shader"/>
+	<surfacetexture name="tex_base_color" texture="Textures/brick1_D.png" type="Texture2D"/>
+	<surfacetexture name="tex_normal" texture="Textures/brick1_N.png" type="Texture2D"/>
+</material>

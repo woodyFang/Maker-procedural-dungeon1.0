@@ -1,0 +1,7 @@
+<material>
+	<technique name="Techniques/PBR/PBRDiff.xml"/>
+	<texture unit="diffuse" name="Textures/Leak4_D.png"/>
+	<parameter name="MatDiffColor" value="1 1 1 1"/>
+	<parameter name="Roughness" value="0.5"/>
+	<parameter name="Metallic" value="0"/>
+</material>
