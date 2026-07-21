@@ -83,6 +83,8 @@ function DungeonApp.new()
         nextCustomSettingId = 1, nextRoomGroupId = 1, nextCustomPaletteId = 1,
         activeCustomSettingId = nil, customSettingName = nil, activeFixedThemeId = nil,
         topicMode = TOPIC_MODE_BASE, topicSelectionVersion = 0,
+        fixedSettingSwitchInProgress = false, fixedSettingInputCooldown = 0,
+        fixedSettingSceneId = nil,
         customizationRevision = 0, customizationUpdatedAt = "", cloudLoadPending = false,
         cloudSyncEnabled = false,
         customizationSaveInFlight = false, customizationSaveQueued = false, queuedSaveCallback = nil,
@@ -246,7 +248,8 @@ function DungeonApp:LoadCloudCustomizations(onComplete)
         if finished then return end
         finished = true
         self.cloudLoadPending = false
-        if onComplete then onComplete(success, source, reason) end
+        local topicSelectionChanged = self.topicSelectionVersion ~= topicSelectionVersionAtStart
+        if onComplete then onComplete(success, source, reason, topicSelectionChanged) end
     end
 
     if not self.cloudSyncEnabled then
@@ -427,6 +430,11 @@ function DungeonApp:IsBgeoFixedThemeActive()
     return preset ~= nil and preset.externalScene == "bgeoManifest"
 end
 
+function DungeonApp:IsSceneLightingEnabled()
+    local preset = FixedThemes.Get(self.activeFixedThemeId)
+    return not (preset and preset.lightingEnabled == false)
+end
+
 function DungeonApp:ClearSceneContent()
     self.pendingPreviewMode, self.floorViewBeforePreview = nil, nil
     renderer:SetViewport(0, nil)
@@ -461,6 +469,17 @@ function DungeonApp:ClearSceneContent()
 end
 
 function DungeonApp:LoadLightingPreset(settingKey)
+    if not self:IsSceneLightingEnabled() then
+        if self.lightPreset == "disabled" and self.lightGroupNode and self.zone then return end
+        if self.lightGroupNode then self.lightGroupNode:Dispose() end
+        self.lightGroupNode = self.scene:CreateChild("LightGroup")
+        self.zone = self.lightGroupNode:CreateComponent("Zone")
+        self.zone.boundingBox = BoundingBox(Vector3(-1000, -1000, -1000), Vector3(1000, 1000, 1000))
+        self.sun = nil
+        self.lightPreset = "disabled"
+        print("[DungeonForge] lighting disabled for active fixed theme")
+        return
+    end
     local environment = ENVIRONMENTS[settingKey] or ENVIRONMENTS.dungeon
     local preset = environment.preset
     if self.lightPreset == preset and self.zone and self.sun then return end
@@ -549,6 +568,13 @@ function DungeonApp:CreatePanel()
         onFixedSetting = function(id)
             local preset = FixedThemes.Get(id)
             if not preset then return false, "固定题材不存在" end
+            if self.activeFixedThemeId == preset.id and self.fixedSettingSceneId == preset.id then
+                return true
+            end
+            if self.fixedSettingSwitchInProgress or (self.fixedSettingInputCooldown or 0) > 0 then
+                return true
+            end
+            self.fixedSettingSwitchInProgress = true
             self:MarkTopicSelectionChanged()
             self.topicMode = TOPIC_MODE_FIXED_PCG
             self.activeFixedThemeId = preset.id
@@ -569,8 +595,9 @@ function DungeonApp:CreatePanel()
                 self.decorDensities[floor] = preset.decorDensity
             end
             self.editorRooms = nil
+            local switched, switchReason = true, nil
             if preset.externalScene == "bgeoManifest" then
-                self:RefreshShadowCastle(true)
+                switched, switchReason = self:RefreshShadowCastle(true)
             elseif preset.emptyScene then
                 self:ClearSceneContent()
                 self:RefreshPanel()
@@ -578,6 +605,10 @@ function DungeonApp:CreatePanel()
                 self:ApplyTheme()
                 self:Generate(false, false)
             end
+            self.fixedSettingSwitchInProgress = false
+            self.fixedSettingInputCooldown = 0.25
+            if not switched then return false, switchReason end
+            self.fixedSettingSceneId = preset.id
             if self.panel and preset.externalScene ~= "bgeoManifest" then
                 self.panel:SetStatus(preset.emptyScene
                     and ("固定题材“" .. preset.label .. "”已切换为空场景")
@@ -1130,8 +1161,9 @@ function DungeonApp:Start()
     self:Generate(false, true)
     if self.cloudSyncEnabled then
         self.panel:SetStatus("正在读取云端题材…")
-        self:LoadCloudCustomizations(function(success, source, reason)
-            if success and (source == "cloud" or source == "local-synced") then
+        self:LoadCloudCustomizations(function(success, source, reason, topicSelectionChanged)
+            if success and not topicSelectionChanged
+                and (source == "cloud" or source == "local-synced") then
                 self:ApplyTheme()
                 self.editorRooms, self.editorLinks = nil, nil
                 self:Generate(false, false)
@@ -1165,6 +1197,9 @@ function DungeonApp:ApplyTheme()
     end
     renderer:SetViewport(0, self.overviewViewport)
     local theme = Themes.Get(self.themeKey)
+    if self.bgeoRenderer then
+        self.bgeoRenderer:SetLightingEnabled(self:IsSceneLightingEnabled())
+    end
     self:LoadLightingPreset(self.settingKey)
     self.zone.fogColor = HexColor(theme.fog, 1.0)
     self.zone.fogStart, self.zone.fogEnd = 0, 1000
@@ -1174,13 +1209,14 @@ function DungeonApp:ApplyTheme()
     self.zone.ambientStartColor = HexColor(theme.sky, 1.0)
     self.zone.ambientEndColor = HexColor(theme.ground, 1.0)
     self.zone.ambientColor = HexColor(theme.sky, 1.0)
-    self.zone.ambientIntensity = theme.ambient
+    self.zone.ambientIntensity = self:IsSceneLightingEnabled() and theme.ambient or 0
     self.zone.autoExposureEnabled = false
     self.zone.bloomPlusEnabled = self.postEnabled
     local fixedPreset = FixedThemes.Get(self.activeFixedThemeId)
-    if fixedPreset and fixedPreset.directionalLight == false then
+    if not self:IsSceneLightingEnabled() or (fixedPreset and fixedPreset.directionalLight == false) then
         if self.sun then self.sun:Dispose(); self.sun = nil end
-        print("[DungeonForge] fixed scene directional light removed id=" .. fixedPreset.id)
+        print("[DungeonForge] fixed scene directional light removed id="
+            .. tostring(fixedPreset and fixedPreset.id or "lighting-disabled"))
     else
         self.sun.color = HexColor(theme.sun, 1.0)
         self.sun.brightness = theme.sunIntensity
@@ -1600,6 +1636,7 @@ function DungeonApp:ConfirmCameraKeyboardInput()
 end
 
 function DungeonApp:HandleUpdate(timeStep)
+    self.fixedSettingInputCooldown = math.max(0, (self.fixedSettingInputCooldown or 0) - timeStep)
     self.dungeonRenderer:Update(timeStep)
     self.bgeoRenderer:Update(timeStep)
     if self.preview and self.preview:IsActive() then self.preview:Update(timeStep); return end

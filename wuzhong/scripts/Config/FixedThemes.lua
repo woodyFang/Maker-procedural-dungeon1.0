@@ -17,6 +17,7 @@ FixedThemes.presets = {
     shadowCastle = {
         id = "shadowCastle",
         externalScene = "bgeoManifest",
+        lightingEnabled = false,
         directionalLight = false,
         label = "暗影古堡",
         description = "狭长石室、低回环率、重装饰",

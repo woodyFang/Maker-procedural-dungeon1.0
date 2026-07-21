@@ -301,7 +301,24 @@ function BgeoDungeonRenderer.new(scene)
         cellDebugData = nil, cellDebugStats = nil, cachedBuild = nil,
         groupInstanceNodes = {},
         referenceLightsEnabled = false,
+        lightingEnabled = true,
     }, BgeoDungeonRenderer)
+end
+
+function BgeoDungeonRenderer:SetLightingEnabled(enabled)
+    local value = enabled ~= false
+    if self.lightingEnabled == value then return value end
+    self.lightingEnabled = value
+    if not value then
+        self:ClearLightDebugGeometry()
+        self.lightDebugVisible = false
+        for _, entry in ipairs(self.lights) do
+            if entry.node then entry.node:Dispose() end
+        end
+        self.lights = {}
+        if self.stats then self.stats.lights = 0 end
+    end
+    return value
 end
 
 function BgeoDungeonRenderer:ClearLightDebugGeometry()
@@ -390,7 +407,7 @@ end
 
 function BgeoDungeonRenderer:CreateGroup(name, unrealPath, rule)
     local modelName = AssetName(unrealPath)
-    local model = cache:GetResource("Model", "Models/" .. modelName .. ".mdl")
+    local model = cache:GetResourceAsyncEx("Model", "Models/" .. modelName .. ".mdl")
     if not model then
         print("[BgeoDungeon] missing model Models/" .. modelName .. ".mdl")
         return nil
@@ -399,7 +416,7 @@ function BgeoDungeonRenderer:CreateGroup(name, unrealPath, rule)
     local group = node:CreateComponent("StaticModelGroup")
     group:SetModel(model)
     local materialPath = MaterialOverridePath(rule) or MATERIAL_BY_MODEL[string.lower(modelName)]
-    local material = materialPath and cache:GetResource("Material", materialPath) or nil
+    local material = materialPath and cache:GetResourceAsyncEx("Material", materialPath) or nil
     if material then group:SetMaterial(material) end
     self.resolvedMaterials[name] = materialPath
     group.castShadows = true
@@ -471,6 +488,7 @@ function BgeoDungeonRenderer:AddPointLight(parent, rule, hash)
 end
 
 function BgeoDungeonRenderer:BuildReferenceLights(data)
+    if not self.lightingEnabled then return 0 end
     local root = self.root:CreateChild("DungeonMapLights")
     local count = 0
     for index, record in ipairs(data.lights) do
@@ -787,7 +805,7 @@ function BgeoDungeonRenderer:BuildAttachments(data, transformsByMesh)
                         self.doorSystem:Register(instance, rule,
                             string.format("%s-%d", rule.id or "door", candidate.index - 1))
                     end
-                    if rule.point_light_enabled and not self.referenceLightsEnabled then
+                    if rule.point_light_enabled and self.lightingEnabled and not self.referenceLightsEnabled then
                         self:AddPointLight(instance, rule, candidate.hash)
                         lightCount = lightCount + 1
                     end
@@ -805,7 +823,7 @@ local function AppendCandidates(target, candidates, count)
 end
 
 function BgeoDungeonRenderer:BuildMarkerLights(data, transformsByMesh, roomsByMesh)
-    if self.referenceLightsEnabled then return 0 end
+    if not self.lightingEnabled or self.referenceLightsEnabled then return 0 end
     local count = 0
     local lightRoot = self.root:CreateChild("ManifestLights")
     for _, rule in ipairs(data.meshes or {}) do
@@ -964,7 +982,9 @@ function BgeoDungeonRenderer:BuildManifest(data, source, lightData, lightSource,
     local valid, reason = ValidateManifest(data)
     if not valid then return false, reason end
     self.referenceLightsEnabled = lightData ~= nil
-    if not lightData then
+    if not self.lightingEnabled then
+        print("[BgeoDungeon] all scene lights disabled")
+    elseif not lightData then
         print("[BgeoDungeon] exact DungeonMap lights unavailable; using deterministic fallback: " .. tostring(lightSource))
     end
     self.previewStart = FindPreviewStart(data)
@@ -986,7 +1006,8 @@ function BgeoDungeonRenderer:BuildManifest(data, source, lightData, lightSource,
         attachedInstances = attachCount,
         scatterInstances = scatterCount,
         lights = referenceLights + companionLights + markerLights,
-        lightSource = lightData and lightSource or "deterministic fallback",
+        lightSource = self.lightingEnabled
+            and (lightData and lightSource or "deterministic fallback") or "disabled",
         doors = self.doorSystem:GetDoorCount(),
         groups = #self.groups,
         markerCount = pipelineStats and pipelineStats.markerCount or nil,

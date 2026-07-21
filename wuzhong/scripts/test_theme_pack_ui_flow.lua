@@ -85,6 +85,7 @@ function Start()
         "shadow castle retained character preview nodes")
     Check(not app.editorActive and not app.preview:IsActive(),
         "shadow castle left editor or character preview mode active")
+    app.fixedSettingInputCooldown = 0
     local restored, restoreReason = panel.callbacks.onFixedSetting("frozenSanctum")
     Check(restored, restoreReason or "non-empty fixed PCG theme did not restore the scene")
     Check(app.dungeon and app.preview.root and app.preview.character,
@@ -105,6 +106,7 @@ function Start()
         shadowRefreshCalls = shadowRefreshCalls + 1
         return true
     end
+    app.fixedSettingInputCooldown = 0
     local shadowGenerated, shadowReason = panel.callbacks.onFixedSetting("shadowCastle")
     Check(shadowGenerated, shadowReason or "shadow castle fixed PCG callback failed")
     Check(app.topicMode == "fixedPCG" and app.activeFixedThemeId == "shadowCastle"
@@ -113,6 +115,24 @@ function Start()
     Check(applyThemeCalls == 0 and generateCalls == 0,
         "shadow castle bypass did not use its dedicated Houdini refresh path")
 
+    Check(panel.callbacks.onFixedSetting("shadowCastle"),
+        "reselecting the active fixed preset failed")
+    Check(shadowRefreshCalls == 1,
+        "reselecting the active fixed preset rebuilt the scene")
+
+    app.fixedSettingSwitchInProgress = true
+    Check(panel.callbacks.onFixedSetting("frozenSanctum"),
+        "an in-progress fixed preset click was not ignored")
+    app.fixedSettingSwitchInProgress = false
+    Check(app.activeFixedThemeId == "shadowCastle" and generateCalls == 0,
+        "an in-progress fixed preset click changed the scene")
+
+    Check(panel.callbacks.onFixedSetting("frozenSanctum"),
+        "a queued fixed preset click was not ignored during cooldown")
+    Check(app.activeFixedThemeId == "shadowCastle" and generateCalls == 0,
+        "a queued fixed preset click changed the scene during cooldown")
+
+    app.fixedSettingInputCooldown = 0
     local presetGenerated, presetReason = panel.callbacks.onFixedSetting("frozenSanctum")
     Check(presetGenerated, presetReason or "fixed PCG preset callback failed")
     Check(app.topicMode == "fixedPCG" and app.activeFixedThemeId == "frozenSanctum"
@@ -133,6 +153,12 @@ function Start()
     Check(app.topicMode == "fixedPCG" and app.activeFixedThemeId == "frozenSanctum"
             and app.activeCustomSettingId == nil,
         "cloud customization reload replaced the selected fixed preset")
+
+    app.RefreshShadowCastle = function() return false, "synthetic refresh failure" end
+    app.fixedSettingInputCooldown = 0
+    local failedShadow, failedShadowReason = panel.callbacks.onFixedSetting("shadowCastle")
+    Check(failedShadow == false and failedShadowReason == "synthetic refresh failure",
+        "shadow castle refresh failure was not returned to the fixed preset callback")
     app.customSettings = {}
 
     local fixedGenerated, fixedReason = panel.callbacks.onFixedPCG()
