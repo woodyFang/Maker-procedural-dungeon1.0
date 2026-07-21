@@ -299,10 +299,29 @@ function ControlPanel.new(callbacks, initial)
     self.randomSeedTooltip = TooltipButton(self.randomSeedButton, "随机种子")
 
     self.settingButtons = {}
+    self.settingButtonTooltips = {}
     for _, key in ipairs(Themes.settingOrder) do
         local setting = Themes.GetSetting(key)
+        local builtinItem = {
+            isBuiltin = true,
+            baseSettingKey = key,
+            label = setting.label,
+            cloneLabel = setting.label .. "副本",
+            prompt = (ThemePacks.Get(key) and ThemePacks.Get(key).prompt) or setting.description,
+            packStatus = "builtin",
+        }
         self.settingButtons[key] = PillButton(setting.label, function() callbacks.onSetting(key) end,
-            { width = 44, paddingHorizontal = 2, fontSize = 9.5 })
+            {
+                width = 44, paddingHorizontal = 2, fontSize = 9.5,
+                onPointerDown = function(event)
+                    if event.button == MOUSEB_RIGHT then
+                        event:StopPropagation()
+                        event:PreventDefault()
+                        self:OpenCustomSettingContextMenu(builtinItem, event)
+                    end
+                end,
+            })
+        self.settingButtonTooltips[key] = TooltipButton(self.settingButtons[key], "左键选择 · 右键编辑副本")
     end
 
     self.paletteExpanded = false
@@ -823,7 +842,7 @@ function ControlPanel.new(callbacks, initial)
         },
     }
     self.customSettingList = UI.Panel { width = "100%", gap = 5 }
-    self.customSettingHint = Label("自定义题材：单击切换 · 右键管理", 8.5, C.dim)
+    self.customSettingHint = Label("题材包：单击切换 · 右键编辑", 8.5, C.dim)
     self.customSettingHint:SetVisible(false)
     self.customSettingList:SetVisible(false)
     self.roomGroupExpanded = false
@@ -885,7 +904,7 @@ function ControlPanel.new(callbacks, initial)
             Section({
                 Row({ Label("题材", 10.5, C.dim, { flexGrow = 1, letterSpacing = 0.5 }),
                     self.customSettingButton, self.customSettingToggleTooltip }),
-                Row({ self.settingButtons.dungeon, self.settingButtons.hospital, self.settingButtons.school,
+                Row({ self.settingButtonTooltips.dungeon, self.settingButtonTooltips.hospital, self.settingButtonTooltips.school,
                     self.fixedSettingModeButton, UI.Panel { flexGrow = 1 }, self.randomSettingTooltip }, { gap = 1 }),
                 self.customSettingHint, self.customSettingList,
             }),
@@ -1372,10 +1391,12 @@ end
 function ControlPanel:OpenCustomSettingModal(item)
     self:CloseCustomSettingContextMenu()
     self.referenceImagePasteKind = nil
-    self.editingCustomId = item and item.id or nil
-    self.customModalTitle:SetText(item and (item.packStatus == "draft" and "继续编辑草稿" or "编辑题材包") or "新建题材包")
+    local isBuiltin = item and item.isBuiltin == true
+    self.editingCustomId = item and not isBuiltin and item.id or nil
+    self.customModalTitle:SetText(isBuiltin and ("编辑" .. item.label .. "副本")
+        or (item and (item.packStatus == "draft" and "继续编辑草稿" or "编辑题材包") or "新建题材包"))
     self.updatingCustomForm = true
-    self.customNameField:SetValue(item and item.label or "")
+    self.customNameField:SetValue(isBuiltin and (item.cloneLabel or item.label) or (item and item.label or ""))
     self.customBaseSettingDropdown:SetValue(item and item.baseSettingKey or "dungeon")
     self.customFloorHeightField:SetValue(string.format("%.2f", item and item.floorHeight
         or (self.currentState and self.currentState.floorHeight) or MultiFloor.FLOOR_HEIGHT))
@@ -1442,7 +1463,7 @@ function ControlPanel:OpenCustomSettingContextMenu(item, event)
     self:CloseCustomSettingContextMenu()
     self.contextCustomId = item.id
     local rootLayout = self.root:GetAbsoluteLayout()
-    local menuWidth, menuHeight = 150, 108
+    local menuWidth, menuHeight = 150, item.isBuiltin and 48 or 108
     local x = (event and event.x or rootLayout.x + 20) - rootLayout.x
     local y = (event and event.y or rootLayout.y + 20) - rootLayout.y
     x = math.max(8, math.min(x, rootLayout.w - menuWidth - 8))
@@ -1457,6 +1478,21 @@ function ControlPanel:OpenCustomSettingContextMenu(item, event)
             backgroundColor = { 0, 0, 0, 0 }, textColor = danger and C.danger or C.text,
         })
     end
+    local menuChildren
+    if item.isBuiltin then
+        menuChildren = {
+            menuButton("编辑副本", function() self:OpenCustomSettingModal(item) end),
+        }
+    else
+        menuChildren = {
+            menuButton(item.packStatus == "draft" and "继续编辑" or "编辑题材", function()
+                self:OpenCustomSettingModal(item)
+            end),
+            menuButton("重命名", function() self:OpenCustomSettingRename(item) end),
+            UI.Panel { width = "100%", height = 1, backgroundColor = C.line },
+            menuButton("删除题材", function() self:ConfirmDeleteCustomSetting(item) end, true),
+        }
+    end
     local menu = UI.Panel {
         position = "absolute", left = x, top = y, width = menuWidth, padding = 5, gap = 2,
         backgroundColor = { 24, 28, 39, 250 }, borderColor = { 64, 71, 91, 255 },
@@ -1464,14 +1500,7 @@ function ControlPanel:OpenCustomSettingContextMenu(item, event)
             { x = 0, y = 10, blur = 28, spread = 0, color = { 0, 0, 0, 190 } },
         },
         onPointerDown = function(pointerEvent) pointerEvent:StopPropagation() end,
-        children = {
-            menuButton(item.packStatus == "draft" and "继续编辑" or "编辑题材", function()
-                self:OpenCustomSettingModal(item)
-            end),
-            menuButton("重命名", function() self:OpenCustomSettingRename(item) end),
-            UI.Panel { width = "100%", height = 1, backgroundColor = C.line },
-            menuButton("删除题材", function() self:ConfirmDeleteCustomSetting(item) end, true),
-        },
+        children = menuChildren,
     }
     self.customContextMenuLayer:AddChild(menu)
     self.customContextMenuLayer:SetVisible(true)
