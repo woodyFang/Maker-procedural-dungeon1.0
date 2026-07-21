@@ -462,7 +462,8 @@ function ControlPanel.new(callbacks, initial)
         local setting = Themes.GetSetting(key)
         baseSettingOptions[#baseSettingOptions + 1] = {
             value = key,
-            label = setting.label .. " · " .. (setting.description or "程序化题材包"),
+            label = key == "dungeon" and "默认规则"
+                or (setting.label .. " · " .. (setting.description or "程序化题材包")),
         }
     end
     self.customBaseSettingDropdown = UI.Dropdown {
@@ -1388,7 +1389,7 @@ function ControlPanel:OpenCustomSettingModal(item)
     self.customModalTitle:SetText(item and (item.packStatus == "draft" and "继续编辑草稿" or "编辑题材包") or "新建题材包")
     self.updatingCustomForm = true
     self.customNameField:SetValue(item and item.label or "")
-    self.customBaseSettingDropdown:SetValue(item and item.baseSettingKey or (self.currentState and self.currentState.settingKey) or "dungeon")
+    self.customBaseSettingDropdown:SetValue(item and item.baseSettingKey or "dungeon")
     self.customFloorHeightField:SetValue(string.format("%.2f", item and item.floorHeight
         or (self.currentState and self.currentState.floorHeight) or MultiFloor.FLOOR_HEIGHT))
     self.customPromptField:SetValue(item and item.prompt or "")
