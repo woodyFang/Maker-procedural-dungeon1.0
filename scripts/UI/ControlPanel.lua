@@ -611,7 +611,6 @@ function ControlPanel.new(callbacks, initial)
         textColor = { 20, 16, 12, 255 }, fontWeight = "bold",
     })
     self.customSettingFooter = Row({
-        SmallButton("取消", function() self.customSettingModal:Close() end, { width = 70 }),
         UI.Panel { flexGrow = 1 }, self.customDraftButton, self.customGenerateButton,
     }, { alignItems = "center", gap = 8 })
     self.customSettingModal:SetFooter(self.customSettingFooter)
@@ -707,8 +706,7 @@ function ControlPanel.new(callbacks, initial)
         },
     }
     self.paletteModal:SetFooter(Row({
-        self.paletteDeleteButton,
-        SmallButton("取消", function() self.paletteModal:Close() end, { flexGrow = 1 }),
+        self.paletteDeleteButton, UI.Panel { flexGrow = 1 },
         SmallButton("保存并使用", function() self:ApplyCustomPalette() end, {
             width = 108, variant = "primary", backgroundColor = C.teal, borderColor = C.teal,
             textColor = { 8, 24, 22, 255 }, fontWeight = "bold",
@@ -806,8 +804,7 @@ function ControlPanel.new(callbacks, initial)
         },
     }
     self.roomGroupModal:SetFooter(Row({
-        self.roomGroupDeleteButton,
-        SmallButton("取消", function() self.roomGroupModal:Close() end, { flexGrow = 1 }),
+        self.roomGroupDeleteButton, UI.Panel { flexGrow = 1 },
         SmallButton("保存房间组", function() self:ApplyRoomGroup() end, {
             width = 108, variant = "primary", backgroundColor = C.accent, borderColor = C.accent,
             textColor = { 20, 16, 12, 255 }, fontWeight = "bold",
@@ -837,10 +834,6 @@ function ControlPanel.new(callbacks, initial)
             },
         },
     }
-    self.imageHistoryModal:SetFooter(SmallButton("关闭", function() self.imageHistoryModal:Close() end, {
-        width = "100%", height = 32,
-    }))
-
     self.customSettingList = UI.Panel { width = "100%", gap = 5 }
     self.customSettingHint = Label("自定义题材：单击切换 · 右键管理", 8.5, C.dim)
     self.customSettingHint:SetVisible(false)
