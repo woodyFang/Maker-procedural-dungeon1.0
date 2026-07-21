@@ -134,6 +134,7 @@ local function RandomButton(onClick, extra)
     props.textColor = props.textColor or { 255, 209, 157, 255 }
     props.borderRadius = props.borderRadius or 7
     props.paddingHorizontal, props.paddingVertical = 0, 0
+    props.flexShrink = props.flexShrink or 0
     props.alignItems, props.justifyContent = "center", "center"
     props.children = { DiceIcon(props.textColor) }
     return SmallButton(nil, onClick, props)
@@ -904,7 +905,7 @@ function ControlPanel.new(callbacks, initial)
                 Row({ Label("题材", 10.5, C.dim, { flexGrow = 1, letterSpacing = 0.5 }),
                     self.customSettingButton, self.customSettingToggleTooltip }),
                 Row({ self.settingButtons.dungeon, self.settingButtons.hospital, self.settingButtons.school,
-                    self.fixedSettingModeButton, self.randomSettingTooltip }, { gap = 1 }),
+                    self.fixedSettingModeButton, UI.Panel { flexGrow = 1 }, self.randomSettingTooltip }, { gap = 1 }),
                 self.customSettingHint, self.customSettingList,
             }),
             Section({
