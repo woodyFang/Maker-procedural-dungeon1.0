@@ -1,0 +1,8 @@
+<material>
+	<surfaceshader name="Shaders/BLGL/Generated/mat_cloth_304862e6.shader"/>
+	<surfacetexture name="tex_base_color" texture="Textures/tapestry_D.png" type="Texture2D"/>
+	<surfacetexture name="tex_color_mask" texture="Textures/tapestry_SRM.png" type="Texture2D"/>
+	<surfacetexture name="tex_normal" texture="Textures/tapestry_N.png" type="Texture2D"/>
+	<parameter name="param_roughness" value="0.614678979"/>
+	<parameter name="param_metallic" value="0.584861994"/>
+</material>
