@@ -434,9 +434,6 @@ function ControlPanel.new(callbacks, initial)
     self.previewCrosshair:SetVisible(false)
 
     self.customModalTitle = Label("新建题材包", 20, C.text, { fontWeight = "bold" })
-    self.customModalEyebrow = Label("AI 题材生成", 9.5, C.accent, {
-        fontWeight = "bold", letterSpacing = 0.5,
-    })
     self.customNameField = UI.TextField {
         width = "100%", height = 46, value = "", maxLength = 24, placeholder = "例如：深海研究站",
         borderRadius = 8, borderColor = { 52, 58, 77, 255 }, focusedBorderColor = C.accent,
@@ -446,6 +443,7 @@ function ControlPanel.new(callbacks, initial)
     self.customFloorHeightHint = Label("美术基准 5.00 米 · 运行比例 1.00", 9, C.dim, {
         whiteSpace = "normal",
     })
+    self.customFloorHeightHint:SetVisible(false)
     self.customFloorHeightField = UI.TextField {
         width = 92, height = 36, value = "5.00", maxLength = 5, placeholder = "5.00",
         borderRadius = 7, borderColor = { 52, 58, 77, 255 }, focusedBorderColor = C.accent,
@@ -516,7 +514,6 @@ function ControlPanel.new(callbacks, initial)
                     width = 88, height = 42,
                 }),
             }, { gap = 6 }),
-            Label("支持常用图片格式，单张上限 20 MB", 8.5, { 145, 151, 161, 255 }),
         },
     }
     self.customSettingError = Label("", 10, C.danger, { whiteSpace = "normal" })
@@ -525,7 +522,7 @@ function ControlPanel.new(callbacks, initial)
     self.customAdvancedPanel = UI.Panel { width = "100%", padding = { 9, 10 }, gap = 7,
         backgroundColor = { 13, 17, 26, 255 }, borderColor = C.line, borderWidth = 1, borderRadius = 8,
         children = {
-            FieldLabel("参考生成体系", "仅影响已安装规则的匹配"), self.customBaseSettingDropdown,
+            FieldLabel("参考生成体系"), self.customBaseSettingDropdown,
         },
     }
     self.customAdvancedPanel:SetVisible(false)
@@ -534,8 +531,7 @@ function ControlPanel.new(callbacks, initial)
     end, { width = 108, height = 28, fontSize = 9.5, backgroundColor = { 18, 22, 32, 255 } })
 
     self.customFormPanel = UI.Panel { width = "100%", gap = 10, children = {
-        FieldLabel("题材名称", "必填"), self.customNameField,
-        FieldLabel("基础场景参数", "保存到题材规则"),
+        FieldLabel("题材名称"), self.customNameField,
         UI.Panel {
             width = "100%", padding = { 8, 10 }, gap = 6,
             backgroundColor = { 13, 17, 26, 255 }, borderColor = C.line,
@@ -545,16 +541,11 @@ function ControlPanel.new(callbacks, initial)
                     Label("层高", 11, C.text, { fontWeight = "bold", flexGrow = 1 }),
                     self.customFloorHeightField, Label("米", 10, C.dim, { width = 18 }),
                 }, { alignItems = "center" }),
-                self.customFloorHeightHint,
-                Label(string.format("可设置 %.1f–%.1f 米；同步影响楼层间距、结构纵向比例、楼梯和相机。",
-                    MultiFloor.MIN_FLOOR_HEIGHT, MultiFloor.MAX_FLOOR_HEIGHT), 8.5, C.dim,
-                    { whiteSpace = "normal", lineHeight = 1.35 }),
             },
         },
-        Row({ Label("描述你希望生成的场景", 11, C.text, { fontWeight = "bold", flexGrow = 1 }),
-            Label("生成时必填；草稿可留空", 9, C.dim) }),
+        FieldLabel("描述你希望生成的场景"),
         self.customPromptField,
-        FieldLabel("参考图片", "可选"), self.customImageInputRow, self.customImagePreview,
+        FieldLabel("参考图片"), self.customImageInputRow, self.customImagePreview,
         self.customAdvancedButton, self.customAdvancedPanel,
     } }
 
@@ -568,7 +559,6 @@ function ControlPanel.new(callbacks, initial)
         UI.Panel { width = "100%", padding = { 12, 13 }, gap = 5, backgroundColor = { 12, 17, 25, 255 },
             borderColor = C.line, borderWidth = 1, borderRadius = 9,
             children = { self.customPlanStatus, self.customPlanDescription } },
-        Label("将要生成的内容", 11, C.text, { fontWeight = "bold" }),
         UI.Panel { width = "100%", padding = { 11, 13 }, gap = 10, backgroundColor = { 20, 24, 35, 255 },
             borderColor = { 45, 51, 68, 255 }, borderWidth = 1, borderRadius = 9,
             children = {
@@ -577,9 +567,6 @@ function ControlPanel.new(callbacks, initial)
                 Row({ Label("道具规则", 9, C.dim, { width = 76 }), self.customPlanProps }),
                 Row({ Label("PBR 材质", 9, C.dim, { width = 76 }), self.customPlanMaterials }),
             } },
-        Label("生成成功后会切换到该题材并刷新本地场景预览。", 9.5, C.dim, {
-            whiteSpace = "normal", lineHeight = 1.4,
-        }),
     } }
     self.customSettingModal = OriginalModal {
         size = "md", dialogWidth = 620, dialogMaxHeight = 100000,
@@ -592,7 +579,7 @@ function ControlPanel.new(callbacks, initial)
         children = {
             Row({
                 UI.Panel { flexGrow = 1, gap = 4, children = {
-                    self.customModalEyebrow, self.customModalTitle,
+                    self.customModalTitle,
                 } },
                 SmallButton("×", function() self.customSettingModal:Close() end, {
                     width = 34, height = 34, fontSize = 18, backgroundColor = { 20, 24, 35, 255 },
