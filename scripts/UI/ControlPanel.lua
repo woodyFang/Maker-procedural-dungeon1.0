@@ -324,7 +324,7 @@ function ControlPanel.new(callbacks, initial)
     end)
     self.customSettingToggleTooltip = TooltipButton(self.customSettingToggleButton, "展开题材")
 
-    self.fixedSettingModeButton = PillButton("固定 PCG", function()
+    self.fixedSettingModeButton = PillButton("固定", function()
         callbacks.onFixedPCG()
     end, { width = 56, paddingHorizontal = 2, fontSize = 9.5 })
 
@@ -1734,7 +1734,7 @@ function ControlPanel:SetState(state)
     local theme = Themes.Get(state.themeKey)
     local fixedActive = state.topicMode == "fixedPCG"
         or (state.topicMode == nil and state.activeFixedThemeId ~= nil)
-    self.fixedSettingModeButton:SetText("固定 PCG")
+    self.fixedSettingModeButton:SetText("固定")
     self.fixedSettingModeButton:SetStyle({
         backgroundColor = fixedActive and { 48, 36, 29, 255 } or C.input,
         borderColor = fixedActive and { 139, 91, 52, 255 } or C.inputLine,
@@ -1749,7 +1749,7 @@ function ControlPanel:SetState(state)
     self.subtitle:SetText(string.format("%s · %s · 种子 %u · %s", state.customSettingName or setting.label, theme.label,
         self.seed & 0xffffffff, state.valid == false and "生成失败" or "已连通 ✓"))
     if fixedActive then
-        self.subtitle:SetText("固定 PCG · 空场景 · " .. theme.label)
+        self.subtitle:SetText("固定 · 空场景 · " .. theme.label)
     end
     for key, button in pairs(self.settingButtons) do
         local active = key == state.settingKey

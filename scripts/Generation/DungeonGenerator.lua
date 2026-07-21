@@ -1451,7 +1451,7 @@ local function GenerateAttempt(seed, parameters)
     dungeon.stats.floorTiles = floorTiles
     dungeon.sceneInfo.floorArea = floorTiles * GeometryRules.CELL_SIZE * GeometryRules.CELL_SIZE
     if emptyScene then
-        dungeon.name = "固定 PCG 空场景"
+        dungeon.name = "固定空场景"
     else
         local nameA = { "沉没", "遗忘", "寂静", "空洞", "古老", "破碎", "无名", "陨落" }
         local nameB = { "大厅", "病区", "中庭", "深层", "节点", "回廊", "核心区", "资料库" }

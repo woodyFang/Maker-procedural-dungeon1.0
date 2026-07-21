@@ -471,7 +471,7 @@ function DungeonApp:CreatePanel()
             self:ApplyTheme()
             self:Generate(false, true)
             if self.panel then
-                self.panel:SetStatus("固定 PCG 已进入空场景，等待 PCG 规则接入")
+                self.panel:SetStatus("固定已进入空场景，等待 PCG 规则接入")
             end
             return true
         end,
