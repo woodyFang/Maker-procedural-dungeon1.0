@@ -147,6 +147,29 @@ local function TooltipButton(button, content)
     }
 end
 
+local function SecondaryClickButton(button, onSecondaryClick)
+    local originalPointerDown = button.OnPointerDown
+    local originalClick = button.OnClick
+    function button:OnPointerDown(event)
+        if event and event.button == MOUSEB_RIGHT then
+            event:StopPropagation()
+            event:PreventDefault()
+            onSecondaryClick(event)
+            return
+        end
+        originalPointerDown(self, event)
+    end
+    function button:OnClick(event)
+        if event and event.button == MOUSEB_RIGHT then
+            event:StopPropagation()
+            event:PreventDefault()
+            return
+        end
+        originalClick(self, event)
+    end
+    return button
+end
+
 local function ExpandButton(onClick)
     local icon = TriangleIcon(C.dim)
     local button = SmallButton(nil, onClick, {
@@ -310,17 +333,10 @@ function ControlPanel.new(callbacks, initial)
             prompt = (ThemePacks.Get(key) and ThemePacks.Get(key).prompt) or setting.description,
             packStatus = "builtin",
         }
-        self.settingButtons[key] = PillButton(setting.label, function() callbacks.onSetting(key) end,
-            {
-                width = 44, paddingHorizontal = 2, fontSize = 9.5,
-                onPointerDown = function(event)
-                    if event.button == MOUSEB_RIGHT then
-                        event:StopPropagation()
-                        event:PreventDefault()
-                        self:OpenCustomSettingContextMenu(builtinItem, event)
-                    end
-                end,
-            })
+        self.settingButtons[key] = SecondaryClickButton(
+            PillButton(setting.label, function() callbacks.onSetting(key) end,
+                { width = 44, paddingHorizontal = 2, fontSize = 9.5 }),
+            function(event) self:OpenCustomSettingContextMenu(builtinItem, event) end)
         self.settingButtonTooltips[key] = TooltipButton(self.settingButtons[key], "左键选择 · 右键编辑副本")
     end
 
