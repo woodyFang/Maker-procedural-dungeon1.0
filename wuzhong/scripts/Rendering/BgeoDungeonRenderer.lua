@@ -298,7 +298,8 @@ function BgeoDungeonRenderer.new(scene)
         lightDebugVisible = false, lightDebugRoot = nil,
         lightDebugMaterial = nil, lightDebugMarkerMaterial = nil, elapsed = 0,
         cellDebugVisible = false, cellDebugRoot = nil, cellDebugMaterials = {},
-        cellDebugData = nil, cellDebugStats = nil,
+        cellDebugData = nil, cellDebugStats = nil, cachedBuild = nil,
+        groupInstanceNodes = {},
         referenceLightsEnabled = false,
     }, BgeoDungeonRenderer)
 end
@@ -312,20 +313,28 @@ function BgeoDungeonRenderer:ClearLightDebugGeometry()
     end
 end
 
-function BgeoDungeonRenderer:SetDungeonGeometryVisible(visible)
-    local enabled = visible == true
-    if self.root then self.root:SetDeepEnabled(enabled) end
-    for _, group in ipairs(self.groups or {}) do
-        if group then group:SetEnabled(enabled) end
-    end
-end
-
 function BgeoDungeonRenderer:ClearCellDebugGeometry()
     if self.cellDebugRoot then self.cellDebugRoot:Dispose(); self.cellDebugRoot = nil end
     for _, material in ipairs(self.cellDebugMaterials or {}) do material:Dispose() end
     self.cellDebugMaterials = {}
     self.cellDebugStats = nil
-    self:SetDungeonGeometryVisible(true)
+end
+
+function BgeoDungeonRenderer:DestroyDungeonGeometry()
+    self:ClearLightDebugGeometry()
+    self.doorSystem:Clear()
+    if self.root then self.root:Dispose(); self.root = nil end
+    self.groups = {}
+    self.groupInstanceNodes = {}
+    self.resolvedMaterials = {}
+    self.lights = {}
+end
+
+function BgeoDungeonRenderer:RestoreDungeonGeometry()
+    if self.root then return true, self.stats end
+    local build = self.cachedBuild
+    if not build then return false, "cached Shadow Castle build is unavailable" end
+    return self:BuildManifest(build.data, build.source, build.lightData, build.lightSource, build.pipelineStats)
 end
 
 function BgeoDungeonRenderer:Clear()
@@ -335,6 +344,7 @@ function BgeoDungeonRenderer:Clear()
         if group then group:RemoveAllInstanceNodes() end
     end
     self.groups = {}
+    self.groupInstanceNodes = {}
     self.resolvedMaterials = {}
     self.lights = {}
     self.doorSystem:Clear()
@@ -342,6 +352,7 @@ function BgeoDungeonRenderer:Clear()
     self.stats = nil
     self.previewStart = nil
     self.cellDebugData = nil
+    self.cachedBuild = nil
     self.elapsed = 0
     self.referenceLightsEnabled = false
 end
@@ -396,6 +407,16 @@ function BgeoDungeonRenderer:CreateGroup(name, unrealPath, rule)
     return group, node
 end
 
+function BgeoDungeonRenderer:AddGroupInstance(group, node)
+    group:AddInstanceNode(node)
+    local nodes = self.groupInstanceNodes[group]
+    if not nodes then
+        nodes = {}
+        self.groupInstanceNodes[group] = nodes
+    end
+    nodes[#nodes + 1] = node
+end
+
 function BgeoDungeonRenderer:AddRuleInstance(group, parent, transform, rule, suffix, partYaw)
     local marker = parent:CreateChild("Marker-" .. suffix)
     ApplyPackedTransform(marker, transform)
@@ -416,7 +437,7 @@ function BgeoDungeonRenderer:AddRuleInstance(group, parent, transform, rule, suf
         local uniform = range[1] + (range[2] - range[1]) * alpha
         instance.scale = Vector3(uniform, uniform, uniform)
     end
-    group:AddInstanceNode(instance)
+    self:AddGroupInstance(group, instance)
     return instance
 end
 
@@ -577,15 +598,20 @@ local function HoudiniSize(value)
 end
 
 local function CreateCellDebugMaterial(color)
-    local technique = cache:GetResource("Technique", "Techniques/NoTextureUnlit.xml")
-    if not technique then return nil, "missing Techniques/NoTextureUnlit.xml for cell debug" end
+    local technique = cache:GetResource("Technique", "Techniques/PBR/PBRNoTexture.xml")
+    if not technique then return nil, "missing Techniques/PBR/PBRNoTexture.xml for cell debug" end
     local material = Material:new()
     material:SetTechnique(0, technique)
     material:SetShaderParameter("MatDiffColor", Variant(Color(color[1], color[2], color[3], color[4])))
+    material:SetShaderParameter("MatEmissiveColor", Variant(Color(
+        color[1] * 1.5, color[2] * 1.5, color[3] * 1.5, 1.0)))
+    material:SetShaderParameter("Metallic", Variant(0.0))
+    material:SetShaderParameter("Roughness", Variant(0.85))
+    material.cullMode = CULL_NONE
     return material
 end
 
-local function AddCellDebugInstance(parent, group, modelBounds, center, size, name)
+local function AddCellDebugInstance(parent, model, material, modelBounds, center, size, name)
     local modelSize, modelCenter = modelBounds.size, modelBounds.center
     local scale = Vector3(
         size.x * CELL_DEBUG_INSET / math.max(0.000001, modelSize.x),
@@ -595,7 +621,11 @@ local function AddCellDebugInstance(parent, group, modelBounds, center, size, na
     node.position = center - Vector3(
         modelCenter.x * scale.x, modelCenter.y * scale.y, modelCenter.z * scale.z)
     node.scale = scale
-    group:AddInstanceNode(node)
+    local drawable = node:CreateComponent("StaticModel")
+    drawable:SetModel(model)
+    drawable:SetMaterial(material)
+    drawable.castShadows = false
+    drawable.occludee = false
 end
 
 function BgeoDungeonRenderer:SetCellDebugVisible(visible)
@@ -604,7 +634,14 @@ function BgeoDungeonRenderer:SetCellDebugVisible(visible)
         self:ClearLightDebugGeometry()
     end
     self.cellDebugVisible = visible == true
-    local ok, statsOrReason = self:RefreshCellDebugGeometry()
+    local ok, statsOrReason
+    if self.cellDebugVisible then
+        ok, statsOrReason = self:RefreshCellDebugGeometry()
+    else
+        self:ClearCellDebugGeometry()
+        ok, statsOrReason = self:RestoreDungeonGeometry()
+        if ok then statsOrReason = { rooms = 0, corridors = 0, stairs = 0, total = 0 } end
+    end
     if not ok then
         self.cellDebugVisible = false
         self:ClearCellDebugGeometry()
@@ -629,11 +666,11 @@ function BgeoDungeonRenderer:RefreshCellDebugGeometry()
         return false, "Shadow Castle canonical cells are unavailable"
     end
 
-    local cube = cache:GetResource("Model", "Models/Cube.mdl")
-    if not cube then return false, "missing Models/Cube.mdl for cell debug" end
+    local cube = cache:GetResource("Model", "Models/Box.mdl")
+    if not cube then return false, "missing Models/Box.mdl for cell debug" end
     local modelBounds = cube.boundingBox
     local root = self.scene:CreateChild("ShadowCastleCellDebug")
-    local groups, groupRoots, materials = {}, {}, {}
+    local groupRoots, materials, materialsByKey = {}, {}, {}
 
     for _, key in ipairs({ "room", "corridor", "stair" }) do
         local style = CELL_DEBUG_STYLE[key]
@@ -645,19 +682,14 @@ function BgeoDungeonRenderer:RefreshCellDebugGeometry()
         end
         materials[#materials + 1] = material
         local groupRoot = root:CreateChild(style.nodeName)
-        local group = groupRoot:CreateComponent("StaticModelGroup")
-        group:SetModel(cube)
-        group:SetMaterial(material)
-        group.castShadows = false
-        group.occludee = false
-        groups[key], groupRoots[key] = group, groupRoot
+        materialsByKey[key], groupRoots[key] = material, groupRoot
     end
 
     local stats = { rooms = 0, corridors = 0, stairs = 0, physicalStairs = 0, headroom = 0 }
     for _, room in ipairs(data.rooms) do
         if room.position and room.size then
             stats.rooms = stats.rooms + 1
-            AddCellDebugInstance(groupRoots.room, groups.room, modelBounds,
+            AddCellDebugInstance(groupRoots.room, cube, materialsByKey.room, modelBounds,
                 HoudiniPosition(room.position), HoudiniSize(room.size), "Room-" .. tostring(room.id))
         end
     end
@@ -668,19 +700,19 @@ function BgeoDungeonRenderer:RefreshCellDebugGeometry()
         local cellType = tonumber(cell.cell_type)
         if cell.position and cellType == 2 then
             stats.corridors = stats.corridors + 1
-            AddCellDebugInstance(groupRoots.corridor, groups.corridor, modelBounds,
+            AddCellDebugInstance(groupRoots.corridor, cube, materialsByKey.corridor, modelBounds,
                 HoudiniPosition(cell.position), cellDimensions, "Corridor-" .. tostring(cell.id))
         elseif cell.position and (cellType == 3 or cellType == 4) then
             stats.stairs = stats.stairs + 1
             if cellType == 3 then stats.physicalStairs = stats.physicalStairs + 1
             else stats.headroom = stats.headroom + 1 end
-            AddCellDebugInstance(groupRoots.stair, groups.stair, modelBounds,
+            AddCellDebugInstance(groupRoots.stair, cube, materialsByKey.stair, modelBounds,
                 HoudiniPosition(cell.position), cellDimensions, "Stair-" .. tostring(cell.id))
         end
     end
     stats.total = stats.rooms + stats.corridors + stats.stairs
     self.cellDebugRoot, self.cellDebugMaterials, self.cellDebugStats = root, materials, stats
-    self:SetDungeonGeometryVisible(false)
+    self:DestroyDungeonGeometry()
     print(string.format(
         "[BgeoDungeon] built cell debug rooms=%d corridors=%d stairs=%d physical=%d headroom=%d",
         stats.rooms, stats.corridors, stats.stairs, stats.physicalStairs, stats.headroom))
@@ -914,7 +946,7 @@ function BgeoDungeonRenderer:BuildScatter(data)
                                     instance.rotation = HoudiniCoordinateSystem.UEScatterRotation(
                                         cross, rule.local_up_axis, yaw, rule.align_to_normal == true)
                                     instance.scale = Vector3(scale, scale, scale)
-                                    group:AddInstanceNode(instance)
+                                    self:AddGroupInstance(group, instance)
                                     accepted[#accepted + 1] = location
                                     total = total + 1
                                 end
@@ -974,7 +1006,11 @@ function BgeoDungeonRenderer:Rebuild()
     local data, source = ReadManifest()
     if not data then return false, source end
     local lightData, lightSource = ReadLightManifest()
-    return self:BuildManifest(data, source, lightData, lightSource)
+    local ok, result = self:BuildManifest(data, source, lightData, lightSource)
+    if ok then
+        self.cachedBuild = { data = data, source = source, lightData = lightData, lightSource = lightSource }
+    end
+    return ok, result
 end
 
 function BgeoDungeonRenderer:RebuildFromHoudini(markerResult, cellDebugData)
@@ -986,6 +1022,13 @@ function BgeoDungeonRenderer:RebuildFromHoudini(markerResult, cellDebugData)
     local ok, result = self:BuildManifest(adapted, "houdini-runtime + " .. source,
         nil, "dynamic Marker lights", pipelineStats)
     if not ok then return false, result end
+    self.cachedBuild = {
+        data = adapted,
+        source = "houdini-runtime + " .. source,
+        lightData = nil,
+        lightSource = "dynamic Marker lights",
+        pipelineStats = pipelineStats,
+    }
     self.cellDebugData = cellDebugData
     local debugOk, debugReason = self:RefreshCellDebugGeometry()
     if not debugOk then

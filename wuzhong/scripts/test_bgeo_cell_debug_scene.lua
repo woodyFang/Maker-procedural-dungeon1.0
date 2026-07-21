@@ -62,9 +62,8 @@ function Start()
 
         local visible, cellStats = bgeoRenderer:SetCellDebugVisible(true)
         assert(visible and cellStats.total > 0, "cell debug geometry was not created")
-        for _, group in ipairs(bgeoRenderer.groups) do
-            assert(not group:IsEnabled(), "a dungeon StaticModelGroup remained enabled")
-        end
+        assert(bgeoRenderer.root == nil and #bgeoRenderer.groups == 0,
+            "the final dungeon geometry remained alive in cell debug mode")
 
         SubscribeToEvent("Update", "HandleBgeoCellDebugSceneUpdate")
     end, debug.traceback)

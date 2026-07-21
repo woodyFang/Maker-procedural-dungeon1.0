@@ -4,5 +4,5 @@
   "name": "MecchaChameleon Wuzhong",
   "author": { "id": "local" },
   "version": "1.0.0",
-  "entry": "test_bgeo_cell_debug_scene.lua"
+  "entry": "main.lua"
 }

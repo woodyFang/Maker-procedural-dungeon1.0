@@ -598,6 +598,8 @@ function DungeonApp:CreatePanel()
         onShadowCastleCellDebug = function()
             if not self:IsBgeoFixedThemeActive() then return nil, "请先选择暗影古堡。" end
             local enabled, statsOrReason = self.bgeoRenderer:ToggleCellDebug()
+            renderer:SetViewport(0, nil)
+            renderer:SetViewport(0, self.overviewViewport)
             self:RefreshPanel()
             return enabled, statsOrReason
         end,

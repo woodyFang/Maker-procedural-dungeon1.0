@@ -4,6 +4,17 @@ local HoudiniMeshInfoAdapter = require("Generation.HoudiniMeshInfoAdapter")
 local BgeoDungeonRenderer = require("Rendering.BgeoDungeonRenderer")
 local DungeonApp = require("App.DungeonApp")
 
+local resultPath = ".tmp/houdini-shadow-castle.result.txt"
+
+local function WriteResult(message)
+    if not fileSystem:DirExists(".tmp") then fileSystem:CreateDir(".tmp") end
+    local result = File(resultPath, FILE_WRITE)
+    if result and result:IsOpen() then
+        result:WriteLine(message)
+        result:Close()
+    end
+end
+
 local function Check(condition, message)
     if not condition then error(message, 2) end
 end
@@ -193,6 +204,10 @@ function Start()
         Check(bgeoRenderer.resolvedMaterials["BGEO-ground_floor01_corridor"] == "Materials/pavement2.xml",
             "corridor Ground rule did not resolve Materials/pavement2.xml from mesh_info")
 
+        local originalGroups = stats.groups
+        local originalInstances = stats.baseInstances + stats.attachedInstances + stats.scatterInstances
+        local originalLights = stats.lights
+
         local cellDebugEnabled, cellStats = bgeoRenderer:ToggleCellDebug()
         Check(cellDebugEnabled == true, "cell debug did not enable: " .. tostring(cellStats))
         Check(cellStats.rooms == #dungeon.rooms, "cell debug room volume count differs")
@@ -206,30 +221,37 @@ function Start()
             "cell debug did not include all physical/headroom stair cells")
         Check(cellStats.total == cellStats.rooms + cellStats.corridors + cellStats.stairs,
             "cell debug total count is inconsistent")
-        Check(bgeoRenderer.cellDebugRoot ~= nil and not bgeoRenderer.root:IsEnabled(),
+        Check(bgeoRenderer.cellDebugRoot ~= nil and bgeoRenderer.root == nil,
             "cell debug did not replace the final dungeon view")
-        for _, group in ipairs(bgeoRenderer.groups) do
-            Check(not group:IsEnabled() and not group:GetNode():IsEnabled(),
-                "cell debug left a dungeon render component or node enabled")
-        end
+        Check(#bgeoRenderer.groups == 0, "cell debug left dungeon render groups alive")
 
         local cellDebugDisabled, disabledStats = bgeoRenderer:ToggleCellDebug()
         Check(cellDebugDisabled == false and disabledStats.total == 0,
             "cell debug did not report a clean disabled state")
-        Check(bgeoRenderer.cellDebugRoot == nil and bgeoRenderer.root:IsEnabled(),
+        Check(bgeoRenderer.cellDebugRoot == nil and bgeoRenderer.root ~= nil and bgeoRenderer.root:IsEnabled(),
             "disabling cell debug did not restore the final dungeon view")
         for _, group in ipairs(bgeoRenderer.groups) do
             Check(group:IsEnabled() and group:GetNode():IsEnabled(),
                 "disabling cell debug did not restore a dungeon render component and node")
         end
+        Check(bgeoRenderer.stats.groups == originalGroups,
+            "disabling cell debug restored a different render group count")
+        Check(bgeoRenderer.stats.baseInstances + bgeoRenderer.stats.attachedInstances
+                + bgeoRenderer.stats.scatterInstances == originalInstances,
+            "disabling cell debug restored a different instance count")
+        Check(bgeoRenderer.stats.lights == originalLights,
+            "disabling cell debug restored a different light count")
 
         bgeoRenderer:Dispose()
         scene:Dispose()
-        print(string.format(
-            "[HoudiniShadowCastle] PASS floors=3 totalRooms=22 stairs=26 markers=%d faces=%d doors=%d lights=%d",
-            stats.markerCount, stats.faceCount, stats.doors, stats.lights))
+        local passMessage = string.format(
+            "PASS floors=3 rooms=22 stairs=26 debugBoxes=%d restoredGroups=%d restoredInstances=%d restoredLights=%d",
+            cellStats.total, originalGroups, originalInstances, originalLights)
+        WriteResult(passMessage)
+        print("[HoudiniShadowCastle] " .. passMessage)
     end, debug.traceback)
     if not ok then
+        WriteResult("FAIL\n" .. tostring(errorMessage))
         log:Write(LOG_ERROR, "[HoudiniShadowCastle] FAIL " .. tostring(errorMessage))
         engine:Exit()
         return
