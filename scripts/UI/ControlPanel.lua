@@ -553,17 +553,12 @@ function ControlPanel.new(callbacks, initial)
     }
     self.customSettingError = Label("", 10, C.danger, { whiteSpace = "normal" })
 
-    self.customAdvancedExpanded = false
     self.customAdvancedPanel = UI.Panel { width = "100%", padding = { 9, 10 }, gap = 7,
         backgroundColor = { 13, 17, 26, 255 }, borderColor = C.line, borderWidth = 1, borderRadius = 8,
         children = {
             FieldLabel("参考生成体系"), self.customBaseSettingDropdown,
         },
     }
-    self.customAdvancedPanel:SetVisible(false)
-    self.customAdvancedButton = SmallButton("+ 高级设置", function()
-        self:SetCustomAdvancedExpanded(not self.customAdvancedExpanded)
-    end, { width = 108, height = 28, fontSize = 9.5, backgroundColor = { 18, 22, 32, 255 } })
 
     self.customFormPanel = UI.Panel { width = "100%", gap = 10, children = {
         FieldLabel("题材名称"), self.customNameField,
@@ -581,7 +576,7 @@ function ControlPanel.new(callbacks, initial)
         FieldLabel("描述你希望生成的场景"),
         self.customPromptField,
         FieldLabel("参考图片"), self.customImageInputRow, self.customImagePreview,
-        self.customAdvancedButton, self.customAdvancedPanel,
+        self.customAdvancedPanel,
     } }
 
     self.customPlanStatus = Label("等待分析", 12, C.accent, { fontWeight = "bold" })
@@ -1272,12 +1267,6 @@ function ControlPanel:FindCustomSetting(id)
     end
 end
 
-function ControlPanel:SetCustomAdvancedExpanded(expanded)
-    self.customAdvancedExpanded = expanded == true
-    self.customAdvancedPanel:SetVisible(self.customAdvancedExpanded)
-    self.customAdvancedButton:SetText(self.customAdvancedExpanded and "− 高级设置" or "+ 高级设置")
-end
-
 function ControlPanel:RefreshCustomFloorHeightHint()
     local value = tonumber(Trim(self.customFloorHeightField:GetValue()))
     if not value then
@@ -1420,7 +1409,6 @@ function ControlPanel:OpenCustomSettingModal(item)
     self:SetReferenceImage("custom", item and item.imagePath or nil, item and item.imageName or nil)
     self.updatingCustomForm = false
     self:RefreshCustomFloorHeightHint()
-    self:SetCustomAdvancedExpanded(false)
     self.customSettingError:SetText("")
     self:RefreshCustomSettingPlan()
     print("[ControlPanel] open custom setting modal mode=" .. (item and "edit" or "new"))
