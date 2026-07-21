@@ -360,9 +360,9 @@ function ControlPanel.new(callbacks, initial)
     end)
     self.customSettingToggleTooltip = TooltipButton(self.customSettingToggleButton, "展开题材")
 
-    self.fixedSettingModeButton = PillButton("固定", function()
+    self.fixedSettingModeButton = PillButton("固定PCG", function()
         callbacks.onFixedPCG()
-    end, { width = 56, paddingHorizontal = 2, fontSize = 9.5 })
+    end, { width = 72, paddingHorizontal = 2, fontSize = 9.5 })
 
     self.floorSummary = Label("共 2 层 · 42 区", 11, C.accent, { fontWeight = "bold" })
     self.floorDropdown = UI.Dropdown {
@@ -856,6 +856,30 @@ function ControlPanel.new(callbacks, initial)
     self.customSettingHint = Label("题材包：单击切换 · 右键编辑", 8.5, C.dim)
     self.customSettingHint:SetVisible(false)
     self.customSettingList:SetVisible(false)
+    self.aiTopicLabel = Label("AI生成", 10.5, C.teal, { fontWeight = "bold" })
+    self.aiTopicHint = Label("可自定义", 8.5, C.dim, { flexGrow = 1 })
+    self.aiTopicPanel = UI.Panel {
+        width = "100%", padding = { 7, 8 }, gap = 5,
+        backgroundColor = { 20, 31, 34, 255 }, borderColor = { 47, 91, 86, 255 },
+        borderWidth = 1, borderRadius = 8,
+        children = {
+            Row({ self.aiTopicLabel, self.aiTopicHint,
+                self.customSettingButton, self.customSettingToggleTooltip, self.randomSettingTooltip }, { gap = 4 }),
+            Row({ self.settingButtonTooltips.dungeon, self.settingButtonTooltips.hospital,
+                self.settingButtonTooltips.school, UI.Panel { flexGrow = 1 } }, { gap = 1 }),
+            self.customSettingHint, self.customSettingList,
+        },
+    }
+    self.fixedTopicLabel = Label("固定规则", 10.5, C.text, { fontWeight = "bold" })
+    self.fixedTopicHint = Label("与 AI 生成互斥", 8.5, C.dim, { flexGrow = 1 })
+    self.fixedTopicPanel = UI.Panel {
+        width = "100%", padding = { 7, 8 },
+        backgroundColor = { 24, 25, 31, 255 }, borderColor = C.inputLine,
+        borderWidth = 1, borderRadius = 8,
+        children = {
+            Row({ self.fixedTopicLabel, self.fixedTopicHint, self.fixedSettingModeButton }, { gap = 4 }),
+        },
+    }
     self.roomGroupExpanded = false
     self.roomGroupList = UI.Panel { width = "100%", gap = 5 }
     self.roomGroupList:SetVisible(false)
@@ -913,11 +937,9 @@ function ControlPanel.new(callbacks, initial)
                 }, { gap = 5 }),
             }),
             Section({
-                Row({ Label("题材", 10.5, C.dim, { flexGrow = 1, letterSpacing = 0.5 }),
-                    self.customSettingButton, self.customSettingToggleTooltip }),
-                Row({ self.settingButtonTooltips.dungeon, self.settingButtonTooltips.hospital, self.settingButtonTooltips.school,
-                    self.fixedSettingModeButton, UI.Panel { flexGrow = 1 }, self.randomSettingTooltip }, { gap = 1 }),
-                self.customSettingHint, self.customSettingList,
+                Label("题材", 10.5, C.dim, { letterSpacing = 0.5 }),
+                self.aiTopicPanel,
+                self.fixedTopicPanel,
             }),
             Section({
                 Row({ Label("色调", 10.5, C.dim, { flexGrow = 1, letterSpacing = 0.5 }),
@@ -1742,12 +1764,23 @@ function ControlPanel:SetState(state)
     local theme = Themes.Get(state.themeKey)
     local fixedActive = state.topicMode == "fixedPCG"
         or (state.topicMode == nil and state.activeFixedThemeId ~= nil)
-    self.fixedSettingModeButton:SetText("固定")
+    local aiActive = not fixedActive
+    self.fixedSettingModeButton:SetText("固定PCG")
     self.fixedSettingModeButton:SetStyle({
         backgroundColor = fixedActive and { 48, 36, 29, 255 } or C.input,
         borderColor = fixedActive and { 139, 91, 52, 255 } or C.inputLine,
         textColor = fixedActive and { 255, 209, 157, 255 } or { 165, 173, 191, 255 },
     })
+    self.aiTopicPanel:SetStyle({
+        backgroundColor = aiActive and { 20, 31, 34, 255 } or { 20, 24, 31, 255 },
+        borderColor = aiActive and { 47, 91, 86, 255 } or C.inputLine,
+    })
+    self.fixedTopicPanel:SetStyle({
+        backgroundColor = fixedActive and { 43, 34, 29, 255 } or { 24, 25, 31, 255 },
+        borderColor = fixedActive and { 139, 91, 52, 255 } or C.inputLine,
+    })
+    self.aiTopicLabel:SetStyle({ fontColor = aiActive and C.teal or C.dim })
+    self.fixedTopicLabel:SetStyle({ fontColor = fixedActive and { 255, 209, 157, 255 } or C.text })
     self.currentPaletteButton:SetText(theme.label)
     self.currentPaletteButton:SetStyle({
         backgroundColor = { 48, 36, 29, 255 },
