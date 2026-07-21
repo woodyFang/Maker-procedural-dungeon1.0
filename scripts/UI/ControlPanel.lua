@@ -1318,11 +1318,9 @@ end
 
 function ControlPanel:UpdateCustomSettingPlan(payload)
     local resolvedKey, pack = ThemePacks.ResolvePrompt(payload.prompt, payload.label, nil)
-    local source = "题材描述"
     if not pack then
         resolvedKey = payload.baseSettingKey
         pack = ThemePacks.Get(resolvedKey)
-        source = "参考生成体系"
     end
     self.customResolvedPackKey = pack and resolvedKey or nil
     if not pack then
@@ -1330,15 +1328,12 @@ function ControlPanel:UpdateCustomSettingPlan(payload)
         self.customPlanMode = GenericThemeRules.GENERATION_MODE
         self.customPlanStatus:SetText("可生成预览 · 使用通用规则")
         self.customPlanStatus:SetStyle({ fontColor = C.teal })
-        self.customPlanDescription:SetText(
-            string.format("未匹配专用题材包，本次将继承“%s”的结构、素材、摆放与材质规则，以 %.2f 米层高生成基础预览；AI 3D 资产接口仍待接入。",
-                contract.baseSettingLabel, payload.floorHeight))
-        self.customPlanStructure:SetText(string.format("层高 %.2f 米 / 纵向比例 %.2f · %s",
-            payload.floorHeight, payload.floorHeight / MultiFloor.SOURCE_FLOOR_HEIGHT,
-            table.concat(contract.structureRules, " / ")))
-        self.customPlanRooms:SetText("房间定义可选；未定义时执行题材通用区域逻辑")
-        self.customPlanProps:SetText("使用已安装通用素材 · 避开门口和主通道 · 保持可通行")
-        self.customPlanMaterials:SetText("使用已安装 PBR 材质规则（不会虚构 AI 模型）")
+        self.customPlanDescription:SetText(string.format("使用“%s”通用规则生成预览。", contract.baseSettingLabel))
+        self.customPlanStructure:SetText(string.format("层高 %.2f 米 · 纵向 %.2f · 楼层 / 区域 / 走廊 / 门 / 楼梯",
+            payload.floorHeight, payload.floorHeight / MultiFloor.SOURCE_FLOOR_HEIGHT))
+        self.customPlanRooms:SetText("房间定义可选 · 未定义时使用通用区域")
+        self.customPlanProps:SetText("通用素材 · 避开门口和主通道 · 保持可通行")
+        self.customPlanMaterials:SetText("已安装 PBR 材质")
         self.customGenerateButton:SetDisabled(payload.label == "")
         return true
     end
@@ -1353,16 +1348,14 @@ function ControlPanel:UpdateCustomSettingPlan(payload)
     end
     self.customPlanStatus:SetText(string.format("可生成 · 已匹配“%s”题材包", pack.label or resolvedKey))
     self.customPlanStatus:SetStyle({ fontColor = C.teal })
-    local vertical = pack.verticalProfile or {}
-    self.customPlanDescription:SetText(string.format(
-        "通过%s匹配；按 %.2f 米层高生成，并校验 %.2f 米美术基准、结构高度、安装高度、几何、材质和道具引用。",
-        source, payload.floorHeight, vertical.authoredFloorHeight or 0))
-    self.customPlanStructure:SetText(string.format("层高 %.2f 米 / 比例 %.2f · %d 项结构声明",
+    self.customPlanDescription:SetText(string.format("匹配“%s”题材包 · 按 %.2f 米层高生成预览。",
+        pack.label or resolvedKey, payload.floorHeight))
+    self.customPlanStructure:SetText(string.format("层高 %.2f 米 · 纵向 %.2f · %d 项结构",
         payload.floorHeight, payload.floorHeight / MultiFloor.SOURCE_FLOOR_HEIGHT,
         CountKeys(pack.structure)))
     self.customPlanRooms:SetText(JoinRuleLabels(pack.roomRules))
-    self.customPlanProps:SetText(string.format("%d 类题材道具及墙面装饰", CountKeys(pack.props)))
-    self.customPlanMaterials:SetText(string.format("%d 类独立 PBR 材质角色", CountKeys(materialRoles)))
+    self.customPlanProps:SetText(string.format("%d 类道具 / 墙面装饰", CountKeys(pack.props)))
+    self.customPlanMaterials:SetText(string.format("%d 类 PBR 材质", CountKeys(materialRoles)))
     self.customGenerateButton:SetDisabled(payload.label == "")
     return true
 end
