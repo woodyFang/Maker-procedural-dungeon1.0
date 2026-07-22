@@ -1,6 +1,7 @@
 local Random = require("Generation.Random")
 local DungeonGenerator = require("Generation.DungeonGenerator")
 local MultiFloor = require("Generation.MultiFloor")
+local StairContract = require("Generation.StairContract")
 local GeometryRules = require("Generation.GeometryRules")
 local MaterialRules = require("Rendering.ProceduralMaterialRules")
 local PropBlueprints = require("Rendering.PropBlueprints")
@@ -9,7 +10,9 @@ local ThemePacks = require("Config.ThemePacks")
 local GenericThemeRules = require("Config.GenericThemeRules")
 local PaletteData = require("Config.PaletteData")
 local Themes = require("Config.Themes")
+local BuiltinRoomRules = require("Config.BuiltinRoomRules")
 local LocalRequirementPlanner = require("AI.LocalRequirementPlanner")
+local CurrentFloorCue = require("Rendering.CurrentFloorCue")
 
 local GenerationTests = {}
 
@@ -70,6 +73,76 @@ local function TestRouteTurnPenalty()
     local openRoute = MultiFloor.RouteAStar(openLayer, { x = 2, y = 2 }, { x = 35, y = 26 }, options)
     Check(openRoute and #openRoute.points <= 3,
         "unobstructed route retained more than one bend")
+end
+
+local function TestStairContractHeadroomAndProtection()
+    local contract, reason = StairContract.Build({
+        mapWidth = 48, mapHeight = 48,
+        lower = { x = 8, y = 20 }, direction = "east",
+        run = 10, width = 2, landingDepth = 2,
+        sideClearance = 0, style = "straight",
+        floorHeight = 5.0, stepCount = 20,
+    })
+    Check(contract ~= nil, reason)
+    Check(contract.width == 2 and contract.stepCount == 20,
+        "stair contract lost its metre width or step count")
+    Check(#contract.openingCells > 0 and #contract.openingCells < #contract.shaftCells,
+        "strict headroom opening did not stay smaller than the physical stair shaft")
+    local openingSet = StairContract.CellSet(contract.openingCells)
+    local sawOpening = false
+    for _, item in ipairs(contract.sweptClearanceCells) do
+        local expected = item.treadElevation < 5.0 - StairContract.EPSILON
+            and item.clearanceTop > 5.0 + StairContract.EPSILON
+        Check(not not openingSet[item.cell] == expected,
+            "opening membership diverged from strict swept-clearance rule")
+        if openingSet[item.cell] then sawOpening = true end
+    end
+    Check(sawOpening, "headroom test did not produce a slab opening")
+    local strictBoundary = StairContract.Build({
+        mapWidth = 32, mapHeight = 32,
+        lower = { x = 6, y = 12 }, direction = "east",
+        run = 8, width = 1, landingDepth = 2,
+        sideClearance = 0, style = "straight",
+        floorHeight = 5.0, stepCount = 10,
+    })
+    local strictOpeningSet = StairContract.CellSet(strictBoundary.openingCells)
+    local sawExactBoundary = false
+    for _, item in ipairs(strictBoundary.sweptClearanceCells) do
+        if math.abs(item.clearanceTop - 5.0) < StairContract.EPSILON then
+            sawExactBoundary = true
+            Check(not strictOpeningSet[item.cell],
+                "equal-to-slab headroom incorrectly opened the slab")
+        end
+    end
+    Check(sawExactBoundary, "headroom test did not cover the exact slab boundary")
+    Check(#contract.openingAccessEdges > 0 and #contract.openingStairPassageEdges > 0,
+        "opening contract did not classify both mandatory passages")
+
+    for _, style in ipairs({ "straight", "l-turn" }) do
+        for _, direction in ipairs({ "east", "south", "west", "north" }) do
+            local candidate, candidateReason = StairContract.Build({
+                mapWidth = 64, mapHeight = 64,
+                lower = { x = 28, y = 28 }, direction = direction,
+                run = 10, width = 3, landingDepth = 2,
+                sideClearance = 1, style = style,
+                floorHeight = 4.2, stepCount = 17,
+            })
+            Check(candidate ~= nil, string.format("%s %s: %s", style, direction, tostring(candidateReason)))
+            Check(candidate.style == style and candidate.width == 3,
+                "stair contract changed style or metre width")
+            Check(math.abs(candidate.stepRise * candidate.stepCount - 4.2) < 0.000001,
+                "configurable stair contract did not reach the target floor")
+        end
+    end
+end
+
+local function TestStairWidthMetreGrid()
+    Check(StairContract.NormalizeWidth(0.2) == 1
+        and StairContract.NormalizeWidth(1.49) == 1
+        and StairContract.NormalizeWidth(1.51) == 2
+        and StairContract.NormalizeWidth(4.6) == 5
+        and StairContract.NormalizeWidth(9) == 5,
+        "stair width is not normalized to the 1m / 1..5m contract")
 end
 
 local function TestDungeonDeterminism()
@@ -171,6 +244,44 @@ local function TestFloorSettingIsolation()
         "changing floor 1 decor density changed another floor decoration")
 end
 
+local function TestCurrentFloorCueBounds()
+    local dungeon = {
+        width = 8,
+        height = 6,
+        layers = {
+            { grid = {} },
+            { grid = {} },
+        },
+    }
+    local layer = dungeon.layers[2]
+    for y = 1, 4 do
+        for x = 2, 6 do
+            layer.grid[y * dungeon.width + x + 1] = 1
+        end
+    end
+
+    Check(CurrentFloorCue.Bounds(dungeon, 0) == nil,
+        "empty floor produced a current-floor cue")
+    local bounds = CurrentFloorCue.Bounds(dungeon, 1)
+    Check(bounds ~= nil, "occupied floor did not produce a current-floor cue")
+    Check(math.abs(bounds.centerGridX - 4) < 0.000001
+            and math.abs(bounds.centerGridY - 2.5) < 0.000001,
+        "current-floor cue was not centered on occupied cells")
+    Check(bounds.width > 5 and bounds.depth > 4,
+        "current-floor cue did not include an outer visibility margin")
+
+    local currentMarkers = CurrentFloorCue.CornerMarkers(bounds, "current")
+    local neighborMarkers = CurrentFloorCue.CornerMarkers(bounds, "neighbors")
+    Check(#currentMarkers == 12 and #neighborMarkers == 12,
+        "current-floor cue did not create three markers for each corner")
+    local kinds = { xLeg = 0, zLeg = 0, post = 0 }
+    for _, marker in ipairs(currentMarkers) do kinds[marker.kind] = kinds[marker.kind] + 1 end
+    Check(kinds.xLeg == 4 and kinds.zLeg == 4 and kinds.post == 4,
+        "current-floor cue did not create four L markers and four posts")
+    Check(neighborMarkers[3].sy > currentMarkers[3].sy,
+        "multi-floor corner posts were not emphasized")
+end
+
 local function TestSingleFloor()
     local dungeon = DungeonGenerator.Generate({ seed = 9001, floorCount = 1, roomCount = 18 })
     CheckValid(dungeon, "single floor")
@@ -215,11 +326,35 @@ local function TestMultiFloorSeeds()
                 "lower stair endpoint is not reserved")
             Check(upperLayer.stairLanding[upperIndex] or upperLayer.stairMask[upperIndex],
                 "upper stair endpoint is not reserved")
+            Check(connector.audit and connector.audit.pass,
+                "generated connector did not pass its per-stair spatial audit")
             for _, openingCell in ipairs(connector.openingCells) do
                 Check(lowerLayer.stairMask[openingCell], "lower stair shaft is missing")
                 Check(upperLayer.slabOpening[openingCell], "upper slab opening is missing")
             end
         end
+    end
+end
+
+local function TestBeyondRecommendedFloorCount()
+    local floorCount = MultiFloor.RECOMMENDED_MAX_FLOORS + 1
+    local roomCounts = {}
+    for floor = 1, floorCount do roomCounts[floor] = 6 end
+    local dungeon = DungeonGenerator.Generate({
+        seed = 2026072101,
+        floorCount = floorCount,
+        roomCountsByFloor = roomCounts,
+    })
+    CheckValid(dungeon, "beyond recommended floor count")
+    Check(dungeon.floorCount == floorCount,
+        "generator truncated a valid floor count to the six-floor recommendation")
+    Check(#dungeon.connectors >= floorCount - 1,
+        "dungeon above the recommended floor count is missing adjacent-floor connectors")
+    for _, connector in ipairs(dungeon.connectors) do
+        Check(connector.toFloor == connector.fromFloor + 1,
+            "dungeon above the recommendation created a connector that skips a floor")
+        Check(math.abs(connector.stepRise * connector.stepCount - dungeon.floorHeight) < 0.000001,
+            "dungeon above the recommendation created a stair with the wrong rise")
     end
 end
 
@@ -441,7 +576,11 @@ local function TestSchoolRequirementPlannerFlow()
                 and group.prompt:find("纵向比例 1.0", 1, true) ~= nil,
             "AI room prompt omitted the shared 5m vertical rule")
     end
-    Check(#plan.roomGroups == 5, "school planner did not create five room groups")
+    Check(#plan.roomGroups == 5, "school planner did not create five specific rooms")
+    for _, room in ipairs(plan.roomGroups) do
+        Check(room.ruleClass == "specific-room" and room.topicId == topic.id,
+            "theme-generated space semantics were not marked as topic-specific room records")
+    end
     local validGroups, groupReason = ThemePacks.ValidateRoomGroups(pack, plan.roomGroups)
     Check(validGroups, groupReason)
 
@@ -453,7 +592,11 @@ local function TestSchoolRequirementPlannerFlow()
         customSettings = { topic }, roomGroups = plan.roomGroups,
         activeCustomSettingId = topic.id, revision = 7,
     })
-    Check(#normalized.roomGroups == 5, "compiled room groups were lost during save normalization")
+    Check(#normalized.roomGroups == 5, "generated specific rooms were lost during save normalization")
+    local topicRooms = LocalRequirementPlanner.GroupsForTopic(normalized.roomGroups, topic.id)
+    Check(#topicRooms == 5, "generated specific rooms are not available to the topic-scoped room UI")
+    Check(topicRooms[1].ruleClass == "specific-room",
+        "specific-room classification was lost before the room UI could consume it")
     Check(normalized.roomGroups[1].topicId == topic.id and #normalized.roomGroups[1].propRules > 0,
         "compiled parent link or prop rules were lost")
     Check(normalized.customSettings[1].compiledRoomGroupCount == 5,
@@ -498,6 +641,110 @@ local function TestSchoolRequirementPlannerFlow()
     for groupId in pairs(expectedProp) do
         Check(seenGroup[groupId], "planned group was not assigned: " .. groupId)
         Check(seenRequiredProp[groupId], "planned group rule was not executed: " .. groupId)
+    end
+end
+
+local function TestBuiltinRoomRuleFlow()
+    local valid, reason = BuiltinRoomRules.Validate()
+    Check(valid, reason)
+
+    local materialized, changed, mergeReason = LocalRequirementPlanner.EnsureBuiltinRoomGroups({
+        { id = "manual-hospital-chapel", settingKey = "hospital", name = "临时祈祷室",
+            prompt = "保留用户房间", source = "manual" },
+    })
+    Check(materialized ~= nil and changed, mergeReason)
+    local hospitalRooms = LocalRequirementPlanner.GroupsForContext(materialized, nil, "hospital")
+    local schoolRooms = LocalRequirementPlanner.GroupsForContext(materialized, nil, "school")
+    Check(#hospitalRooms == 8, "hospital built-ins or manual room were not materialized")
+    Check(#schoolRooms == 5, "school built-ins were not materialized")
+    Check(#LocalRequirementPlanner.GroupsForContext(materialized, nil, "dungeon") == 0,
+        "built-in hospital or school room leaked into dungeon")
+
+    local foundManual, foundHospitalBed, foundClassroom = false, false, false
+    for _, room in ipairs(hospitalRooms) do
+        Check(room.topicId == nil and room.settingKey == "hospital", "hospital room has an invalid scope")
+        if room.id == "manual-hospital-chapel" then foundManual = true end
+        if room.id == "builtin-hospital-ward" then foundHospitalBed = true end
+    end
+    for _, room in ipairs(schoolRooms) do
+        Check(room.topicId == nil and room.settingKey == "school", "school room has an invalid scope")
+        if room.id == "builtin-school-classroom" then foundClassroom = true end
+    end
+    Check(foundManual and foundHospitalBed and foundClassroom,
+        "materialized room identities are incomplete")
+
+    local again, changedAgain = LocalRequirementPlanner.EnsureBuiltinRoomGroups(materialized)
+    Check(not changedAgain and #again == #materialized, "built-in room materialization is not idempotent")
+
+    local schoolRoomsBeforeManualEdit = LocalRequirementPlanner.GroupsForContext(materialized, nil, "school")
+    local editedBuiltin = CustomizationStore.FindById(schoolRoomsBeforeManualEdit, "builtin-school-classroom")
+    editedBuiltin.name = "多媒体教室"
+    editedBuiltin.source = "manual"
+    editedBuiltin.locked = true
+    local afterManualEdit, changedAfterManualEdit = LocalRequirementPlanner.EnsureBuiltinRoomGroups(materialized)
+    Check(not changedAfterManualEdit,
+        "manually edited built-in room triggered a duplicate or replacement")
+    local preservedEdit = CustomizationStore.FindById(afterManualEdit, "builtin-school-classroom")
+    Check(preservedEdit and preservedEdit.name == "多媒体教室" and preservedEdit.source == "manual",
+        "manual edit of a built-in room was overwritten")
+
+    local normalized = CustomizationStore.Normalize({ roomGroups = afterManualEdit })
+    local normalizedHospital = LocalRequirementPlanner.GroupsForContext(normalized.roomGroups, nil, "hospital")
+    local normalizedSchool = LocalRequirementPlanner.GroupsForContext(normalized.roomGroups, nil, "school")
+    Check(#normalizedHospital == 8 and #normalizedSchool == 5,
+        "built-in room scopes were lost during persistence normalization")
+    local preservedBuiltin = CustomizationStore.FindById(normalized.roomGroups, "builtin-hospital-ward")
+    Check(preservedBuiltin and preservedBuiltin.source == "builtin",
+        "built-in room lifecycle source was lost during normalization")
+
+    local cases = {
+        {
+            settingKey = "hospital", theme = "sterile", rooms = normalizedHospital,
+            expected = {
+                ["builtin-hospital-reception"] = "nurseCounter",
+                ["builtin-hospital-ward"] = "hospitalBed",
+                ["builtin-hospital-nurse-station"] = "nurseCounter",
+                ["builtin-hospital-examination"] = "examTable",
+                ["builtin-hospital-mri"] = "mriScanner",
+                ["builtin-hospital-surgery"] = "surgeryTable",
+                ["builtin-hospital-isolation"] = "privacyCurtain",
+            },
+        },
+        {
+            settingKey = "school", theme = "schoolDay", rooms = normalizedSchool,
+            expected = {
+                ["builtin-school-lobby"] = "schoolReception",
+                ["builtin-school-classroom"] = "schoolStudentDesk",
+                ["builtin-school-library"] = "schoolBookshelf",
+                ["builtin-school-laboratory"] = "schoolLabBench",
+                ["builtin-school-cafeteria"] = "schoolStage",
+            },
+        },
+    }
+    for _, case in ipairs(cases) do
+        local dungeon = DungeonGenerator.Generate({
+            seed = 2026072201, floorCount = 1, roomCountsByFloor = { 32 },
+            settingKey = case.settingKey, theme = case.theme,
+            roomGroups = case.rooms, decorDensitiesByFloor = { 0.72 },
+        })
+        CheckValid(dungeon, "built-in " .. case.settingKey)
+        local groupByRoom, seenGroup, seenProp = {}, {}, {}
+        for _, room in ipairs(dungeon.rooms) do
+            Check(case.expected[room.roomGroupId] ~= nil,
+                case.settingKey .. " generated an unscoped room assignment")
+            groupByRoom[room.id] = room.roomGroupId
+            seenGroup[room.roomGroupId] = true
+        end
+        for _, layer in ipairs(dungeon.layers) do
+            for _, prop in ipairs(layer.props) do
+                local groupId = groupByRoom[prop.roomId]
+                if groupId and case.expected[groupId] == prop.kind then seenProp[groupId] = true end
+            end
+        end
+        for groupId in pairs(case.expected) do
+            Check(seenGroup[groupId], case.settingKey .. " did not assign " .. groupId)
+            Check(seenProp[groupId], case.settingKey .. " did not execute " .. groupId)
+        end
     end
 end
 
@@ -699,6 +946,7 @@ local function TestCustomizationNormalization()
         roomGroups = {
             { id = "room-group-3", name = " Boss Room ", prompt = "arena" },
             { id = "room-group-7", name = "boss room", prompt = "duplicate name" },
+            { id = "hospital-boss", settingKey = "hospital", name = "Boss Room", prompt = "hospital arena" },
         },
         customPalettes = {
             { id = "custom-palette-5", label = " Moon Violet ", baseSettingKey = "dungeon",
@@ -727,8 +975,20 @@ local function TestCustomizationNormalization()
     Check(data.customSettings[2].baseSettingKey == "dungeon", "invalid base setting did not fall back")
     Check(data.nextCustomSettingId == 10, "next custom theme id was not repaired")
     Check(data.activeCustomSettingId == "custom-4", "valid active custom theme was cleared")
-    Check(#data.roomGroups == 1 and data.nextRoomGroupId == 4,
-        "room group normalization did not deduplicate or repair ids")
+    Check(#data.roomGroups == 2 and data.nextRoomGroupId == 4,
+        "room normalization did not deduplicate names by scope or repair ids")
+    Check(data.roomGroups[1].settingKey == "dungeon",
+        "legacy unscoped room did not migrate to the dungeon setting")
+    Check(data.roomGroups[2].settingKey == "hospital",
+        "base-setting room lost its hospital scope")
+    local dungeonRooms = LocalRequirementPlanner.GroupsForContext(data.roomGroups, nil, "dungeon")
+    local hospitalRooms = LocalRequirementPlanner.GroupsForContext(data.roomGroups, nil, "hospital")
+    local schoolRooms = LocalRequirementPlanner.GroupsForContext(data.roomGroups, nil, "school")
+    Check(#dungeonRooms == 1 and dungeonRooms[1].id == "room-group-3",
+        "legacy Boss room escaped its migrated dungeon scope")
+    Check(#hospitalRooms == 1 and hospitalRooms[1].id == "hospital-boss",
+        "hospital-scoped room is not isolated to hospital")
+    Check(#schoolRooms == 0, "dungeon or hospital room leaked into school")
     Check(#data.customPalettes == 1 and data.nextCustomPaletteId == 6,
         "custom palette normalization did not validate or repair ids")
     Check(data.customPalettes[1].colors.accentObject == 0xb45cff,
@@ -762,7 +1022,13 @@ local function TestCustomizationNormalization()
             { id = "topic-b-lobby", topicId = "topic-b", name = "大厅", prompt = "B大厅" },
         },
     })
-    Check(#scopedNames.roomGroups == 2, "same room-group name was not scoped by parent topic")
+    Check(#scopedNames.roomGroups == 2, "same room name was not scoped by parent topic")
+    Check(#LocalRequirementPlanner.GroupsForContext(scopedNames.roomGroups, "topic-a", "dungeon") == 1,
+        "topic A room is not visible in topic A")
+    Check(#LocalRequirementPlanner.GroupsForContext(scopedNames.roomGroups, "topic-b", "dungeon") == 1,
+        "topic B room is not visible in topic B")
+    Check(#LocalRequirementPlanner.GroupsForContext(scopedNames.roomGroups, nil, "dungeon") == 0,
+        "custom-topic room leaked into the base dungeon setting")
 end
 
 local function TestEditorRoomGroupPropagation()
@@ -855,16 +1121,21 @@ end
 function GenerationTests.Run()
     local tests = {
         { "random determinism", TestRandomDeterminism },
+        { "stair metre width", TestStairWidthMetreGrid },
+        { "stair headroom contract", TestStairContractHeadroomAndProtection },
         { "route turn penalty", TestRouteTurnPenalty },
         { "dungeon determinism", TestDungeonDeterminism },
         { "floor setting isolation", TestFloorSettingIsolation },
+        { "current floor cue bounds", TestCurrentFloorCueBounds },
         { "single floor", TestSingleFloor },
         { "20 multifloor seeds", TestMultiFloorSeeds },
+        { "beyond recommended floors", TestBeyondRecommendedFloorCount },
         { "six-floor shaft regression", TestSixFloorShaftRegression },
         { "hospital prop migration", TestHospitalPropMigration },
         { "dungeon prop blueprints", TestDungeonPropBlueprintCoverage },
         { "school ThemePack stability", TestSchoolThemePackStability },
         { "school AI requirement flow", TestSchoolRequirementPlannerFlow },
+        { "built-in room rule flow", TestBuiltinRoomRuleFlow },
         { "generic theme rule flow", TestGenericThemeRuleFlow },
         { "configurable floor height", TestConfigurableFloorHeight },
         { "three parity contracts", TestThreeParityContracts },
@@ -890,6 +1161,13 @@ function GenerationTests.RunSchool()
     TestSchoolThemePackStability()
     TestSchoolRequirementPlannerFlow()
     print(string.format("[test] PASS school ThemePack + requirement flow %.3fs", os.clock() - started))
+    return true
+end
+
+function GenerationTests.RunBuiltinRooms()
+    local started = os.clock()
+    TestBuiltinRoomRuleFlow()
+    print(string.format("[test] PASS built-in hospital + school room flow %.3fs", os.clock() - started))
     return true
 end
 

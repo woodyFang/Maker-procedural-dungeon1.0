@@ -1,6 +1,8 @@
 local DungeonApp = require("App.DungeonApp")
 local FixedThemes = require("Config.FixedThemes")
 local DungeonGenerator = require("Generation.DungeonGenerator")
+local LocalRequirementPlanner = require("AI.LocalRequirementPlanner")
+local TopicSeeds = require("Config.TopicSeeds")
 
 local function Check(condition, message)
     if not condition then error(message, 2) end
@@ -73,10 +75,15 @@ function Start()
 
     app.SaveLocalCustomizations = function() return true end
     app.ApplyTheme = function() end
-    app.Generate = function() end
+    app.Generate = function(self) self:RefreshPanel() end
     -- Keep this smoke test independent from the editor's persisted local cache.
-    app.customSettings = {}
+    app.customSettings = TopicSeeds.Ensure({})
     app.roomGroups = {}
+    app:EnsureSeedRoomGroups()
+    Check(#LocalRequirementPlanner.GroupsForTopic(app.roomGroups, "theme-hospital") == 7,
+        "hospital seed rooms were not materialized for the UI flow")
+    Check(#LocalRequirementPlanner.GroupsForTopic(app.roomGroups, "theme-school") == 5,
+        "school seed rooms were not materialized for the UI flow")
     app.activeCustomSettingId = nil
     local fixedGenerated, fixedReason = panel.callbacks.onFixedPCG()
     Check(fixedGenerated, fixedReason or "fixed PCG theme callback failed")
@@ -86,13 +93,25 @@ function Start()
         "fixed PCG mode did not reset to the empty-scene baseline")
     Check(app:GenerationOptions(false).emptyScene == true,
         "fixed PCG mode did not mark the generation request as emptyScene")
-    panel.callbacks.onSetting("hospital")
-    Check(app.topicMode == "base" and app.activeFixedThemeId == nil and app.activeCustomSettingId == nil,
-        "base topic was not mutually exclusive with fixed PCG")
+    Check(panel.callbacks.onSetting("hospital"), "hospital topic selection failed")
+    Check(app.topicMode == "custom" and app.activeFixedThemeId == nil
+            and app.activeCustomSettingId == "theme-hospital",
+        "seed topic did not use the unified custom topic state")
+    Check(#app:ActiveRoomGroups() == 7, "hospital topic did not expose seven specific rooms")
+    panel:SetState(app:State())
+    Check(panel.roomGroupList:GetNumChildren() == 7,
+        "hospital specific rooms were not rendered in the room UI")
+    panel.callbacks.onSetting("school")
+    Check(#app:ActiveRoomGroups() == 5, "school base topic did not expose five specific rooms")
+    panel:SetState(app:State())
+    Check(panel.roomGroupList:GetNumChildren() == 5,
+        "school specific rooms were not rendered in the room UI")
     Check(panel.callbacks.onFixedPCG(), "fixed PCG callback failed after base topic")
     Check(app.topicMode == "fixedPCG" and app.activeFixedThemeId == FixedThemes.MODE_ID
             and app.activeCustomSettingId == nil,
         "fixed PCG retained a base or custom topic selection")
+    Check(panel.currentTopicValue:GetText() == "未启用" and panel.currentTopicStatus:GetText() == "固定 PCG",
+        "fixed PCG mode did not clear the current AI topic indicator")
     Check(app:ApplyCustomizationData({
         customSettings = {
             { id = "cloud-topic", label = "浜戠棰樻潗", baseSettingKey = "school", packStatus = "ready" },
@@ -102,14 +121,17 @@ function Start()
     Check(app.topicMode == "fixedPCG" and app.activeFixedThemeId == FixedThemes.MODE_ID
             and app.activeCustomSettingId == nil,
         "cloud customization reload broke fixed PCG exclusivity")
-    app.customSettings = {}
+    app.customSettings = TopicSeeds.Ensure({
+        { id = "older-topic", label = "旧题材", prompt = "旧题材", baseSettingKey = "dungeon", packStatus = "ready" },
+    })
     local genericGenerated, genericReason = panel.callbacks.onCustomSettingSave({
-        label = "深海研究站", prompt = "海沟中的金属研究站和观景窗",
+        label = "超市", prompt = "现代超市、货架、收银台和商品区",
         baseSettingKey = "hospital", floorHeight = 4.2,
     }, "generate")
     Check(genericGenerated, genericReason or "generic theme generation callback failed")
-    Check(#app.customSettings == 1 and app.customSettings[1].packStatus == "ready",
-        "generic theme was not persisted as executable")
+    Check(#app.customSettings == 5 and app.customSettings[1].label == "超市"
+            and app.customSettings[1].packStatus == "ready",
+        "new generic theme was not persisted at the front of the list")
     Check(app.customSettings[1].generationMode == "generic"
             and app.customSettings[1].plannerSource == "generic-programmatic-v1",
         "generic theme generation metadata was not persisted")
@@ -119,9 +141,23 @@ function Start()
         "generic theme did not save and activate its configured floor height")
     Check(app.topicMode == "custom" and app.activeFixedThemeId == nil,
         "custom topic was not mutually exclusive with fixed PCG")
-    Check(#app.roomGroups == 0, "generic theme invented room groups without room definitions")
+    Check(panel.currentTopicValue:GetText() == "超市" and panel.currentTopicStatus:GetText() == "已生成",
+        "generated supermarket topic was not shown as the current UI topic")
+    Check(panel.customSettingExpanded and panel.customSettingList:IsVisible(),
+        "generated custom topic did not automatically expand the saved topic list")
+    local supermarketCard = panel.customSettingList:GetChildAt(1)
+    Check(supermarketCard and supermarketCard.props.borderWidth == 2,
+        "generated supermarket topic card was not visibly active")
+    Check(#LocalRequirementPlanner.GroupsForTopic(app.roomGroups, app.activeCustomSettingId) == 0,
+        "generic theme invented room groups without room definitions")
     local genericTopicId = app.activeCustomSettingId
     Check(panel.callbacks.onCustomSettingDelete(genericTopicId), "generic topic deletion failed")
+    Check(#app.customSettings == 4 and app.customSettings[1].id == "older-topic",
+        "deleting the new topic also removed an older or seed topic")
+
+    app.customSettings = TopicSeeds.Ensure({})
+    app.roomGroups = {}
+    app:EnsureSeedRoomGroups()
 
     local generated, generatedReason = panel.callbacks.onCustomSettingSave({
         label = "UI生成学校", prompt = "学校、教室、图书馆、实验室、食堂和大厅",
@@ -131,9 +167,12 @@ function Start()
     Check(app.customSettings[1].generationMode == "theme-pack",
         "specialized topic did not persist ThemePack generation mode")
     Check(app.floorHeight == 5.5, "specialized topic did not activate its configured floor height")
-    Check(#app.roomGroups == 5, "UI topic generation did not create five child room groups")
+    Check(#LocalRequirementPlanner.GroupsForTopic(
+            app.roomGroups, app.activeCustomSettingId) == 5,
+        "UI topic generation did not create five child room groups")
     Check(app.activeCustomSettingId == app.customSettings[1].id, "generated topic was not activated")
-    for _, group in ipairs(app.roomGroups) do
+    for _, group in ipairs(LocalRequirementPlanner.GroupsForTopic(
+        app.roomGroups, app.activeCustomSettingId)) do
         Check(group.topicId == app.activeCustomSettingId, "generated child group lost its parent topic")
         Check(#(group.propRules or {}) > 0, "generated child group has no executable rules")
         Check(group.prompt:find("5.50 米", 1, true) ~= nil,
@@ -141,7 +180,8 @@ function Start()
     end
     local generatedTopicId = app.activeCustomSettingId
     Check(panel.callbacks.onCustomSettingDelete(generatedTopicId), "generated topic deletion failed")
-    Check(#app.roomGroups == 0, "deleting a topic did not cascade to its child room groups")
+    Check(#LocalRequirementPlanner.GroupsForTopic(app.roomGroups, generatedTopicId) == 0,
+        "deleting a topic did not cascade to its child room groups")
 
     local managed = {
         id = "ui-flow-managed", label = "可管理学校", prompt = "学校", baseSettingKey = "school",
@@ -154,7 +194,8 @@ function Start()
     Check(panel.callbacks.onCustomSettingRename(managed.id, "重命名学校"), "rename callback failed")
     Check(app.customSettings[1].label == "重命名学校", "rename did not update local theme data")
     Check(panel.callbacks.onCustomSettingDelete(managed.id), "delete callback failed")
-    Check(#app.customSettings == 0, "delete did not remove local theme data")
+    Check(#app.customSettings == 1 and app.customSettings[1].id == TopicSeeds.DEFAULT_ID,
+        "deleting the only ready topic did not restore the default seed topic")
 
     local record = {
         id = "ui-flow-ready", label = "测试学校", prompt = "学校", baseSettingKey = "school",

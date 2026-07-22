@@ -1,4 +1,5 @@
 local RouteEditing = require("UI.Editor.RouteEditing")
+local StairContract = require("Generation.StairContract")
 
 local EditorData = {}
 
@@ -34,7 +35,8 @@ function EditorData.CopyStairSpec(spec)
         anchor = RouteEditing.CopyPoint(spec.anchor), previewAnchor = RouteEditing.CopyPoint(spec.previewAnchor),
         direction = spec.direction, previewDirection = spec.previewDirection,
         style = spec.style or "l-turn", previewStyle = spec.previewStyle,
-        width = tonumber(spec.width) or 2, previewWidth = tonumber(spec.previewWidth),
+        width = StairContract.NormalizeWidth(spec.width),
+        previewWidth = spec.previewWidth and StairContract.NormalizeWidth(spec.previewWidth) or nil,
         length = tonumber(spec.length), previewLength = tonumber(spec.previewLength),
         landingDepth = tonumber(spec.landingDepth) or 2,
         previewLandingDepth = tonumber(spec.previewLandingDepth), manualPreview = spec.manualPreview == true,
@@ -104,7 +106,7 @@ function EditorData.EnsureStairSpec(link, edge)
         mode = link.connector.mode or "stable-auto", pending = false,
         style = link.connector.style or "l-turn",
         anchor = RouteEditing.CopyPoint(link.connector.lower), direction = link.connector.direction,
-        width = link.connector.width or link.width or 2,
+        width = StairContract.NormalizeWidth(link.connector.width or link.width or 2),
         length = link.connector.length, landingDepth = link.connector.landingDepth or 2,
         candidateIndex = link.connector.candidateIndex or 0,
         candidateCount = link.connector.candidateCount or 0, invalid = false,

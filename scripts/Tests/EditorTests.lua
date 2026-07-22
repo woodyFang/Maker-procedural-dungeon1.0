@@ -663,8 +663,9 @@ local function TestStairStyleWidthAndPointerControls()
     Check(rotated and rotated.direction == "south", "rotation handle did not follow the pointer cardinal direction")
     local stable = StairEditing.RotationFromPointer(spec, visual, { x = 29, y = 30 }, "east")
     Check(stable and stable.direction == "east", "rotation handle jittered across a diagonal boundary")
-    Check(StairEditing.SnapWidth(2.13) == 2.25 and StairEditing.SnapWidth(9) == 5,
-        "stair width did not use the Three.js 0.25 step and 1..5 limits")
+    Check(StairEditing.SnapWidth(2.13) == 2 and StairEditing.SnapWidth(2.6) == 3
+            and StairEditing.SnapWidth(9) == 5,
+        "stair width did not use the 1m step and 1..5m limits")
     Check(StairEditing.WidthFromPointer(spec, visual, { x = 20, y = 21.5 }) == 4,
         "width handle did not measure from the centered stair flight")
     Check(StairEditing.RotationHandle(visual) and StairEditing.WidthHandle(visual),

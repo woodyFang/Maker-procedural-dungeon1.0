@@ -22,6 +22,19 @@ local function Run()
     Check(source:SavePNG(sourcePath), "could not create source image")
     source:Dispose()
 
+    local ordered = {
+        { id = "custom-1", label = "Older" },
+        { id = "custom-2", label = "Oldest" },
+    }
+    local insertedIndex, insertedPrevious = CustomizationStore.UpsertFirstById(ordered,
+        { id = "custom-3", label = "Newest" })
+    Check(insertedIndex == 1 and insertedPrevious == nil and ordered[1].id == "custom-3",
+        "new custom theme was not inserted at the front")
+    local updatedIndex, updatedPrevious = CustomizationStore.UpsertFirstById(ordered,
+        { id = "custom-1", label = "Older Updated" })
+    Check(updatedIndex == 2 and updatedPrevious.label == "Older" and ordered[2].label == "Older Updated",
+        "editing an existing custom theme unexpectedly changed its list position")
+
     local record, reason = CustomizationStore.PrepareImage({
         id = "custom-image-test",
         label = "Image Test",
