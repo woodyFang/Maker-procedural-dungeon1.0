@@ -83,7 +83,13 @@ function Start()
             if entry.lightFunction then functionCount = functionCount + 1 end
 
             assert(light.usePhysicalValues, "point light is not using physical values")
+            assert(light:GetAttribute("Light Units"):GetInt() == 0,
+                "point light is not using Unitless units")
             assert(Near(light.radius, 0) and Near(light.length, 0), "point light is not punctual")
+            assert(Near(light:GetAttribute("SoftRadius"):GetFloat(), 0),
+                "point light soft radius mismatch")
+            assert(light:GetAttribute("Punctual Light"):GetBool(),
+                "point light did not enable punctual lighting")
             assert(light:GetAttribute("Affect Volumetric Fog"):GetBool(), "volumetric fog is disabled")
             assert(Near(light:GetAttribute("Volumetric Fog Intensity"):GetFloat(), 1),
                 "volumetric fog intensity mismatch")
@@ -122,8 +128,7 @@ function Start()
         end
         assert(animated == 98, "not all brazier light functions were updated: " .. tostring(animated))
 
-        print("[shadow-castle-light-parity] PASS total=366 directional=0 physical=366 functions=98")
-        engine:Exit()
+        ErrorExit("[shadow-castle-light-parity] PASS total=366 directional=0 physical=366 functions=98", 0)
     end, debug.traceback)
 
     if not ok then ErrorExit("[shadow-castle-light-parity] FAIL\n" .. tostring(err), 1) end

@@ -17,8 +17,13 @@ FixedThemes.presets = {
     shadowCastle = {
         id = "shadowCastle",
         externalScene = "bgeoManifest",
-        lightingEnabled = false,
+        -- Keep the authored Night SH/IBL so imported surface materials retain
+        -- their texture response. Marker lights provide the local illumination.
+        lightingEnabled = true,
         directionalLight = false,
+        environmentPreset = "LightGroup/Night.xml",
+        preserveEnvironmentLighting = true,
+        environmentIntensity = 5.0,
         label = "暗影古堡",
         description = "狭长石室、低回环率、重装饰",
         icon = "castle",
@@ -29,7 +34,7 @@ FixedThemes.presets = {
         floorHeight = 5.0,
         minRoomCells = { 1, 1, 1 },
         maxRoomCells = { 3, 1, 3 },
-        roomCount = 22,
+        roomCounts = { 8, 7, 7 },
         loopRate = 8,
         decorDensity = 72,
         ruleSummary = "固定石堡布局规则",

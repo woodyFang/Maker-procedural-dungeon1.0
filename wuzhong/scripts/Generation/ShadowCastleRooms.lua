@@ -23,16 +23,52 @@ local function Intersects(candidateMin, candidateMax, oldMin, oldMax)
         and candidateMax[3] > oldMin[3] - 1
 end
 
+local function RoomTargets(options)
+    local source = options.roomCountsByFloor
+    local requestedFloors = math.max(1, math.floor((tonumber(options.floorCount) or 3) + 0.5))
+    local counts, total = {}, 0
+    if type(source) == "table" and #source > 0 then
+        for floor = 1, requestedFloors do
+            counts[floor] = math.max(1, math.floor((tonumber(source[floor]) or 1) + 0.5))
+            total = total + counts[floor]
+        end
+        return counts, total, requestedFloors
+    end
+
+    total = math.max(1, math.floor((tonumber(options.roomCount) or 22) + 0.5))
+    requestedFloors = math.min(total, requestedFloors)
+    local base = total // requestedFloors
+    for floor = 1, requestedFloors do counts[floor] = base end
+    for floor = 1, total - base * requestedFloors do counts[floor] = counts[floor] + 1 end
+    return counts, total, requestedFloors
+end
+
+local function FloorSequence(counts)
+    local remaining, sequence = {}, {}
+    for floor, count in ipairs(counts) do remaining[floor] = count end
+    while true do
+        local added = false
+        for floor = 1, #remaining do
+            if remaining[floor] > 0 then
+                sequence[#sequence + 1] = floor - 1
+                remaining[floor] = remaining[floor] - 1
+                added = true
+            end
+        end
+        if not added then return sequence end
+    end
+end
+
 function ShadowCastleRooms.Generate(options)
     options = options or {}
     local seed = math.floor(tonumber(options.seed) or 5)
-    local roomCount = math.max(1, math.floor((tonumber(options.roomCount) or 22) + 0.5))
-    local floorCount = math.max(1, math.min(roomCount,
-        math.floor((tonumber(options.floorCount) or 3) + 0.5)))
+    local requestedCounts, roomCount, floorCount = RoomTargets(options)
+    local floorSequence = FloorSequence(requestedCounts)
     local cellSize = math.max(0.001, tonumber(options.cellSize) or 5.0)
     local maximumAttempts = math.max(1000, roomCount * 500)
 
-    local roomsPerFloor = math.ceil(roomCount / floorCount)
+    local roomsPerFloor = 1
+    for _, count in ipairs(requestedCounts) do roomsPerFloor = math.max(roomsPerFloor, count) end
     local slotsPerSide = math.max(1, math.ceil(math.sqrt(roomsPerFloor)))
     local gridX = math.max(3, slotsPerSide * 5)
     local gridY = floorCount
@@ -49,7 +85,7 @@ function ShadowCastleRooms.Generate(options)
         local sizeY = VexRandom.RandomInt(VexRandom.Affine(seed, attempt, 31.417), 1, 1)
         local sizeZ = VexRandom.RandomInt(VexRandom.Affine(seed, attempt, 47.791), 1, 3)
         local posX = VexRandom.RandomInt(VexRandom.Affine(seed, attempt, 61.113), 0, gridX - sizeX)
-        local posY = placed % floorCount
+        local posY = floorSequence[placed + 1]
         local posZ = VexRandom.RandomInt(VexRandom.Affine(seed, attempt, 97.557), 0, gridZ - sizeZ)
         local candidateMin = V(posX, posY, posZ)
         local candidateMax = V(posX + sizeX, posY + sizeY, posZ + sizeZ)
@@ -106,6 +142,7 @@ function ShadowCastleRooms.Generate(options)
         schemaVersion = 1,
         seed = seed,
         targetRoomCount = roomCount,
+        targetRoomCountsByFloor = requestedCounts,
         placedRoomCount = placed,
         floorCount = floorCount,
         cellSize = cellSize,

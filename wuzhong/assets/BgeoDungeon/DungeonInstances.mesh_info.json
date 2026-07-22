@@ -8,6 +8,127 @@
     "inherit": "Use instances already emitted by BGEO for this mesh.",
     "attach": "Create this mesh from the raw marker transforms supplied by source_mesh."
   },
+  "asset_bindings": {
+    "/Game/FantasyDungeon/meshes/Floor/Floor01.Floor01": {
+      "model_resource": "Models/Floor01.mdl",
+      "material_resource": "Materials/pavement2.xml"
+    },
+    "/Game/FantasyDungeon/meshes/Wall/Wall01.Wall01": {
+      "model_resource": "Models/Wall01.mdl",
+      "material_resource": "Materials/brick2.xml"
+    },
+    "/Game/FantasyDungeon/meshes/curbstone/curbstone04.curbstone04": {
+      "model_resource": "Models/curbstone04.mdl",
+      "material_resource": "Materials/curbstone.xml"
+    },
+    "/Game/FantasyDungeon/meshes/curbstone/curbstone01.curbstone01": {
+      "model_resource": "Models/curbstone01.mdl",
+      "material_resource": "Materials/curbstone.xml"
+    },
+    "/Game/FantasyDungeon/meshes/Wall/Cross.Cross": {
+      "model_resource": "Models/Cross.mdl",
+      "material_resource": "Materials/Jail.xml"
+    },
+    "/Game/FantasyDungeon/meshes/Wall/wall01Arch1.wall01Arch1": {
+      "model_resource": "Models/wall01Arch1.mdl",
+      "material_resource": "Materials/brick2.xml"
+    },
+    "/Game/FantasyDungeon/meshes/Door/DoorArch01.DoorArch01": {
+      "model_resource": "Models/DoorArch01.mdl",
+      "material_resource": "Materials/DoorArch.xml"
+    },
+    "/Game/FantasyDungeon/meshes/Door/Door02.Door02": {
+      "model_resource": "Models/Door02.mdl",
+      "material_resource": "Materials/Door1.xml"
+    },
+    "/Game/FantasyDungeon/meshes/Column/Column03.Column03": {
+      "model_resource": "Models/Column03.mdl",
+      "material_resource": "Materials/column.xml"
+    },
+    "/Game/FantasyDungeon/meshes/Chandelier/roaster02.roaster02": {
+      "model_resource": "Models/roaster02.mdl",
+      "material_resource": "Materials/Chandelier.xml"
+    },
+    "/Game/FantasyDungeon/meshes/Stairs/Stairs01.Stairs01": {
+      "model_resource": "Models/Stairs01.mdl",
+      "material_resource": "Materials/Stairs.xml"
+    },
+    "/Game/FantasyDungeon/meshes/Roof/Roof11.Roof11": {
+      "model_resource": "Models/Roof11.mdl",
+      "material_resource": "Materials/Roof02.xml"
+    },
+    "/Game/FantasyDungeon/meshes/BrickDamage/Brick01.Brick01": {
+      "model_resource": "Models/Brick01.mdl",
+      "material_resource": "Materials/BrickDamage.xml"
+    },
+    "/Game/FantasyDungeon/meshes/BrickDamage/Brick02.Brick02": {
+      "model_resource": "Models/Brick02.mdl",
+      "material_resource": "Materials/BrickDamage.xml"
+    },
+    "/Game/FantasyDungeon/meshes/BrickDamage/Brick03.Brick03": {
+      "model_resource": "Models/Brick03.mdl",
+      "material_resource": "Materials/BrickDamage.xml"
+    },
+    "/Game/FantasyDungeon/meshes/BrickDamage/Brick04.Brick04": {
+      "model_resource": "Models/Brick04.mdl",
+      "material_resource": "Materials/BrickDamage.xml"
+    },
+    "/Game/FantasyDungeon/meshes/BrickDamage/Brick05.Brick05": {
+      "model_resource": "Models/Brick05.mdl",
+      "material_resource": "Materials/BrickDamage.xml"
+    },
+    "/Game/FantasyDungeon/meshes/BrickDamage/Brick06.Brick06": {
+      "model_resource": "Models/Brick06.mdl",
+      "material_resource": "Materials/BrickDamage.xml"
+    },
+    "/Game/FantasyDungeon/meshes/BrickDamage/rock01.rock01": {
+      "model_resource": "Models/rock01.mdl",
+      "material_resource": "Materials/BrickDamage.xml"
+    },
+    "/Game/FantasyDungeon/meshes/BrickDamage/rock02.rock02": {
+      "model_resource": "Models/rock02.mdl",
+      "material_resource": "Materials/BrickDamage.xml"
+    },
+    "/Game/FantasyDungeon/meshes/BrickDamage/rock03.rock03": {
+      "model_resource": "Models/rock03.mdl",
+      "material_resource": "Materials/BrickDamage.xml"
+    },
+    "/Game/FantasyDungeon/meshes/Bones/Bone01.Bone01": {
+      "model_resource": "Models/Bone01.mdl",
+      "material_resource": "Materials/Bones.xml"
+    },
+    "/Game/FantasyDungeon/meshes/Bones/Bone02.Bone02": {
+      "model_resource": "Models/Bone02.mdl",
+      "material_resource": "Materials/Bones.xml"
+    },
+    "/Game/FantasyDungeon/meshes/Bones/Bone03.Bone03": {
+      "model_resource": "Models/Bone03.mdl",
+      "material_resource": "Materials/Bones.xml"
+    },
+    "/Game/FantasyDungeon/meshes/Bones/Scull01.Scull01": {
+      "model_resource": "Models/Scull01.mdl",
+      "material_resource": "Materials/Bones.xml"
+    }
+  },
+  "diagnostic_meshes": {
+    "light_volume": "Models/Sphere.mdl",
+    "cell_volume": "Models/Box.mdl"
+  },
+  "light_defaults": {
+    "type": "Point",
+    "use_physical_values": true,
+    "light_units": "Unitless",
+    "radius_m": 0,
+    "length_m": 0,
+    "soft_radius_m": 0,
+    "punctual": true,
+    "affect_volumetric_fog": true,
+    "volumetric_fog_intensity": 1,
+    "cast_volumetric_shadow": true,
+    "shadow_constant_bias": 0.00002,
+    "shadow_slope_bias": 0,
+    "shadow_normal_offset": 0
+  },
   "meshes": [
     {
       "id": "ground_floor01",
@@ -73,6 +194,46 @@
       "usage": "prefab",
       "source_mesh": "/Game/FantasyDungeon/meshes/Wall/Wall01.Wall01",
       "mesh": "/Game/FantasyDungeon/meshes/Wall/BP_Wall.BP_Wall",
+      "parts": [
+        {
+          "id": "front",
+          "mesh": "/Game/FantasyDungeon/meshes/Wall/Wall01.Wall01",
+          "offset_cm": [
+            0,
+            0,
+            0
+          ],
+          "rotation_deg": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        {
+          "id": "back",
+          "mesh": "/Game/FantasyDungeon/meshes/Wall/Wall01.Wall01",
+          "offset_cm": [
+            0,
+            0,
+            0
+          ],
+          "rotation_deg": [
+            0,
+            180,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "offset_cm": [
         10.499009,
         0,
@@ -406,14 +567,16 @@
         0,
         0
       ],
-      "point_light_intensity": 300,
+      "point_light_intensity": 3000,
       "point_light_units": "Unitless",
+      "point_light_brightness": 0.3,
       "point_light_color_srgb": [
         255,
         171,
         107
       ],
       "point_light_attenuation_radius": 480,
+      "point_light_range_m": 4.8,
       "point_light_intensity_variation": 0,
       "point_light_radius_variation": 0.04,
       "point_light_function_material": "/Game/HoudiniImports/Support/M_BrazierLightFlicker.M_BrazierLightFlicker",
@@ -504,15 +667,16 @@
       "point_light_offset_cm": [
         0,
         0,
-        100
+        50
       ],
       "point_light_rotation_deg": [
         0,
         0,
         0
       ],
-      "point_light_intensity": 100,
+      "point_light_intensity": 1000,
       "point_light_units": "Unitless",
+      "point_light_brightness": 0.3,
       "point_light_color_srgb": [
         151,
         207,
@@ -524,10 +688,11 @@
         "FFCBBD00"
       ],
       "point_light_attenuation_radius": 700,
+      "point_light_range_m": 7,
       "point_light_intensity_variation": 0,
       "point_light_radius_variation": 0.06,
       "point_light_mobility": "Static",
-      "point_light_cast_shadows": false,
+      "point_light_cast_shadows": true,
       "can_affect_navigation": false,
       "collision_profile": "NoCollision",
       "cast_shadow": false,
@@ -563,15 +728,16 @@
       "point_light_offset_cm": [
         0,
         0,
-        100
+        50
       ],
       "point_light_rotation_deg": [
         0,
         0,
         0
       ],
-      "point_light_intensity": 100,
+      "point_light_intensity": 1000,
       "point_light_units": "Unitless",
+      "point_light_brightness": 0.3,
       "point_light_color_srgb": [
         151,
         207,
@@ -583,10 +749,11 @@
         "FFCBBD00"
       ],
       "point_light_attenuation_radius": 2000,
+      "point_light_range_m": 20,
       "point_light_intensity_variation": 0,
       "point_light_radius_variation": 0.1,
       "point_light_mobility": "Static",
-      "point_light_cast_shadows": false,
+      "point_light_cast_shadows": true,
       "can_affect_navigation": false,
       "collision_profile": "NoCollision",
       "cast_shadow": false,
@@ -620,15 +787,16 @@
       "point_light_offset_cm": [
         0,
         0,
-        100
+        50
       ],
       "point_light_rotation_deg": [
         0,
         0,
         0
       ],
-      "point_light_intensity": 100,
+      "point_light_intensity": 1000,
       "point_light_units": "Unitless",
+      "point_light_brightness": 0.3,
       "point_light_color_srgb": [
         151,
         207,
@@ -640,6 +808,7 @@
         "FFCBBD00"
       ],
       "point_light_attenuation_radius": 2000,
+      "point_light_range_m": 20,
       "point_light_intensity_variation": 0,
       "point_light_radius_variation": 0.08,
       "point_light_mobility": "Static",
@@ -679,15 +848,16 @@
       "point_light_offset_cm": [
         0,
         0,
-        100
+        50
       ],
       "point_light_rotation_deg": [
         0,
         0,
         0
       ],
-      "point_light_intensity": 100,
+      "point_light_intensity": 1000,
       "point_light_units": "Unitless",
+      "point_light_brightness": 0.3,
       "point_light_color_srgb": [
         151,
         207,
@@ -699,10 +869,11 @@
         "FFCBBD00"
       ],
       "point_light_attenuation_radius": 2000,
+      "point_light_range_m": 20,
       "point_light_intensity_variation": 0,
       "point_light_radius_variation": 0.08,
       "point_light_mobility": "Static",
-      "point_light_cast_shadows": false,
+      "point_light_cast_shadows": true,
       "can_affect_navigation": false,
       "collision_profile": "NoCollision",
       "cast_shadow": false,
@@ -738,15 +909,16 @@
       "point_light_offset_cm": [
         0,
         0,
-        100
+        50
       ],
       "point_light_rotation_deg": [
         0,
         0,
         0
       ],
-      "point_light_intensity": 100,
+      "point_light_intensity": 1000,
       "point_light_units": "Unitless",
+      "point_light_brightness": 0.3,
       "point_light_color_srgb": [
         151,
         207,
@@ -758,6 +930,7 @@
         "FFCBBD00"
       ],
       "point_light_attenuation_radius": 2000,
+      "point_light_range_m": 20,
       "point_light_intensity_variation": 0,
       "point_light_radius_variation": 0.08,
       "point_light_mobility": "Static",

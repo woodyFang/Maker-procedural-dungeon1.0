@@ -41,12 +41,14 @@ local function ClampInteger(value, minimum, maximum, fallback)
     return math.max(minimum, math.min(maximum, math.floor(value + 0.5)))
 end
 
-local function BalancedRoomCounts(total, floorCount)
-    local result = {}
-    local base = total // floorCount
-    for floor = 1, floorCount do result[floor] = base end
-    for floor = 1, total - base * floorCount do result[floor] = result[floor] + 1 end
-    return result
+local function NormalizeRoomCounts(source, defaults, floorCount)
+    local result, total = {}, 0
+    for floor = 1, floorCount do
+        local fallback = defaults and (defaults[floor] or defaults[#defaults]) or 6
+        result[floor] = ClampInteger(source and source[floor], 6, 50, fallback or 6)
+        total = total + result[floor]
+    end
+    return result, total
 end
 
 local function HexColor(value, brightness)
@@ -75,7 +77,6 @@ local ENVIRONMENTS = {
 function DungeonApp.new()
     return setmetatable({
         seed = 1337, floorCount = 2, floorHeight = MultiFloor.FLOOR_HEIGHT,
-        shadowCastleRoomCount = 22,
         currentFloor = 0, floorViewMode = "neighbors",
         settingKey = "dungeon", themeKey = "ancient",
         roomCounts = { 21, 21 }, loopRates = { 15, 15 }, decorDensities = { 60, 60 },
@@ -430,6 +431,22 @@ function DungeonApp:IsBgeoFixedThemeActive()
     return preset ~= nil and preset.externalScene == "bgeoManifest"
 end
 
+function DungeonApp:ClearInactiveBgeoScene()
+    if self:IsBgeoFixedThemeActive() or not self.bgeoRenderer then return false end
+    local renderer = self.bgeoRenderer
+    local hasScene = renderer.root ~= nil
+        or renderer.lightDebugRoot ~= nil
+        or renderer.cellDebugRoot ~= nil
+        or renderer.stats ~= nil
+        or #(renderer.groups or {}) > 0
+        or #(renderer.lights or {}) > 0
+    if not hasScene then return false end
+    renderer:Clear()
+    self.lastHoudiniMarkerResult = nil
+    print("[DungeonForge] cleared inactive Shadow Castle BGEO scene")
+    return true
+end
+
 function DungeonApp:IsSceneLightingEnabled()
     local preset = FixedThemes.Get(self.activeFixedThemeId)
     return not (preset and preset.lightingEnabled == false)
@@ -441,7 +458,7 @@ function DungeonApp:ClearSceneContent()
     if self.preview and self.preview.ClearScene then self.preview:ClearScene() end
     if self.forgeCamera then
         self.forgeCamera.enabled = true
-        self.forgeCamera:UsePerspectiveView()
+        self.forgeCamera:UsePerspectiveView(true)
     end
     if self.panel then
         self.panel:SetPreviewActive(false, nil)
@@ -469,37 +486,52 @@ function DungeonApp:ClearSceneContent()
 end
 
 function DungeonApp:LoadLightingPreset(settingKey)
-    if not self:IsSceneLightingEnabled() then
-        if self.lightPreset == "disabled" and self.lightGroupNode and self.zone then return end
-        if self.lightGroupNode then self.lightGroupNode:Dispose() end
-        self.lightGroupNode = self.scene:CreateChild("LightGroup")
+    local fixedPreset = FixedThemes.Get(self.activeFixedThemeId)
+    local environmentOnly = not self:IsSceneLightingEnabled()
+        or (fixedPreset and fixedPreset.directionalLight == false)
+    local localLightOnly = fixedPreset and fixedPreset.localLightOnlyEnvironment == true
+    local environment = ENVIRONMENTS[settingKey] or ENVIRONMENTS.dungeon
+    local preset = environmentOnly and (fixedPreset and fixedPreset.environmentPreset or environment.preset)
+        or environment.preset
+    local presetKey = localLightOnly and "local-point-lights"
+        or (environmentOnly and (preset .. ":environment-only") or preset)
+    if self.lightPreset == presetKey and self.zone then return end
+    if self.lightGroupNode then self.lightGroupNode:Remove() end
+    self.lightGroupNode = self.scene:CreateChild("LightGroup")
+    if localLightOnly then
         self.zone = self.lightGroupNode:CreateComponent("Zone")
         self.zone.boundingBox = BoundingBox(Vector3(-1000, -1000, -1000), Vector3(1000, 1000, 1000))
         self.sun = nil
-        self.lightPreset = "disabled"
-        print("[DungeonForge] lighting disabled for active fixed theme")
+        self.lightPreset = presetKey
+        print("[DungeonForge] local point-light environment (IBL and directional light disabled)")
         return
     end
-    local environment = ENVIRONMENTS[settingKey] or ENVIRONMENTS.dungeon
-    local preset = environment.preset
-    if self.lightPreset == preset and self.zone and self.sun then return end
-    if self.lightGroupNode then self.lightGroupNode:Remove() end
-    self.lightGroupNode = self.scene:CreateChild("LightGroup")
     local file = cache:GetResource("XMLFile", preset)
     if file then
         self.lightGroupNode:LoadXML(file:GetRoot())
         self.zone = self.lightGroupNode:GetComponent("Zone", true)
-        self.sun = self.lightGroupNode:GetComponent("Light", true)
-        self.lightPreset = preset
-        print("[DungeonForge] lighting preset=" .. preset)
+        local loadedSun = self.lightGroupNode:GetComponent("Light", true)
+        if environmentOnly then
+            if loadedSun then loadedSun:Dispose() end
+            self.sun = nil
+            print("[DungeonForge] environment preset=" .. preset .. " (directional light removed)")
+        else
+            self.sun = loadedSun
+            print("[DungeonForge] lighting preset=" .. preset)
+        end
+        self.lightPreset = presetKey
     else
         log:Write(LOG_ERROR, "[DungeonForge] missing lighting preset " .. preset)
         self.zone = self.lightGroupNode:CreateComponent("Zone")
         self.zone.boundingBox = BoundingBox(Vector3(-1000, -1000, -1000), Vector3(1000, 1000, 1000))
-        local sunNode = self.lightGroupNode:CreateChild("Sun")
-        sunNode.rotation = Quaternion(52, -36, 0)
-        self.sun = sunNode:CreateComponent("Light")
-        self.sun.lightType = LIGHT_DIRECTIONAL
+        self.sun = nil
+        self.lightPreset = environmentOnly and "disabled" or preset
+        if not environmentOnly then
+            local sunNode = self.lightGroupNode:CreateChild("Sun")
+            sunNode.rotation = Quaternion(52, -36, 0)
+            self.sun = sunNode:CreateComponent("Light")
+            self.sun.lightType = LIGHT_DIRECTIONAL
+        end
     end
 end
 
@@ -509,7 +541,7 @@ function DungeonApp:State()
         seed = self.seed, floorCount = self.floorCount, floorHeight = self.floorHeight,
         currentFloor = self.currentFloor,
         floorViewMode = self.floorViewMode, settingKey = self.settingKey, themeKey = self.themeKey,
-        roomCounts = self.roomCounts, shadowCastleRoomCount = self.shadowCastleRoomCount,
+        roomCounts = self.roomCounts,
         loopRates = self.loopRates, decorDensities = self.decorDensities,
         customSettings = self.customSettings, roomGroups = self.roomGroups, customPalettes = self.customPalettes,
         activeCustomSettingId = self.activeCustomSettingId, customSettingName = self.customSettingName,
@@ -574,6 +606,7 @@ function DungeonApp:CreatePanel()
             if self.fixedSettingSwitchInProgress or (self.fixedSettingInputCooldown or 0) > 0 then
                 return true
             end
+            local previousPreset = FixedThemes.Get(self.activeFixedThemeId)
             self.fixedSettingSwitchInProgress = true
             self:MarkTopicSelectionChanged()
             self.topicMode = TOPIC_MODE_FIXED_PCG
@@ -586,8 +619,7 @@ function DungeonApp:CreatePanel()
             self.roomCounts, self.loopRates, self.decorDensities = {}, {}, {}
             if preset.id == "shadowCastle" then
                 self.seed = ClampInteger(preset.seed, 0, 0xffffffff, self.seed)
-                self.shadowCastleRoomCount = preset.roomCount
-                self.roomCounts = BalancedRoomCounts(preset.roomCount, self.floorCount)
+                self.roomCounts = NormalizeRoomCounts(preset.roomCounts, preset.roomCounts, self.floorCount)
             end
             for floor = 1, self.floorCount do
                 self.roomCounts[floor] = self.roomCounts[floor] or preset.roomCount
@@ -602,6 +634,9 @@ function DungeonApp:CreatePanel()
                 self:ClearSceneContent()
                 self:RefreshPanel()
             else
+                if previousPreset and previousPreset.externalScene then
+                    self:ClearSceneContent()
+                end
                 self:ApplyTheme()
                 self:Generate(false, false)
             end
@@ -656,6 +691,7 @@ function DungeonApp:CreatePanel()
         onSetting = function(key)
             self:MarkTopicSelectionChanged()
             self.topicMode = TOPIC_MODE_BASE
+            local previousPreset = FixedThemes.Get(self.activeFixedThemeId)
             local oldId, oldName, oldSetting, oldTheme =
                 self.activeCustomSettingId, self.customSettingName, self.settingKey, self.themeKey
             local oldFloorHeight = self.floorHeight
@@ -676,11 +712,16 @@ function DungeonApp:CreatePanel()
                     return self.panel:SetStatus("题材切换未保存：" .. tostring(reason))
                 end
             end
+            if previousPreset and previousPreset.externalScene then
+                self:ClearSceneContent()
+                self.fixedSettingSceneId = nil
+            end
             self.editorRooms = nil; self:ApplyTheme(); self:Generate(false, false)
         end,
         onRandomSetting = function()
             self:MarkTopicSelectionChanged()
             self.topicMode = TOPIC_MODE_BASE
+            local previousPreset = FixedThemes.Get(self.activeFixedThemeId)
             local oldId, oldName, oldSetting, oldTheme =
                 self.activeCustomSettingId, self.customSettingName, self.settingKey, self.themeKey
             local oldFloorHeight = self.floorHeight
@@ -700,6 +741,10 @@ function DungeonApp:CreatePanel()
                     self.customizationRevision = self.customizationRevision - 1
                     return self.panel:SetStatus("随机题材切换未保存")
                 end
+            end
+            if previousPreset and previousPreset.externalScene then
+                self:ClearSceneContent()
+                self.fixedSettingSceneId = nil
             end
             self.editorRooms = nil; self:ApplyTheme(); self:Generate(false, false)
         end,
@@ -974,16 +1019,16 @@ function DungeonApp:CreatePanel()
             if self.activeFixedThemeId == FixedThemes.MODE_ID then
                 self:MarkTopicSelectionChanged()
                 self.topicMode = TOPIC_MODE_BASE
+                self.activeFixedThemeId = nil
             end
-            self.activeFixedThemeId = nil
             self.themeKey = key; self:ApplyTheme(); self:RebuildView(); self:RefreshPanel(); return true
         end,
         onRandomTheme = function()
             if self.activeFixedThemeId == FixedThemes.MODE_ID then
                 self:MarkTopicSelectionChanged()
                 self.topicMode = TOPIC_MODE_BASE
+                self.activeFixedThemeId = nil
             end
-            self.activeFixedThemeId = nil
             self.themeKey = Themes.RandomPalette(self.settingKey, self.themeKey)
             self:ApplyTheme(); self:RebuildView(); self:RefreshPanel()
         end,
@@ -1197,6 +1242,7 @@ function DungeonApp:ApplyTheme()
     end
     renderer:SetViewport(0, self.overviewViewport)
     local theme = Themes.Get(self.themeKey)
+    local fixedPreset = FixedThemes.Get(self.activeFixedThemeId)
     if self.bgeoRenderer then
         self.bgeoRenderer:SetLightingEnabled(self:IsSceneLightingEnabled())
     end
@@ -1204,15 +1250,28 @@ function DungeonApp:ApplyTheme()
     self.zone.fogColor = HexColor(theme.fog, 1.0)
     self.zone.fogStart, self.zone.fogEnd = 0, 1000
     self.zone.fogDensity = theme.fogDensity
-    self.zone.ambientSource = AMBIENT_COLOR
-    self.zone.ambientGradient = true
-    self.zone.ambientStartColor = HexColor(theme.sky, 1.0)
-    self.zone.ambientEndColor = HexColor(theme.ground, 1.0)
-    self.zone.ambientColor = HexColor(theme.sky, 1.0)
-    self.zone.ambientIntensity = self:IsSceneLightingEnabled() and theme.ambient or 0
+    local preserveEnvironmentLighting = fixedPreset
+        and fixedPreset.preserveEnvironmentLighting == true
+    if preserveEnvironmentLighting then
+        if fixedPreset.environmentIntensity ~= nil then
+            self.zone.ambientIntensity = fixedPreset.environmentIntensity
+        end
+    else
+        self.zone.ambientSource = AMBIENT_COLOR
+        local ambientGradient = true
+        if fixedPreset and fixedPreset.ambientGradient ~= nil then
+            ambientGradient = fixedPreset.ambientGradient
+        end
+        self.zone.ambientGradient = ambientGradient
+        self.zone.ambientStartColor = HexColor(theme.sky, 1.0)
+        self.zone.ambientEndColor = HexColor(theme.ground, 1.0)
+        self.zone.ambientColor = HexColor(
+            fixedPreset and fixedPreset.ambientColor or theme.sky, 1.0)
+        self.zone.ambientIntensity = fixedPreset and fixedPreset.ambientIntensity ~= nil
+            and fixedPreset.ambientIntensity or theme.ambient
+    end
     self.zone.autoExposureEnabled = false
     self.zone.bloomPlusEnabled = self.postEnabled
-    local fixedPreset = FixedThemes.Get(self.activeFixedThemeId)
     if not self:IsSceneLightingEnabled() or (fixedPreset and fixedPreset.directionalLight == false) then
         if self.sun then self.sun:Dispose(); self.sun = nil end
         print("[DungeonForge] fixed scene directional light removed id="
@@ -1233,30 +1292,42 @@ function DungeonApp:ApplyShadowCastleParameters(parameters)
     self.floorCount = ClampInteger(parameters.floorCount, 1, SHADOW_CASTLE_MAX_FLOORS,
         self.floorCount or preset.floorCount or 3)
     self.currentFloor = math.min(self.currentFloor, self.floorCount - 1)
-    local roomCount = ClampInteger(parameters.roomCount, 6, 50,
-        self.shadowCastleRoomCount or preset.roomCount or 22)
-    self.shadowCastleRoomCount = roomCount
-    self.roomCounts = BalancedRoomCounts(roomCount, self.floorCount)
+    local normalizedRoomCounts, roomCount = NormalizeRoomCounts(
+        parameters.roomCountsByFloor or self.roomCounts, preset.roomCounts, self.floorCount)
+    self.roomCounts = normalizedRoomCounts
     for floor = 1, self.floorCount do
         self.loopRates[floor] = self.loopRates[floor] or preset.loopRate
         self.decorDensities[floor] = self.decorDensities[floor] or preset.decorDensity
     end
-    for floor = #self.roomCounts, self.floorCount + 1, -1 do
-        self.roomCounts[floor], self.loopRates[floor], self.decorDensities[floor] = nil, nil, nil
-    end
-    return { seed = self.seed, floorCount = self.floorCount, roomCount = roomCount }
+    for floor = #self.loopRates, self.floorCount + 1, -1 do self.loopRates[floor] = nil end
+    for floor = #self.decorDensities, self.floorCount + 1, -1 do self.decorDensities[floor] = nil end
+    return {
+        seed = self.seed,
+        floorCount = self.floorCount,
+        roomCount = roomCount,
+        roomCountsByFloor = self.roomCounts,
+    }
 end
 
 function DungeonApp:RefreshShadowCastle(frameCamera, parameters)
     if not self:IsBgeoFixedThemeActive() then return false, "暗影古堡未激活" end
+    local preloadOk, preloadResult = self.bgeoRenderer:PreloadResources()
+    if not preloadOk then
+        local reason = "暗影古堡资源加载失败：" .. tostring(preloadResult)
+        if self.panel then self.panel:SetStatus(reason) end
+        log:Write(LOG_ERROR, "[DungeonForge] " .. reason)
+        return false, reason
+    end
     local applied = self:ApplyShadowCastleParameters(parameters)
     local started = os.clock()
+    local topologyStarted = os.clock()
     local dungeon = ShadowCastleGenerator.Generate({
         seed = applied.seed,
-        roomCount = applied.roomCount,
         floorCount = applied.floorCount,
+        roomCountsByFloor = applied.roomCountsByFloor,
         cellSize = SHADOW_CASTLE_CELL_SIZE,
     })
+    local topologyMs = (os.clock() - topologyStarted) * 1000
     if not dungeon.valid then
         local reason = dungeon.error or "Houdini PCG 生成了无效布局"
         if self.panel then self.panel:SetStatus("暗影古堡刷新失败：" .. tostring(reason)) end
@@ -1264,10 +1335,12 @@ function DungeonApp:RefreshShadowCastle(frameCamera, parameters)
     end
     self.seed = dungeon.requestedSeed or self.seed
     applied.seed = self.seed
+    local markerStarted = os.clock()
     local markerResult = HoudiniMarkerPipeline.GenerateFromTopology(dungeon.topology, {
         cellSize = SHADOW_CASTLE_CELL_SIZE,
         pillarPlacementDistance = 1.2,
     })
+    local markerMs = (os.clock() - markerStarted) * 1000
     if markerResult.stairTopologyValid == false then
         local reason = "stair topology invalid: "
             .. table.concat(markerResult.stairTopologyErrors or {}, "; ")
@@ -1277,17 +1350,20 @@ function DungeonApp:RefreshShadowCastle(frameCamera, parameters)
     end
     self:ClearSceneContent()
     self:ApplyTheme()
+    local buildStarted = os.clock()
     local ok, result = self.bgeoRenderer:RebuildFromHoudini(markerResult, {
         rooms = dungeon.rooms,
         cells = dungeon.topology.cells,
         cellSize = SHADOW_CASTLE_CELL_SIZE,
     })
+    local sceneBuildMs = (os.clock() - buildStarted) * 1000
     if not ok then
         if self.panel then self.panel:SetStatus("暗影古堡刷新失败：" .. tostring(result)) end
         log:Write(LOG_ERROR, "[BgeoDungeon] refresh failed: " .. tostring(result))
         return false, result
     end
     result.generationMs = (os.clock() - started) * 1000
+    result.topologyMs, result.markerMs, result.sceneBuildMs = topologyMs, markerMs, sceneBuildMs
     result.seed, result.floorCount, result.roomCount = applied.seed, applied.floorCount, applied.roomCount
     result.stairCount = dungeon.astar.stairCount
     result.delaunayEdgeCount = #dungeon.delaunay.edges
@@ -1295,7 +1371,14 @@ function DungeonApp:RefreshShadowCastle(frameCamera, parameters)
     result.loopEdgeCount = #dungeon.graph.loopEdges
     result.dungeonHash = dungeon.hash
     self.dungeon, self.editorRooms, self.editorLinks = dungeon, nil, nil
+    self.roomCounts = {}
+    for floor = 1, self.floorCount do
+        self.roomCounts[floor] = dungeon.roomCountsByFloor[floor] or 0
+    end
     self.lastHoudiniMarkerResult = markerResult
+    print(string.format(
+        "[DungeonForge] Shadow Castle ready topologyMs=%.1f markerMs=%.1f sceneBuildMs=%.1f totalMs=%.1f",
+        topologyMs, markerMs, sceneBuildMs, result.generationMs))
     if frameCamera ~= false and self.forgeCamera then
         self.forgeCamera.defaultTarget = Vector3(0, (self.floorCount - 1) * SHADOW_CASTLE_CELL_SIZE * 0.5, 0)
         self.forgeCamera.defaultDistance = math.max(80,
@@ -1342,6 +1425,7 @@ end
 
 function DungeonApp:RebuildView(animate)
     if self:IsBgeoFixedThemeActive() then return end
+    self:ClearInactiveBgeoScene()
     if self:IsEmptyFixedThemeActive() then
         self:ClearSceneContent()
         return
@@ -1380,6 +1464,7 @@ function DungeonApp:Generate(useEditor, frameCamera, changedFloor, preserveDunge
         self:RefreshShadowCastle(frameCamera ~= false)
         return
     end
+    self:ClearInactiveBgeoScene()
     local started = os.clock(); self.generationSerial = self.generationSerial + 1
     print(string.format("[DungeonForge] generate #%d seed=%u floors=%d editor=%s", self.generationSerial,
         self.seed & 0xffffffff, self.floorCount, tostring(useEditor)))

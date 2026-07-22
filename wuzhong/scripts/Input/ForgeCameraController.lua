@@ -168,9 +168,11 @@ function ForgeCameraController:IsEditViewActive()
     return self.editViewActive
 end
 
-function ForgeCameraController:UsePerspectiveView()
-    if self.transition or not self.camera then return false end
-    if self.editViewActive and self.savedView then
+function ForgeCameraController:UsePerspectiveView(cancelTransition)
+    if not self.camera then return false end
+    if self.transition and cancelTransition ~= true then return false end
+    if cancelTransition == true then self.transition = nil end
+    if self.savedView then
         self.target = CopyVector3(self.savedView.target)
         self.yaw = self.savedView.yaw
         self.pitch = self.savedView.pitch

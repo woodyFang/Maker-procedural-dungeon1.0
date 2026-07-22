@@ -15,41 +15,17 @@ local LIGHT_MANIFEST_CANDIDATES = {
 }
 local UINT32_MASK = 0xffffffff
 local UE_UNITLESS_CM_TO_M2_SCALE = 0.0001
+local LIGHT_UNIT_VALUE = {
+    Unitless = 0,
+    Candelas = 1,
+    Lumens = 2,
+}
 local BRAZIER_LIGHT_FUNCTION = "/Game/HoudiniImports/Support/M_BrazierLightFlicker.M_BrazierLightFlicker"
 local CELL_DEBUG_INSET = 0.96
 local CELL_DEBUG_STYLE = {
     room = { nodeName = "RoomVolumes", color = { 1.0, 0.5, 0.0, 1.0 } },
     corridor = { nodeName = "CorridorCells", color = { 0.0, 0.5, 1.0, 1.0 } },
     stair = { nodeName = "StairCells", color = { 0.0, 1.0, 0.0, 1.0 } },
-}
-
-local MATERIAL_BY_MODEL = {
-    floor01 = "Materials/pavement2.xml",
-    wall01 = "Materials/brick2.xml",
-    curbstone01 = "Materials/curbstone.xml",
-    curbstone04 = "Materials/curbstone.xml",
-    cross = "Materials/Jail.xml",
-    wall01arch1 = "Materials/brick2.xml",
-    doorarch01 = "Materials/DoorArch.xml",
-    door02 = "Materials/Door1.xml",
-    column03 = "Materials/column.xml",
-    roaster02 = "Materials/Chandelier.xml",
-    stairs01 = "Materials/Stairs.xml",
-    roof11 = "Materials/Roof02.xml",
-    spiderweb04 = "Materials/SpiderWeb.xml",
-    brick01 = "Materials/BrickDamage.xml",
-    brick02 = "Materials/BrickDamage.xml",
-    brick03 = "Materials/BrickDamage.xml",
-    brick04 = "Materials/BrickDamage.xml",
-    brick05 = "Materials/BrickDamage.xml",
-    brick06 = "Materials/BrickDamage.xml",
-    rock01 = "Materials/BrickDamage.xml",
-    rock02 = "Materials/BrickDamage.xml",
-    rock03 = "Materials/BrickDamage.xml",
-    bone01 = "Materials/Bones.xml",
-    bone02 = "Materials/Bones.xml",
-    bone03 = "Materials/Bones.xml",
-    scull01 = "Materials/Bones.xml",
 }
 
 -- UE 5.8 uses this fixed permutation table for FMath::PerlinNoise2D.
@@ -105,11 +81,6 @@ local function PlacementHash(seed, transform, zeroIndex)
     return HashCombine(hash, U32(zeroIndex))
 end
 
-local function AssetName(path)
-    local segment = tostring(path or ""):match("([^/]+)$") or ""
-    return segment:match("^([^.]+)") or segment
-end
-
 local function ReadManifest()
     for _, path in ipairs(MANIFEST_CANDIDATES) do
         if cache:Exists(path) then
@@ -147,6 +118,31 @@ local function ValidateManifest(data)
     if type(data.scene) ~= "table" then return false, "scene block is missing" end
     if data.scene.schema_version ~= 1 then return false, "unsupported scene schema" end
     if type(data.scene.instances) ~= "table" then return false, "scene.instances is missing" end
+    if type(data.asset_bindings) ~= "table" then return false, "asset_bindings is missing" end
+    if type(data.diagnostic_meshes) ~= "table"
+        or type(data.diagnostic_meshes.light_volume) ~= "string"
+        or type(data.diagnostic_meshes.cell_volume) ~= "string" then
+        return false, "diagnostic_meshes is missing"
+    end
+    local lightDefaults, hasPointLights = data.light_defaults, false
+    for _, rule in ipairs(data.meshes or {}) do
+        if rule.point_light_enabled == true then hasPointLights = true; break end
+    end
+    if hasPointLights and (type(lightDefaults) ~= "table" or lightDefaults.type ~= "Point"
+        or LIGHT_UNIT_VALUE[lightDefaults.light_units] == nil
+        or type(lightDefaults.use_physical_values) ~= "boolean"
+        or type(lightDefaults.radius_m) ~= "number"
+        or type(lightDefaults.length_m) ~= "number"
+        or type(lightDefaults.soft_radius_m) ~= "number"
+        or type(lightDefaults.punctual) ~= "boolean"
+        or type(lightDefaults.affect_volumetric_fog) ~= "boolean"
+        or type(lightDefaults.volumetric_fog_intensity) ~= "number"
+        or type(lightDefaults.cast_volumetric_shadow) ~= "boolean"
+        or type(lightDefaults.shadow_constant_bias) ~= "number"
+        or type(lightDefaults.shadow_slope_bias) ~= "number"
+        or type(lightDefaults.shadow_normal_offset) ~= "number") then
+        return false, "light_defaults does not match the UrhoX point-light contract"
+    end
     if #data.scene.instances ~= (data.scene.instance_group_count or -1) then
         return false, "instance group count does not match manifest declaration"
     end
@@ -174,6 +170,52 @@ local function ValidateManifest(data)
     end
     if instanceCount ~= (data.scene.instance_count or -1) then
         return false, "instance count does not match manifest declaration"
+    end
+
+    local function ValidateAsset(assetPath, owner)
+        local binding = type(assetPath) == "string" and data.asset_bindings[assetPath] or nil
+        if type(binding) ~= "table" or type(binding.model_resource) ~= "string"
+            or binding.model_resource == "" then
+            return false, "missing asset binding for " .. tostring(owner) .. ": " .. tostring(assetPath)
+        end
+        return true
+    end
+    for _, rule in ipairs(data.meshes or {}) do
+        if rule.point_light_enabled == true then
+            local units = rule.point_light_units or lightDefaults.light_units
+            if LIGHT_UNIT_VALUE[units] == nil then
+                return false, "unsupported point-light units for " .. tostring(rule.id) .. ": " .. tostring(units)
+            end
+            if type(rule.point_light_brightness) ~= "number" or rule.point_light_brightness < 0 then
+                return false, "point_light_brightness is invalid for " .. tostring(rule.id)
+            end
+            if type(rule.point_light_range_m) ~= "number" or rule.point_light_range_m < 0 then
+                return false, "point_light_range_m is invalid for " .. tostring(rule.id)
+            end
+        end
+        if rule.visible ~= false then
+            if rule.usage == "prefab" then
+                if type(rule.parts) ~= "table" or #rule.parts == 0 then
+                    return false, "prefab parts are missing: " .. tostring(rule.id)
+                end
+                for index, part in ipairs(rule.parts) do
+                    if part.visible ~= false then
+                        local valid, reason = ValidateAsset(part.mesh,
+                            tostring(rule.id) .. ".parts[" .. tostring(index) .. "]")
+                        if not valid then return false, reason end
+                    end
+                end
+            elseif rule.usage == "inherit" or rule.usage == "attach" then
+                local valid, reason = ValidateAsset(rule.mesh, rule.id)
+                if not valid then return false, reason end
+            end
+        end
+    end
+    for _, rule in ipairs(data.scatter_rules or {}) do
+        if rule.enabled ~= false and rule.visible ~= false then
+            local valid, reason = ValidateAsset(rule.mesh, rule.id)
+            if not valid then return false, reason end
+        end
     end
     return true
 end
@@ -232,13 +274,70 @@ local function ColorFromRule(rule, hash)
         1)
 end
 
-local function PhysicalBrightness(rule, intensityNoise)
-    local intensity = (rule.point_light_intensity or 100)
+local function LightSetting(rule, defaults, name, fallback)
+    local value = rule and rule["point_light_" .. name] or nil
+    if value == nil and defaults then
+        value = defaults[name]
+        if value == nil and name == "units" then value = defaults.light_units end
+        if value == nil and name == "radius_m" then value = defaults.radius end
+        if value == nil and name == "length_m" then value = defaults.length end
+        if value == nil and name == "soft_radius_m" then value = defaults.soft_radius end
+    end
+    if value == nil then return fallback end
+    return value
+end
+
+local function PhysicalBrightness(rule, defaults, intensityNoise)
+    local mappedBrightness = tonumber(LightSetting(rule, defaults, "brightness", nil))
+    local intensity = (mappedBrightness or rule.point_light_intensity or 100)
         * (1 + intensityNoise * (rule.point_light_intensity_variation or 0))
-    if (rule.point_light_units or "Unitless") == "Unitless" then
+    if mappedBrightness then return math.max(0, intensity) end
+    if LightSetting(rule, defaults, "units", "Unitless") == "Unitless" then
         return intensity * UE_UNITLESS_CM_TO_M2_SCALE
     end
     return intensity
+end
+
+local function PointLightRange(rule, defaults, radiusNoise)
+    local range = tonumber(LightSetting(rule, defaults, "range_m", nil))
+    if not range then range = (rule.point_light_attenuation_radius or 700) * 0.01 end
+    return math.max(0, range * (1 + radiusNoise * (rule.point_light_radius_variation or 0)))
+end
+
+local function SetFloatAttribute(light, name, value)
+    light:SetAttribute(name, Variant(VAR_FLOAT, tostring(tonumber(value) or 0)))
+end
+
+local function ConfigurePointLight(light, rule, defaults, brightness, range, castShadows)
+    local units = LightSetting(rule, defaults, "units", "Unitless")
+    light.lightType = LIGHT_POINT
+    light.usePhysicalValues = LightSetting(rule, defaults, "use_physical_values", true) == true
+    light:SetAttribute("Light Units", Variant(VAR_INT, tostring(LIGHT_UNIT_VALUE[units] or 0)))
+    light.brightness = math.max(0, brightness or 0)
+    light.range = math.max(0, range or 0)
+    light.radius = math.max(0, tonumber(LightSetting(rule, defaults, "radius_m", 0)) or 0)
+    light.length = math.max(0, tonumber(LightSetting(rule, defaults, "length_m", 0)) or 0)
+    SetFloatAttribute(light, "SoftRadius", LightSetting(rule, defaults, "soft_radius_m", 0))
+    light:SetAttribute("Punctual Light", Variant(LightSetting(rule, defaults, "punctual", true) == true))
+    light.castShadows = castShadows == true
+    light.shadowBias = BiasParameters(
+        math.max(0, tonumber(LightSetting(rule, defaults, "shadow_constant_bias", 0.00002)) or 0),
+        math.max(0, tonumber(LightSetting(rule, defaults, "shadow_slope_bias", 0)) or 0),
+        math.max(0, tonumber(LightSetting(rule, defaults, "shadow_normal_offset", 0)) or 0))
+
+    local affectVolumetricFog = LightSetting(rule, defaults, "affect_volumetric_fog", true) == true
+    local volumetricFogIntensity = math.max(0,
+        tonumber(LightSetting(rule, defaults, "volumetric_fog_intensity", 1)) or 0)
+    local volumetricFogShadows = light.castShadows
+        and LightSetting(rule, defaults, "cast_volumetric_shadow", true) == true
+    light:SetAttribute("Affect Volumetric Fog", Variant(affectVolumetricFog))
+    SetFloatAttribute(light, "Volumetric Fog Intensity", volumetricFogIntensity)
+    light:SetAttribute("Volumetric Fog Shadows", Variant(volumetricFogShadows))
+
+    if LightSetting(rule, defaults, "use_temperature", false) == true then
+        light:SetAttribute("Use Temperature", Variant(true))
+        SetFloatAttribute(light, "Temperature", LightSetting(rule, defaults, "temperature_kelvin", 6500))
+    end
 end
 
 local function Grad2(hash, x, y)
@@ -299,9 +398,10 @@ function BgeoDungeonRenderer.new(scene)
         lightDebugMaterial = nil, lightDebugMarkerMaterial = nil, elapsed = 0,
         cellDebugVisible = false, cellDebugRoot = nil, cellDebugMaterials = {},
         cellDebugData = nil, cellDebugStats = nil, cachedBuild = nil,
-        groupInstanceNodes = {},
+        groupInstanceNodes = {}, assetBindings = nil, diagnosticMeshes = nil, lightDefaults = nil,
         referenceLightsEnabled = false,
         lightingEnabled = true,
+        preloadStats = nil,
     }, BgeoDungeonRenderer)
 end
 
@@ -344,6 +444,9 @@ function BgeoDungeonRenderer:DestroyDungeonGeometry()
     self.groups = {}
     self.groupInstanceNodes = {}
     self.resolvedMaterials = {}
+    self.assetBindings = nil
+    self.diagnosticMeshes = nil
+    self.lightDefaults = nil
     self.lights = {}
 end
 
@@ -363,6 +466,9 @@ function BgeoDungeonRenderer:Clear()
     self.groups = {}
     self.groupInstanceNodes = {}
     self.resolvedMaterials = {}
+    self.assetBindings = nil
+    self.diagnosticMeshes = nil
+    self.lightDefaults = nil
     self.lights = {}
     self.doorSystem:Clear()
     if self.root then self.root:Dispose(); self.root = nil end
@@ -405,21 +511,106 @@ local function MaterialOverridePath(rule)
     return nil
 end
 
-function BgeoDungeonRenderer:CreateGroup(name, unrealPath, rule)
-    local modelName = AssetName(unrealPath)
-    local model = cache:GetResourceAsyncEx("Model", "Models/" .. modelName .. ".mdl")
+local function AddPreloadResource(resources, seen, resourceType, path)
+    if type(path) ~= "string" or path == "" then return end
+    local key = resourceType .. "\0" .. path
+    if seen[key] then return end
+    seen[key] = true
+    resources[#resources + 1] = { type = resourceType, path = path }
+end
+
+local function AddMaterialOverrides(resources, seen, rule)
+    for _, override in ipairs(rule and rule.material_overrides or {}) do
+        local path = type(override) == "string" and override
+            or type(override) == "table" and (override.material or override.path)
+            or nil
+        AddPreloadResource(resources, seen, "Material", path)
+    end
+end
+
+function BgeoDungeonRenderer:PreloadResources()
+    if self.preloadStats then return true, self.preloadStats end
+    local data, source = ReadManifest()
+    if not data then return false, source end
+    local valid, reason = ValidateManifest(data)
+    if not valid then return false, reason end
+
+    local resources, seen = {}, {}
+    for _, binding in pairs(data.asset_bindings) do
+        if type(binding) == "table" then
+            AddPreloadResource(resources, seen, "Model", binding.model_resource)
+            AddPreloadResource(resources, seen, "Material", binding.material_resource)
+        end
+    end
+    for _, rule in ipairs(data.meshes or {}) do
+        AddMaterialOverrides(resources, seen, rule)
+        for _, part in ipairs(rule.parts or {}) do AddMaterialOverrides(resources, seen, part) end
+    end
+    for _, rule in ipairs(data.scatter_rules or {}) do AddMaterialOverrides(resources, seen, rule) end
+    for _, modelPath in pairs(data.diagnostic_meshes or {}) do
+        AddPreloadResource(resources, seen, "Model", modelPath)
+    end
+    table.sort(resources, function(a, b)
+        if a.type == b.type then return a.path < b.path end
+        return a.type < b.type
+    end)
+
+    local started, models, materials, failed = os.clock(), 0, 0, {}
+    for _, resource in ipairs(resources) do
+        local loaded = cache:GetResource(resource.type, resource.path)
+        if loaded then
+            if resource.type == "Model" then models = models + 1 else materials = materials + 1 end
+        else
+            failed[#failed + 1] = resource.type .. ":" .. resource.path
+        end
+    end
+    self.preloadStats = {
+        source = source,
+        models = models,
+        materials = materials,
+        failed = #failed,
+        loadMs = (os.clock() - started) * 1000,
+    }
+    print(string.format(
+        "[BgeoDungeon] preload complete models=%d materials=%d failed=%d loadMs=%.1f source=%s",
+        models, materials, #failed, self.preloadStats.loadMs, tostring(source)))
+    if #failed > 0 then
+        log:Write(LOG_ERROR, "[BgeoDungeon] preload failed: " .. table.concat(failed, ", "))
+        return false, self.preloadStats
+    end
+    return true, self.preloadStats
+end
+
+function BgeoDungeonRenderer:CreateGroup(name, assetPath, rule, inheritedRule)
+    local binding = self.assetBindings and self.assetBindings[assetPath] or nil
+    if type(binding) ~= "table" then
+        print("[BgeoDungeon] missing asset binding for " .. tostring(assetPath))
+        return nil
+    end
+    local modelPath = binding.model_resource
+    local model = cache:GetResource("Model", modelPath)
     if not model then
-        print("[BgeoDungeon] missing model Models/" .. modelName .. ".mdl")
+        print("[BgeoDungeon] missing model " .. tostring(modelPath) .. " for " .. tostring(assetPath))
         return nil
     end
     local node = self.root:CreateChild(name)
     local group = node:CreateComponent("StaticModelGroup")
     group:SetModel(model)
-    local materialPath = MaterialOverridePath(rule) or MATERIAL_BY_MODEL[string.lower(modelName)]
-    local material = materialPath and cache:GetResourceAsyncEx("Material", materialPath) or nil
-    if material then group:SetMaterial(material) end
-    self.resolvedMaterials[name] = materialPath
-    group.castShadows = true
+    local materialPath = MaterialOverridePath(rule)
+        or MaterialOverridePath(inheritedRule)
+        or binding.material_resource
+    if materialPath then
+        local material = cache:GetResource("Material", materialPath)
+        if material then
+            group:SetMaterial(material)
+            self.resolvedMaterials[name] = materialPath
+        else
+            print("[BgeoDungeon] missing material " .. materialPath .. " for " .. name)
+        end
+    end
+    local castShadow = rule and rule.cast_shadow
+    if castShadow == nil and inheritedRule then castShadow = inheritedRule.cast_shadow end
+    group.castShadows = castShadow ~= false
     self.groups[#self.groups + 1] = group
     return group, node
 end
@@ -434,7 +625,7 @@ function BgeoDungeonRenderer:AddGroupInstance(group, node)
     nodes[#nodes + 1] = node
 end
 
-function BgeoDungeonRenderer:AddRuleInstance(group, parent, transform, rule, suffix, partYaw)
+function BgeoDungeonRenderer:AddRuleInstance(group, parent, transform, rule, suffix, partRule)
     local marker = parent:CreateChild("Marker-" .. suffix)
     ApplyPackedTransform(marker, transform)
     local instance = marker
@@ -442,9 +633,9 @@ function BgeoDungeonRenderer:AddRuleInstance(group, parent, transform, rule, suf
         instance = marker:CreateChild("Offset")
         ApplyRuleTransform(instance, rule)
     end
-    if partYaw and partYaw ~= 0 then
+    if partRule and not IsIdentityRuleTransform(partRule) then
         local part = instance:CreateChild("PrefabPart")
-        part.rotation = Quaternion(partYaw, Vector3.UP)
+        ApplyRuleTransform(part, partRule)
         instance = part
     end
     local range = rule.override_uniform_scale_range
@@ -461,28 +652,23 @@ end
 function BgeoDungeonRenderer:AddPointLight(parent, rule, hash)
     local node = parent:CreateChild("PointLight")
     node.position = ConvertPosition(rule.point_light_offset_cm)
+    node.rotation = HoudiniCoordinateSystem.UERotatorToUrho(rule.point_light_rotation_deg)
+    node.scale = Vector3(1, 1, 1)
     local light = node:CreateComponent("Light")
-    light.lightType = LIGHT_POINT
     light.color = ColorFromRule(rule, hash)
     local intensityNoise = ((hash & 0xffff) / 32767.5) - 1
     local radiusNoise = (((hash >> 16) & 0xffff) / 32767.5) - 1
-    local baseBrightness = PhysicalBrightness(rule, intensityNoise)
-    light.usePhysicalValues = true
-    light.brightness = baseBrightness
-    light.range = (rule.point_light_attenuation_radius or 700) * 0.01
-        * (1 + radiusNoise * (rule.point_light_radius_variation or 0))
-    light.radius = 0
-    light.length = 0
-    light.castShadows = rule.point_light_cast_shadows == true
-    light:SetAttribute("Affect Volumetric Fog", Variant(true))
-    -- Numeric Lua variants are Double; this serialized attribute requires Float.
-    light:SetAttribute("Volumetric Fog Intensity", Variant(VAR_FLOAT, "1"))
-    light:SetAttribute("Volumetric Fog Shadows", Variant(light.castShadows))
+    local baseBrightness = PhysicalBrightness(rule, self.lightDefaults, intensityNoise)
+    local range = PointLightRange(rule, self.lightDefaults, radiusNoise)
+    ConfigurePointLight(light, rule, self.lightDefaults, baseBrightness, range,
+        rule.point_light_cast_shadows == true)
     self.lights[#self.lights + 1] = {
         node = node,
         light = light,
         baseBrightness = baseBrightness,
         lightFunction = rule.point_light_function_material,
+        ruleId = rule.id,
+        marker = rule.marker,
     }
     return light
 end
@@ -499,18 +685,10 @@ function BgeoDungeonRenderer:BuildReferenceLights(data)
         end
         local node = root:CreateChild("DungeonMapLight-" .. index)
         node.position = Vector3(record[1], record[2], record[3])
+        node.scale = Vector3(1, 1, 1)
         local light = node:CreateComponent("Light")
-        light.lightType = LIGHT_POINT
         light.color = Color(color[1], color[2], color[3], 1)
-        light.usePhysicalValues = true
-        light.brightness = profile.brightness
-        light.range = record[5]
-        light.radius = 0
-        light.length = 0
-        light.castShadows = record[6] == true
-        light:SetAttribute("Affect Volumetric Fog", Variant(true))
-        light:SetAttribute("Volumetric Fog Intensity", Variant(VAR_FLOAT, "1"))
-        light:SetAttribute("Volumetric Fog Shadows", Variant(light.castShadows))
+        ConfigurePointLight(light, nil, data.defaults, profile.brightness, record[5], record[6] == true)
         self.lights[#self.lights + 1] = {
             node = node,
             light = light,
@@ -524,8 +702,11 @@ end
 
 function BgeoDungeonRenderer:SetLightDebugVisible(visible)
     if visible == true and self.cellDebugVisible then
-        self.cellDebugVisible = false
-        self:ClearCellDebugGeometry()
+        local disabled, reason = self:SetCellDebugVisible(false)
+        if disabled == nil then
+            self.lightDebugVisible = false
+            return nil, reason
+        end
     end
     self.lightDebugVisible = visible == true
     self:RefreshLightDebugGeometry()
@@ -542,9 +723,11 @@ function BgeoDungeonRenderer:RefreshLightDebugGeometry()
     self:ClearLightDebugGeometry()
     if not self.lightDebugVisible or #self.lights == 0 then return end
 
-    local sphere = cache:GetResource("Model", "Models/Sphere.mdl")
+    local spherePath = self.diagnosticMeshes and self.diagnosticMeshes.light_volume or nil
+    local sphere = spherePath and cache:GetResource("Model", spherePath) or nil
     if not sphere then
-        log:Write(LOG_ERROR, "[BgeoDungeon] missing Models/Sphere.mdl for light debug")
+        log:Write(LOG_ERROR, "[BgeoDungeon] missing diagnostic light-volume model "
+            .. tostring(spherePath))
         return
     end
 
@@ -684,8 +867,9 @@ function BgeoDungeonRenderer:RefreshCellDebugGeometry()
         return false, "Shadow Castle canonical cells are unavailable"
     end
 
-    local cube = cache:GetResource("Model", "Models/Box.mdl")
-    if not cube then return false, "missing Models/Box.mdl for cell debug" end
+    local cubePath = self.diagnosticMeshes and self.diagnosticMeshes.cell_volume or nil
+    local cube = cubePath and cache:GetResource("Model", cubePath) or nil
+    if not cube then return false, "missing diagnostic cell-volume model " .. tostring(cubePath) end
     local modelBounds = cube.boundingBox
     local root = self.scene:CreateChild("ShadowCastleCellDebug")
     local groupRoots, materials, materialsByKey = {}, {}, {}
@@ -758,18 +942,22 @@ function BgeoDungeonRenderer:BuildBase(data, transformsByMesh, roomsByMesh)
             or prefabBySource[source.mesh]
         local rule = selectedRule and selectedRule.usage == "inherit" and selectedRule
             or inheritByMesh[source.mesh]
-        if prefab then
-            local group, node = self:CreateGroup("Prefab-" .. prefab.id,
-                "/Game/FantasyDungeon/meshes/Wall/Wall01.Wall01", prefab)
-            if group then
-                for index, transform in ipairs(source.transforms) do
-                    self:AddRuleInstance(group, node, transform, prefab, index - 1, 0)
-                    self:AddRuleInstance(group, node, transform, prefab, index - 1, 180)
-                    count = count + 2
+        if prefab and prefab.visible ~= false then
+            for partIndex, part in ipairs(prefab.parts or {}) do
+                if part.visible ~= false then
+                    local partId = part.id or tostring(partIndex)
+                    local group, node = self:CreateGroup(
+                        "Prefab-" .. prefab.id .. "-" .. partId, part.mesh, part, prefab)
+                    if group then
+                        for index, transform in ipairs(source.transforms) do
+                            self:AddRuleInstance(group, node, transform, prefab, index - 1, part)
+                            count = count + 1
+                        end
+                    end
                 end
             end
         elseif rule and rule.visible ~= false and not lightByMesh[source.mesh] then
-            local group, node = self:CreateGroup("BGEO-" .. rule.id, source.mesh, rule)
+            local group, node = self:CreateGroup("BGEO-" .. rule.id, rule.mesh, rule)
             if group then
                 for index, transform in ipairs(source.transforms) do
                     self:AddRuleInstance(group, node, transform, rule, index - 1)
@@ -784,7 +972,7 @@ end
 function BgeoDungeonRenderer:BuildAttachments(data, transformsByMesh)
     local count, lightCount = 0, 0
     for _, rule in ipairs(data.meshes or {}) do
-        if rule.usage == "attach" then
+        if rule.usage == "attach" and rule.visible ~= false then
             local transforms = transformsByMesh[rule.source_mesh]
             local group, node = nil, nil
             if transforms then group, node = self:CreateGroup("Attach-" .. rule.id, rule.mesh, rule) end
@@ -827,7 +1015,7 @@ function BgeoDungeonRenderer:BuildMarkerLights(data, transformsByMesh, roomsByMe
     local count = 0
     local lightRoot = self.root:CreateChild("ManifestLights")
     for _, rule in ipairs(data.meshes or {}) do
-        if rule.usage == "point_light_marker" then
+        if rule.usage == "point_light_marker" and rule.point_light_enabled ~= false then
             local transforms, roomIds = transformsByMesh[rule.mesh], roomsByMesh[rule.mesh]
             if transforms then
                 local candidates = {}
@@ -907,7 +1095,7 @@ function BgeoDungeonRenderer:BuildScatter(data)
     local sharedAccepted, total = {}, 0
     for _, rule in ipairs(data.scatter_rules or {}) do
         local surface = surfaces[string.lower(rule.surface or "")]
-        if rule.enabled ~= false and surface then
+        if rule.enabled ~= false and rule.visible ~= false and surface then
             local group, node = self:CreateGroup("Scatter-" .. rule.id, rule.mesh, rule)
             if group then
                 local vertices, indices = surface.vertices_cm or {}, surface.indices or {}
@@ -979,9 +1167,13 @@ function BgeoDungeonRenderer:BuildScatter(data)
 end
 
 function BgeoDungeonRenderer:BuildManifest(data, source, lightData, lightSource, pipelineStats)
+    local started = os.clock()
     local valid, reason = ValidateManifest(data)
     if not valid then return false, reason end
     self.referenceLightsEnabled = lightData ~= nil
+    self.assetBindings = data.asset_bindings
+    self.diagnosticMeshes = data.diagnostic_meshes
+    self.lightDefaults = data.light_defaults
     if not self.lightingEnabled then
         print("[BgeoDungeon] all scene lights disabled")
     elseif not lightData then
@@ -1006,18 +1198,22 @@ function BgeoDungeonRenderer:BuildManifest(data, source, lightData, lightSource,
         attachedInstances = attachCount,
         scatterInstances = scatterCount,
         lights = referenceLights + companionLights + markerLights,
+        referenceLights = referenceLights,
+        companionLights = companionLights,
+        markerLights = markerLights,
         lightSource = self.lightingEnabled
             and (lightData and lightSource or "deterministic fallback") or "disabled",
         doors = self.doorSystem:GetDoorCount(),
         groups = #self.groups,
         markerCount = pipelineStats and pipelineStats.markerCount or nil,
         faceCount = pipelineStats and pipelineStats.faceCount or nil,
+        buildMs = (os.clock() - started) * 1000,
     }
     self:RefreshLightDebugGeometry()
     print(string.format(
-        "[BgeoDungeon] refreshed source=%d base=%d attached=%d scatter=%d lights=%d doors=%d groups=%d",
+        "[BgeoDungeon] refreshed source=%d base=%d attached=%d scatter=%d lights=%d doors=%d groups=%d buildMs=%.1f",
         self.stats.sourceInstances, baseCount, attachCount, scatterCount, self.stats.lights,
-        self.stats.doors, self.stats.groups))
+        self.stats.doors, self.stats.groups, self.stats.buildMs))
     return true, self.stats
 end
 

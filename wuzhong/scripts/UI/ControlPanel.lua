@@ -380,16 +380,6 @@ function ControlPanel.new(callbacks, initial)
         whiteSpace = "normal",
     })
     self.fixedSettingHint:SetVisible(false)
-    self.houdiniFlowButton = SmallButton("Houdini 流程", function()
-        self:SetStatus("正在验证 Houdini Marker 点/面转换……")
-        local ok, reason = callbacks.onHoudiniFlow()
-        if ok == false then self:SetStatus("Houdini 流程失败：" .. tostring(reason or "未知错误")) end
-    end, {
-        width = "100%", height = 31, fontSize = 10.5,
-        backgroundColor = { 24, 35, 38, 255 }, borderColor = { 64, 130, 126, 255 },
-        textColor = { 151, 226, 215, 255 },
-    })
-    self.houdiniFlowButton:SetVisible(false)
     self.fixedSettingToggleButton = ExpandButton(function()
         self:SetFixedSettingExpanded(not self.fixedSettingExpanded)
     end)
@@ -911,7 +901,7 @@ function ControlPanel.new(callbacks, initial)
         children = {
             Row({ self.fixedTopicLabel, self.fixedTopicHint,
                 self.fixedSettingModeButton, self.fixedSettingToggleTooltip }, { gap = 4 }),
-            self.fixedSettingHint, self.houdiniFlowButton, self.fixedSettingList,
+            self.fixedSettingHint, self.fixedSettingList,
         },
     }
     self.roomGroupExpanded = false
@@ -936,7 +926,6 @@ function ControlPanel.new(callbacks, initial)
     }
     self.shadowCastleSeed = initial.seed or 5
     self.shadowCastleFloorCount = 3
-    self.shadowCastleRoomCount = 22
     self.shadowCastleSeedField = UI.TextField {
         value = tostring(self.shadowCastleSeed), placeholder = "随机种子", width = "100%", height = 30,
         borderRadius = 6, borderColor = C.inputLine, focusedBorderColor = C.accent,
@@ -954,29 +943,17 @@ function ControlPanel.new(callbacks, initial)
             self.shadowCastleFloorValue:SetText(tostring(self.shadowCastleFloorCount))
         end,
     }
-    self.shadowCastleRoomValue = Label("22", 10.5, C.accent, { fontWeight = "bold" })
-    self.shadowCastleRoomSlider = UI.Slider {
-        value = 22, min = 6, max = 50, step = 1,
-        onChange = function(_, value)
-            self.shadowCastleRoomCount = math.floor(value + 0.5)
-            self.shadowCastleRoomValue:SetText(tostring(self.shadowCastleRoomCount))
-        end,
-    }
     self.shadowCastleParametersPanel = UI.Panel {
         width = "100%", gap = 5, padding = { 7, 7, 6, 7 },
         backgroundColor = { 25, 24, 27, 255 }, borderColor = { 73, 59, 45, 255 },
         borderWidth = 1, borderRadius = 6,
         children = {
-            Label("Houdini 生成参数", 9.5, { 214, 177, 132, 255 }, { fontWeight = "bold" }),
+            Label("生成参数", 9.5, { 214, 177, 132, 255 }, { fontWeight = "bold" }),
             Label("随机种子", 9, C.dim),
             self.shadowCastleSeedField,
             UI.Panel { width = "100%", gap = 2, children = {
                 Row({ Label("层数", 9.5, C.text, { flexGrow = 1 }), self.shadowCastleFloorValue }),
                 self.shadowCastleFloorSlider,
-            } },
-            UI.Panel { width = "100%", gap = 2, children = {
-                Row({ Label("房间总数", 9.5, C.text, { flexGrow = 1 }), self.shadowCastleRoomValue }),
-                self.shadowCastleRoomSlider,
             } },
         },
     }
@@ -985,7 +962,6 @@ function ControlPanel.new(callbacks, initial)
         local ok, reason = callbacks.onShadowCastleRefresh({
             seed = self.shadowCastleSeed,
             floorCount = self.shadowCastleFloorCount,
-            roomCount = self.shadowCastleRoomCount,
         })
         if ok == false then self:SetStatus(reason or "暗影古堡刷新失败") end
     end, {
@@ -1080,10 +1056,7 @@ function ControlPanel.new(callbacks, initial)
             Section({
                 Row({ Label("房间", 10.5, C.dim, { flexGrow = 1, letterSpacing = 0.5 }),
                     self.roomGroupAddButton, self.roomGroupToggleTooltip }),
-                self.shadowCastleParametersPanel,
                 self.shadowCastleRefreshButton,
-                self.shadowCastleCellDebugButton,
-                self.shadowCastleLightDebugButton,
                 self.roomGroupHint,
                 self.roomGroupList,
             }),
@@ -1878,7 +1851,6 @@ function ControlPanel:SetFixedSettingExpanded(expanded)
         self:SetCustomSettingExpanded(false)
     end
     self.fixedSettingHint:SetVisible(self.fixedSettingExpanded)
-    self.houdiniFlowButton:SetVisible(self.fixedSettingExpanded)
     self.fixedSettingList:SetVisible(self.fixedSettingExpanded)
     self.fixedSettingToggleButton:SetExpanded(self.fixedSettingExpanded)
     self.fixedSettingToggleTooltip:SetContent(self.fixedSettingExpanded and "收起固定题材" or "展开固定题材")
@@ -1949,19 +1921,16 @@ function ControlPanel:SetState(state)
     self.cameraOnlyTheme = state.activeFixedThemeId == "shadowCastle"
     self.thirdPreviewButton:SetVisible(not self.cameraOnlyTheme)
     local shadowCastleActive = state.activeFixedThemeId == "shadowCastle"
-    self.shadowCastleParametersPanel:SetVisible(shadowCastleActive)
+    self.shadowCastleParametersPanel:SetVisible(false)
     self.shadowCastleRefreshButton:SetVisible(shadowCastleActive)
-    self.shadowCastleCellDebugButton:SetVisible(shadowCastleActive)
-    self.shadowCastleLightDebugButton:SetVisible(shadowCastleActive)
+    self.shadowCastleCellDebugButton:SetVisible(false)
+    self.shadowCastleLightDebugButton:SetVisible(false)
     if shadowCastleActive then
         self.shadowCastleSeed = state.seed or self.shadowCastleSeed
         self.shadowCastleFloorCount = state.floorCount or self.shadowCastleFloorCount
-        self.shadowCastleRoomCount = state.shadowCastleRoomCount or self.shadowCastleRoomCount
         self.shadowCastleSeedField:SetValue(tostring(self.shadowCastleSeed))
         self.shadowCastleFloorSlider:SetValue(self.shadowCastleFloorCount)
         self.shadowCastleFloorValue:SetText(tostring(self.shadowCastleFloorCount))
-        self.shadowCastleRoomSlider:SetValue(self.shadowCastleRoomCount)
-        self.shadowCastleRoomValue:SetText(tostring(self.shadowCastleRoomCount))
     end
     self.shadowCastleLightDebugButton:SetText(state.lightDebugVisible and "灯光调试：开启" or "灯光调试：关闭")
     self.shadowCastleLightDebugButton:SetStyle({
@@ -2003,7 +1972,7 @@ function ControlPanel:SetState(state)
     self.subtitle:SetText(string.format("%s · %s · 种子 %u · %s", state.customSettingName or setting.label, theme.label,
         self.seed & 0xffffffff, state.valid == false and "生成失败" or "已连通 ✓"))
     if fixedTheme then
-        self.subtitle:SetText(fixedTheme.label .. " · " .. theme.label .. " · Houdini PCG")
+        self.subtitle:SetText(fixedTheme.label .. " · " .. theme.label .. " · 程序化生成")
     elseif fixedActive then
         self.subtitle:SetText("固定 · 空场景 · " .. theme.label)
     end
@@ -2071,7 +2040,7 @@ end
 function ControlPanel:SetBgeoStats(stats)
     if stats.markerCount then
         self.stats:SetText(string.format(
-            "Houdini VEX · %d 层 · %d 总房间 · %d 楼梯\n%d Marker · %d 面 · %d 结构 · %d 附加 · %d 灯光",
+            "暗影古堡 · %d 层 · %d 总房间 · %d 楼梯\n%d Marker · %d 面 · %d 结构 · %d 附加 · %d 灯光",
             stats.floorCount or 0,
             stats.roomCount or 0,
             stats.stairCount or 0,
@@ -2093,7 +2062,7 @@ end
 
 function ControlPanel:SetHoudiniFlowStats(report)
     self.stats:SetText(string.format(
-        "Houdini Marker 流程 · 验证通过\n%d 类型 · %d 点 · %d 面 · %.1f 毫秒",
+        "Marker 验证通过\n%d 类型 · %d 点 · %d 面 · %.1f 毫秒",
         report.markerTypeCount or 0,
         report.markerCount or 0,
         report.faceCount or 0,

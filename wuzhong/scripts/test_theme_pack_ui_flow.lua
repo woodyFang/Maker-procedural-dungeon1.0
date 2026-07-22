@@ -7,6 +7,7 @@ local function Check(condition, message)
 end
 
 function Start()
+    local ok, errorMessage = xpcall(function()
     local app = DungeonApp.new()
     app:Start()
     local panel = app.panel
@@ -30,6 +31,8 @@ function Start()
         "basic scene information diverged from the authoritative geometry contract")
     Check(panel.sceneFloorHeightValue == nil,
         "floor height is still displayed in the side result panel instead of theme generation")
+    Check(panel.shadowCastleRoomSlider == nil and panel.shadowCastleRoomValue == nil,
+        "shadow castle still displays a separate total room control")
     local empty = DungeonGenerator.Generate({
         seed = 20260720, floorCount = 2, roomCountsByFloor = { 21, 21 },
         emptyScene = true, floorHeight = 5.0, settingKey = "dungeon", theme = "ancient",
@@ -90,6 +93,44 @@ function Start()
     Check(restored, restoreReason or "non-empty fixed PCG theme did not restore the scene")
     Check(app.dungeon and app.preview.root and app.preview.character,
         "non-empty fixed PCG theme did not rebuild dungeon and preview character state")
+    Check(app.bgeoRenderer.root == nil and app.bgeoRenderer.stats == nil,
+        "non-empty fixed PCG theme retained the shadow castle BGEO scene")
+
+    app:ToggleEditorMode("3d")
+    Check(app.editorActive and app.forgeCamera:IsTransitioning(),
+        "3D editor did not start its camera transition")
+    app.fixedSettingInputCooldown = 0
+    local transitionApplied, transitionReason = panel.callbacks.onFixedSetting("shadowCastle")
+    Check(transitionApplied, transitionReason or "shadow castle failed during an editor camera transition")
+    Check(not app.forgeCamera:IsTransitioning(),
+        "shadow castle retained an orphaned editor camera transition")
+    app:ActivatePreview("first")
+    Check(app.preview:IsFirstPerson() and app.preview.cameraOnly,
+        "shadow castle first-person camera did not activate after the scene switch")
+    local shadowCastleRoot = app.bgeoRenderer.root
+    panel.callbacks.onRandomTheme()
+    Check(app.topicMode == "fixedPCG" and app.activeFixedThemeId == "shadowCastle",
+        "random palette cleared the active shadow castle preset")
+    Check(app.bgeoRenderer.root == shadowCastleRoot and app.preview:IsFirstPerson()
+            and app.preview.cameraOnly,
+        "random palette replaced the shadow castle scene or disabled its first-person camera")
+    Check(panel.cameraOnlyTheme
+            and not panel.shadowCastleParametersPanel:IsVisible()
+            and not panel.shadowCastleCellDebugButton:IsVisible()
+            and not panel.shadowCastleLightDebugButton:IsVisible(),
+        "random palette exposed internal shadow castle controls")
+    local paletteApplied, paletteReason = panel.callbacks.onTheme("ancient")
+    Check(paletteApplied, paletteReason or "shadow castle palette selection failed")
+    Check(app.topicMode == "fixedPCG" and app.activeFixedThemeId == "shadowCastle"
+            and not panel.shadowCastleParametersPanel:IsVisible(),
+        "manual palette selection cleared the shadow castle preset")
+    panel:SetFixedSettingExpanded(true)
+    Check(panel.houdiniFlowButton == nil,
+        "fixed-topic expansion retained the internal Houdini flow control")
+    panel:SetFixedSettingExpanded(false)
+    app.fixedSettingInputCooldown = 0
+    local transitionRestored, transitionRestoreReason = panel.callbacks.onFixedSetting("frozenSanctum")
+    Check(transitionRestored, transitionRestoreReason or "scene did not recover after first-person regression test")
 
     app.SaveLocalCustomizations = function() return true end
     local applyThemeCalls, generateCalls, clearSceneCalls = 0, 0, 0
@@ -144,6 +185,8 @@ function Start()
         "fixed PCG preset did not apply its authored generation parameters")
     Check(applyThemeCalls == 1 and generateCalls == 1,
         "non-external fixed PCG preset did not use native generation")
+    Check(clearSceneCalls == 1,
+        "switching away from shadow castle did not clear its external scene")
     Check(app:ApplyCustomizationData({
         customSettings = {
             { id = "cloud-preset-topic", label = "云端预设题材", baseSettingKey = "school", packStatus = "ready" },
@@ -254,7 +297,28 @@ function Start()
     panel:CloseCustomSettingContextMenu()
     Check(not panel.customContextMenuLayer:IsVisible(), "right-click menu did not close")
 
-    print("[test] PASS theme pack one-page and context-menu flow")
+    app.activeCustomSettingId, app.customSettingName = nil, nil
+    app.activeFixedThemeId, app.topicMode = "shadowCastle", "fixedPCG"
+    app.fixedSettingSceneId = "shadowCastle"
+    local clearBeforeBaseSetting = clearSceneCalls
+    panel.callbacks.onSetting("school")
+    Check(clearSceneCalls == clearBeforeBaseSetting + 1
+            and app.activeFixedThemeId == nil and app.fixedSettingSceneId == nil,
+        "base setting switch did not clear the Shadow Castle external scene")
+
+    app.activeFixedThemeId, app.topicMode = "shadowCastle", "fixedPCG"
+    app.fixedSettingSceneId = "shadowCastle"
+    local clearBeforeRandomSetting = clearSceneCalls
+    panel.callbacks.onRandomSetting()
+    Check(clearSceneCalls == clearBeforeRandomSetting + 1
+            and app.activeFixedThemeId == nil and app.fixedSettingSceneId == nil,
+        "random setting switch did not clear the Shadow Castle external scene")
+
     app:Stop()
-    engine:Exit()
+    end, debug.traceback)
+    if not ok then
+        ErrorExit("[test] FAIL theme pack one-page and context-menu flow\n" .. tostring(errorMessage), 1)
+        return
+    end
+    ErrorExit("[test] PASS theme pack one-page and context-menu flow", 0)
 end
