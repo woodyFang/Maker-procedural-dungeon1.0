@@ -1,4 +1,4 @@
-local ShadowCastleAStar = {}
+local PCGDungeonAStar = {}
 
 local EMPTY = 0
 local ROOM = 1
@@ -6,15 +6,14 @@ local CORRIDOR = 2
 local STAIR = 3
 local HEADROOM = 4
 
--- VEX stores all A* costs in 32-bit float variables and arrays. Lua numbers
--- are doubles, so quantize every score write to preserve Houdini's tie order.
-local function VexFloat(value)
+-- Quantize scores to float32 so route tie-breaking remains deterministic.
+local function Float32(value)
     return string.unpack("f", string.pack("f", value))
 end
 
-local INFINITY = VexFloat(1e30)
-local EXISTING_PATH_COST = VexFloat(0.2)
-local STAIR_MOVE_COST = VexFloat(4.5)
+local INFINITY = Float32(1e30)
+local EXISTING_PATH_COST = Float32(0.2)
+local STAIR_MOVE_COST = Float32(4.5)
 
 local function V(x, y, z) return { x or 0, y or 0, z or 0 } end
 local function Sub(a, b) return V(a[1] - b[1], a[2] - b[2], a[3] - b[3]) end
@@ -54,7 +53,7 @@ end
 local function Heuristic(fromCell, toCell, nx, nz)
     local ax, ay, az = GridCoordinates(fromCell, nx, nz)
     local bx, by, bz = GridCoordinates(toCell, nx, nz)
-    return VexFloat(EXISTING_PATH_COST
+    return Float32(EXISTING_PATH_COST
         * (math.abs(ax - bx) + math.abs(ay - by) + math.abs(az - bz)))
 end
 
@@ -228,7 +227,7 @@ local function FindRoot(parent, index)
     return index
 end
 
-function ShadowCastleAStar.Generate(layout, graph)
+function PCGDungeonAStar.Generate(layout, graph)
     local grid = layout.gridCells
     local nx = math.max(1, math.floor(grid[1] + 0.5))
     local ny = math.max(1, math.floor(grid[2] + 0.5))
@@ -246,9 +245,9 @@ function ShadowCastleAStar.Generate(layout, graph)
         local center = CellCenter(cell, nx, nz, worldMin, cellSize)
         for _, room in ipairs(rooms) do
             local minimum, maximum = room.minimum, room.maximum
-            if center[1] > minimum[1] and center[1] < maximum[1]
-                and center[2] > minimum[2] and center[2] < maximum[2]
-                and center[3] > minimum[3] and center[3] < maximum[3] then
+            if center[1] >= minimum[1] and center[1] < maximum[1]
+                and center[2] >= minimum[2] and center[2] < maximum[2]
+                and center[3] >= minimum[3] and center[3] < maximum[3] then
                 cellState[cell + 1], roomOwner[cell + 1] = ROOM, room.id
                 break
             end
@@ -302,12 +301,12 @@ function ShadowCastleAStar.Generate(layout, graph)
                         local state = cellState[neighbor + 1]
                         if state ~= STAIR and state ~= HEADROOM
                             and not ConflictsWithCurrentPath(current, { neighbor }, parents, parentMove, nx, nz) then
-                            local candidateG = VexFloat(gScore[current + 1]
+                            local candidateG = Float32(gScore[current + 1]
                                 + TraversalCost(state, roomOwner[neighbor + 1], startRoom, goalRoom))
                             if candidateG < gScore[neighbor + 1] then
                                 parents[neighbor + 1], parentMove[neighbor + 1] = current, 0
                                 gScore[neighbor + 1] = candidateG
-                                fScore[neighbor + 1] = VexFloat(candidateG
+                                fScore[neighbor + 1] = Float32(candidateG
                                     + Heuristic(neighbor, goalCell, nx, nz))
                                 openSet[neighbor + 1] = true
                             end
@@ -335,15 +334,15 @@ function ShadowCastleAStar.Generate(layout, graph)
                                         for _, cell in ipairs(occupied) do testCells[#testCells + 1] = cell end
                                         if not ConflictsWithCurrentPath(current, testCells,
                                             parents, parentMove, nx, nz) then
-                                            -- Match the two left-associative float additions in VEX.
-                                            local candidateG = VexFloat(
-                                                VexFloat(gScore[current + 1] + STAIR_MOVE_COST)
+                                            -- Match the two left-associative float additions in float32.
+                                            local candidateG = Float32(
+                                                Float32(gScore[current + 1] + STAIR_MOVE_COST)
                                                 + TraversalCost(neighborState, roomOwner[neighbor + 1],
                                                     startRoom, goalRoom))
                                             if candidateG < gScore[neighbor + 1] then
                                                 parents[neighbor + 1], parentMove[neighbor + 1] = current, 1
                                                 gScore[neighbor + 1] = candidateG
-                                                fScore[neighbor + 1] = VexFloat(candidateG
+                                                fScore[neighbor + 1] = Float32(candidateG
                                                     + Heuristic(neighbor, goalCell, nx, nz))
                                                 openSet[neighbor + 1] = true
                                             end
@@ -506,4 +505,4 @@ function ShadowCastleAStar.Generate(layout, graph)
     }
 end
 
-return ShadowCastleAStar
+return PCGDungeonAStar

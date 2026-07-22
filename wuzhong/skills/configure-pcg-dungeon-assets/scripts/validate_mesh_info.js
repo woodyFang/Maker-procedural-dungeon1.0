@@ -8,15 +8,12 @@ const path = require("path");
 const SUPPORTED_USAGES = new Set(["inherit", "attach", "prefab", "point_light_marker"]);
 const DEFAULT_MANIFESTS = [
   "assets/PCGDungeon/PCGDungeon.mesh_info.json",
-  "assets/BgeoDungeon/DungeonInstances.mesh_info.json",
 ];
 const PIPELINE_FILES = [
   "scripts/Generation/PCGDungeonMarkerPipeline.lua",
-  "scripts/Generation/HoudiniMarkerPipeline.lua",
 ];
 const RENDERER_FILES = [
   "scripts/Rendering/PCGDungeonRenderer.lua",
-  "scripts/Rendering/BgeoDungeonRenderer.lua",
 ];
 const ENGINE_MODEL_RESOURCES = new Set([
   "Models/Box.mdl",

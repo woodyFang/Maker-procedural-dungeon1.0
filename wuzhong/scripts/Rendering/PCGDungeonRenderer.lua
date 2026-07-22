@@ -1,17 +1,17 @@
-local BgeoDungeonRenderer = {}
-BgeoDungeonRenderer.__index = BgeoDungeonRenderer
+local PCGDungeonRenderer = {}
+PCGDungeonRenderer.__index = PCGDungeonRenderer
 
 local FirstPersonDoorSystem = require("Gameplay.FirstPersonDoorSystem")
-local HoudiniCoordinateSystem = require("Generation.HoudiniCoordinateSystem")
-local HoudiniMeshInfoAdapter = require("Generation.HoudiniMeshInfoAdapter")
+local PCGDungeonCoordinateSystem = require("Generation.PCGDungeonCoordinateSystem")
+local PCGDungeonMeshInfoAdapter = require("Generation.PCGDungeonMeshInfoAdapter")
 
 local MANIFEST_CANDIDATES = {
-    "assets/BgeoDungeon/DungeonInstances.mesh_info.json",
-    "BgeoDungeon/DungeonInstances.mesh_info.json",
+    "assets/PCGDungeon/PCGDungeon.mesh_info.json",
+    "PCGDungeon/PCGDungeon.mesh_info.json",
 }
 local LIGHT_MANIFEST_CANDIDATES = {
-    "assets/BgeoDungeon/DungeonMap.lights.json",
-    "BgeoDungeon/DungeonMap.lights.json",
+    "assets/PCGDungeon/PCGDungeon.lights.json",
+    "PCGDungeon/PCGDungeon.lights.json",
 }
 local UINT32_MASK = 0xffffffff
 local UE_UNITLESS_CM_TO_M2_SCALE = 0.0001
@@ -20,7 +20,6 @@ local LIGHT_UNIT_VALUE = {
     Candelas = 1,
     Lumens = 2,
 }
-local BRAZIER_LIGHT_FUNCTION = "/Game/HoudiniImports/Support/M_BrazierLightFlicker.M_BrazierLightFlicker"
 local CELL_DEBUG_INSET = 0.96
 local CELL_DEBUG_STYLE = {
     room = { nodeName = "RoomVolumes", color = { 1.0, 0.5, 0.0, 1.0 } },
@@ -93,7 +92,7 @@ local function ReadManifest()
             return nil, "manifest JSON is invalid: " .. path
         end
     end
-    return nil, "DungeonInstances.mesh_info.json was not found"
+    return nil, "PCGDungeon.mesh_info.json was not found"
 end
 
 local function ReadLightManifest()
@@ -111,7 +110,7 @@ local function ReadLightManifest()
             return data, path
         end
     end
-    return nil, "DungeonMap.lights.json was not found"
+    return nil, "PCGDungeon.lights.json was not found"
 end
 
 local function ValidateManifest(data)
@@ -221,17 +220,17 @@ local function ValidateManifest(data)
 end
 
 local function ConvertPosition(values)
-    return HoudiniCoordinateSystem.PackedPositionToUrho(values)
+    return PCGDungeonCoordinateSystem.PackedPositionToUrho(values)
 end
 
 local function ConvertScale(values)
-    return HoudiniCoordinateSystem.PackedScaleToUrho(values)
+    return PCGDungeonCoordinateSystem.PackedScaleToUrho(values)
 end
 
 local function ApplyPackedTransform(node, values)
     node.position = ConvertPosition(values)
-    node.rotation = HoudiniCoordinateSystem.PackedQuaternionToUrho(values)
-    node.scale = HoudiniCoordinateSystem.PackedTransformScaleToUrho(values)
+    node.rotation = PCGDungeonCoordinateSystem.PackedQuaternionToUrho(values)
+    node.scale = PCGDungeonCoordinateSystem.PackedTransformScaleToUrho(values)
 end
 
 local function IsIdentityRuleTransform(rule)
@@ -243,7 +242,7 @@ end
 
 local function ApplyRuleTransform(node, rule)
     node.position = ConvertPosition(rule.offset_cm)
-    node.rotation = HoudiniCoordinateSystem.UERotatorToUrho(rule.rotation_deg)
+    node.rotation = PCGDungeonCoordinateSystem.UERotatorToUrho(rule.rotation_deg)
     node.scale = ConvertScale(rule.scale)
 end
 
@@ -389,7 +388,7 @@ local function RandomRange(stream, minimum, maximum)
     return minimum + (maximum - minimum) * RandomFraction(stream)
 end
 
-function BgeoDungeonRenderer.new(scene)
+function PCGDungeonRenderer.new(scene)
     return setmetatable({
         scene = scene, root = nil, groups = {}, lights = {}, stats = nil, previewStart = nil,
         resolvedMaterials = {},
@@ -398,14 +397,16 @@ function BgeoDungeonRenderer.new(scene)
         lightDebugMaterial = nil, lightDebugMarkerMaterial = nil, elapsed = 0,
         cellDebugVisible = false, cellDebugRoot = nil, cellDebugMaterials = {},
         cellDebugData = nil, cellDebugStats = nil, cachedBuild = nil,
+        selectionRoot = nil, selectionMaterial = nil, selectionDungeon = nil,
+        selectionRoomIndex = nil, selectionRoomId = nil, selectionCellCount = 0,
         groupInstanceNodes = {}, assetBindings = nil, diagnosticMeshes = nil, lightDefaults = nil,
         referenceLightsEnabled = false,
         lightingEnabled = true,
         preloadStats = nil,
-    }, BgeoDungeonRenderer)
+    }, PCGDungeonRenderer)
 end
 
-function BgeoDungeonRenderer:SetLightingEnabled(enabled)
+function PCGDungeonRenderer:SetLightingEnabled(enabled)
     local value = enabled ~= false
     if self.lightingEnabled == value then return value end
     self.lightingEnabled = value
@@ -421,7 +422,7 @@ function BgeoDungeonRenderer:SetLightingEnabled(enabled)
     return value
 end
 
-function BgeoDungeonRenderer:ClearLightDebugGeometry()
+function PCGDungeonRenderer:ClearLightDebugGeometry()
     if self.lightDebugRoot then self.lightDebugRoot:Dispose(); self.lightDebugRoot = nil end
     if self.lightDebugMaterial then self.lightDebugMaterial:Dispose(); self.lightDebugMaterial = nil end
     if self.lightDebugMarkerMaterial then
@@ -430,17 +431,19 @@ function BgeoDungeonRenderer:ClearLightDebugGeometry()
     end
 end
 
-function BgeoDungeonRenderer:ClearCellDebugGeometry()
+function PCGDungeonRenderer:ClearCellDebugGeometry()
     if self.cellDebugRoot then self.cellDebugRoot:Dispose(); self.cellDebugRoot = nil end
     for _, material in ipairs(self.cellDebugMaterials or {}) do material:Dispose() end
     self.cellDebugMaterials = {}
     self.cellDebugStats = nil
 end
 
-function BgeoDungeonRenderer:DestroyDungeonGeometry()
+function PCGDungeonRenderer:DestroyDungeonGeometry()
     self:ClearLightDebugGeometry()
     self.doorSystem:Clear()
     if self.root then self.root:Dispose(); self.root = nil end
+    self.selectionRoot = nil
+    self.selectionCellCount = 0
     self.groups = {}
     self.groupInstanceNodes = {}
     self.resolvedMaterials = {}
@@ -450,14 +453,14 @@ function BgeoDungeonRenderer:DestroyDungeonGeometry()
     self.lights = {}
 end
 
-function BgeoDungeonRenderer:RestoreDungeonGeometry()
+function PCGDungeonRenderer:RestoreDungeonGeometry()
     if self.root then return true, self.stats end
     local build = self.cachedBuild
-    if not build then return false, "cached Shadow Castle build is unavailable" end
+    if not build then return false, "cached PCG Dungeon build is unavailable" end
     return self:BuildManifest(build.data, build.source, build.lightData, build.lightSource, build.pipelineStats)
 end
 
-function BgeoDungeonRenderer:Clear()
+function PCGDungeonRenderer:Clear()
     self:ClearLightDebugGeometry()
     self:ClearCellDebugGeometry()
     for _, group in ipairs(self.groups) do
@@ -472,6 +475,8 @@ function BgeoDungeonRenderer:Clear()
     self.lights = {}
     self.doorSystem:Clear()
     if self.root then self.root:Dispose(); self.root = nil end
+    self.selectionRoot = nil
+    self.selectionCellCount = 0
     self.stats = nil
     self.previewStart = nil
     self.cellDebugData = nil
@@ -497,7 +502,7 @@ local function FindPreviewStart(data)
     return (bestPosition or Vector3.ZERO) + Vector3(0, 1.7, 0)
 end
 
-function BgeoDungeonRenderer:GetPreviewStart()
+function PCGDungeonRenderer:GetPreviewStart()
     local position = self.previewStart or Vector3(0, 1.7, 0)
     return Vector3(position.x, position.y, position.z)
 end
@@ -528,7 +533,7 @@ local function AddMaterialOverrides(resources, seen, rule)
     end
 end
 
-function BgeoDungeonRenderer:PreloadResources()
+function PCGDungeonRenderer:PreloadResources()
     if self.preloadStats then return true, self.preloadStats end
     local data, source = ReadManifest()
     if not data then return false, source end
@@ -572,25 +577,25 @@ function BgeoDungeonRenderer:PreloadResources()
         loadMs = (os.clock() - started) * 1000,
     }
     print(string.format(
-        "[BgeoDungeon] preload complete models=%d materials=%d failed=%d loadMs=%.1f source=%s",
+        "[PCGDungeon] preload complete models=%d materials=%d failed=%d loadMs=%.1f source=%s",
         models, materials, #failed, self.preloadStats.loadMs, tostring(source)))
     if #failed > 0 then
-        log:Write(LOG_ERROR, "[BgeoDungeon] preload failed: " .. table.concat(failed, ", "))
+        log:Write(LOG_ERROR, "[PCGDungeon] preload failed: " .. table.concat(failed, ", "))
         return false, self.preloadStats
     end
     return true, self.preloadStats
 end
 
-function BgeoDungeonRenderer:CreateGroup(name, assetPath, rule, inheritedRule)
+function PCGDungeonRenderer:CreateGroup(name, assetPath, rule, inheritedRule)
     local binding = self.assetBindings and self.assetBindings[assetPath] or nil
     if type(binding) ~= "table" then
-        print("[BgeoDungeon] missing asset binding for " .. tostring(assetPath))
+        print("[PCGDungeon] missing asset binding for " .. tostring(assetPath))
         return nil
     end
     local modelPath = binding.model_resource
     local model = cache:GetResource("Model", modelPath)
     if not model then
-        print("[BgeoDungeon] missing model " .. tostring(modelPath) .. " for " .. tostring(assetPath))
+        print("[PCGDungeon] missing model " .. tostring(modelPath) .. " for " .. tostring(assetPath))
         return nil
     end
     local node = self.root:CreateChild(name)
@@ -605,7 +610,7 @@ function BgeoDungeonRenderer:CreateGroup(name, assetPath, rule, inheritedRule)
             group:SetMaterial(material)
             self.resolvedMaterials[name] = materialPath
         else
-            print("[BgeoDungeon] missing material " .. materialPath .. " for " .. name)
+            print("[PCGDungeon] missing material " .. materialPath .. " for " .. name)
         end
     end
     local castShadow = rule and rule.cast_shadow
@@ -615,7 +620,7 @@ function BgeoDungeonRenderer:CreateGroup(name, assetPath, rule, inheritedRule)
     return group, node
 end
 
-function BgeoDungeonRenderer:AddGroupInstance(group, node)
+function PCGDungeonRenderer:AddGroupInstance(group, node)
     group:AddInstanceNode(node)
     local nodes = self.groupInstanceNodes[group]
     if not nodes then
@@ -625,7 +630,7 @@ function BgeoDungeonRenderer:AddGroupInstance(group, node)
     nodes[#nodes + 1] = node
 end
 
-function BgeoDungeonRenderer:AddRuleInstance(group, parent, transform, rule, suffix, partRule)
+function PCGDungeonRenderer:AddRuleInstance(group, parent, transform, rule, suffix, partRule)
     local marker = parent:CreateChild("Marker-" .. suffix)
     ApplyPackedTransform(marker, transform)
     local instance = marker
@@ -649,10 +654,10 @@ function BgeoDungeonRenderer:AddRuleInstance(group, parent, transform, rule, suf
     return instance
 end
 
-function BgeoDungeonRenderer:AddPointLight(parent, rule, hash)
+function PCGDungeonRenderer:AddPointLight(parent, rule, hash)
     local node = parent:CreateChild("PointLight")
     node.position = ConvertPosition(rule.point_light_offset_cm)
-    node.rotation = HoudiniCoordinateSystem.UERotatorToUrho(rule.point_light_rotation_deg)
+    node.rotation = PCGDungeonCoordinateSystem.UERotatorToUrho(rule.point_light_rotation_deg)
     node.scale = Vector3(1, 1, 1)
     local light = node:CreateComponent("Light")
     light.color = ColorFromRule(rule, hash)
@@ -667,23 +672,24 @@ function BgeoDungeonRenderer:AddPointLight(parent, rule, hash)
         light = light,
         baseBrightness = baseBrightness,
         lightFunction = rule.point_light_function_material,
+        isBrazier = rule.component_group == "brazier_fire_point_light",
         ruleId = rule.id,
         marker = rule.marker,
     }
     return light
 end
 
-function BgeoDungeonRenderer:BuildReferenceLights(data)
+function PCGDungeonRenderer:BuildReferenceLights(data)
     if not self.lightingEnabled then return 0 end
-    local root = self.root:CreateChild("DungeonMapLights")
+    local root = self.root:CreateChild("ReferenceLights")
     local count = 0
     for index, record in ipairs(data.lights) do
         local profile = type(record) == "table" and data.profiles[record[4]] or nil
         local color = profile and profile.color or nil
         if type(record) ~= "table" or #record ~= 6 or type(color) ~= "table" or #color ~= 3 then
-            return nil, "invalid DungeonMap light record " .. tostring(index)
+            return nil, "invalid reference light record " .. tostring(index)
         end
-        local node = root:CreateChild("DungeonMapLight-" .. index)
+        local node = root:CreateChild("ReferenceLight-" .. index)
         node.position = Vector3(record[1], record[2], record[3])
         node.scale = Vector3(1, 1, 1)
         local light = node:CreateComponent("Light")
@@ -694,13 +700,14 @@ function BgeoDungeonRenderer:BuildReferenceLights(data)
             light = light,
             baseBrightness = profile.brightness,
             lightFunction = profile.light_function,
+            isBrazier = profile.light_function ~= nil,
         }
         count = count + 1
     end
     return count
 end
 
-function BgeoDungeonRenderer:SetLightDebugVisible(visible)
+function PCGDungeonRenderer:SetLightDebugVisible(visible)
     if visible == true and self.cellDebugVisible then
         local disabled, reason = self:SetCellDebugVisible(false)
         if disabled == nil then
@@ -710,23 +717,23 @@ function BgeoDungeonRenderer:SetLightDebugVisible(visible)
     end
     self.lightDebugVisible = visible == true
     self:RefreshLightDebugGeometry()
-    print(string.format("[BgeoDungeon] light debug=%s lights=%d",
+    print(string.format("[PCGDungeon] light debug=%s lights=%d",
         tostring(self.lightDebugVisible), #self.lights))
     return self.lightDebugVisible, #self.lights
 end
 
-function BgeoDungeonRenderer:ToggleLightDebug()
+function PCGDungeonRenderer:ToggleLightDebug()
     return self:SetLightDebugVisible(not self.lightDebugVisible)
 end
 
-function BgeoDungeonRenderer:RefreshLightDebugGeometry()
+function PCGDungeonRenderer:RefreshLightDebugGeometry()
     self:ClearLightDebugGeometry()
     if not self.lightDebugVisible or #self.lights == 0 then return end
 
     local spherePath = self.diagnosticMeshes and self.diagnosticMeshes.light_volume or nil
     local sphere = spherePath and cache:GetResource("Model", spherePath) or nil
     if not sphere then
-        log:Write(LOG_ERROR, "[BgeoDungeon] missing diagnostic light-volume model "
+        log:Write(LOG_ERROR, "[PCGDungeon] missing diagnostic light-volume model "
             .. tostring(spherePath))
         return
     end
@@ -785,15 +792,15 @@ function BgeoDungeonRenderer:RefreshLightDebugGeometry()
     self.lightDebugRoot = root
     self.lightDebugMaterial = radiusMaterial
     self.lightDebugMarkerMaterial = markerMaterial
-    print(string.format("[BgeoDungeon] built light debug geometry lights=%d radiusGroups=1", #self.lights))
+    print(string.format("[PCGDungeon] built light debug geometry lights=%d radiusGroups=1", #self.lights))
 end
 
-local function HoudiniPosition(value)
+local function DungeonPosition(value)
     value = value or { 0, 0, 0 }
     return Vector3(value[3] or 0, value[2] or 0, value[1] or 0)
 end
 
-local function HoudiniSize(value)
+local function DungeonSize(value)
     value = value or { 1, 1, 1 }
     return Vector3(value[3] or 1, value[2] or 1, value[1] or 1)
 end
@@ -829,7 +836,49 @@ local function AddCellDebugInstance(parent, model, material, modelBounds, center
     drawable.occludee = false
 end
 
-function BgeoDungeonRenderer:SetCellDebugVisible(visible)
+function PCGDungeonRenderer:RefreshEditorSelection()
+    if self.selectionRoot then self.selectionRoot:Dispose(); self.selectionRoot = nil end
+    self.selectionCellCount = 0
+    if not self.root or self.cellDebugVisible or self.selectionRoomId == nil then return end
+    local data = self.cellDebugData
+    if not data or type(data.cells) ~= "table" then return end
+    local cubePath = self.diagnosticMeshes and self.diagnosticMeshes.cell_volume or "Models/Box.mdl"
+    local cube = cache:GetResource("Model", cubePath)
+    if not cube then return end
+    if not self.selectionMaterial then
+        self.selectionMaterial = CreateCellDebugMaterial({ 1.0, 0.32, 0.02, 1.0 })
+        if not self.selectionMaterial then return end
+    end
+
+    local cellSize = tonumber(data.cellSize) or 5.0
+    local root = self.root:CreateChild("EditorSelectionHighlight")
+    for _, cell in ipairs(data.cells) do
+        if tonumber(cell.cell_type) == 1 and tonumber(cell.room_id) == self.selectionRoomId then
+            AddCellDebugInstance(root, cube, self.selectionMaterial, cube.boundingBox,
+                DungeonPosition(cell.position) + Vector3(0, cellSize * 0.48, 0),
+                Vector3(cellSize, 0.12, cellSize), "SelectedRoomCell-" .. tostring(cell.id))
+            self.selectionCellCount = self.selectionCellCount + 1
+        end
+    end
+    if self.selectionCellCount > 0 then self.selectionRoot = root else root:Dispose() end
+end
+
+function PCGDungeonRenderer:SetEditorSelection(dungeon, roomIndex)
+    self.selectionDungeon = dungeon
+    self.selectionRoomIndex = roomIndex
+    self.selectionRoomId = roomIndex and roomIndex - 1 or nil
+    self:RefreshEditorSelection()
+end
+
+function PCGDungeonRenderer:ClearEditorSelection()
+    if self.selectionRoot then self.selectionRoot:Dispose(); self.selectionRoot = nil end
+    self.selectionDungeon = nil
+    self.selectionRoomIndex = nil
+    self.selectionRoomId = nil
+    self.selectionCellCount = 0
+end
+
+function PCGDungeonRenderer:SetCellDebugVisible(visible)
     if visible == true and self.lightDebugVisible then
         self.lightDebugVisible = false
         self:ClearLightDebugGeometry()
@@ -841,37 +890,40 @@ function BgeoDungeonRenderer:SetCellDebugVisible(visible)
     else
         self:ClearCellDebugGeometry()
         ok, statsOrReason = self:RestoreDungeonGeometry()
-        if ok then statsOrReason = { rooms = 0, corridors = 0, stairs = 0, total = 0 } end
+        if ok then
+            self:RefreshEditorSelection()
+            statsOrReason = { rooms = 0, corridors = 0, stairs = 0, total = 0 }
+        end
     end
     if not ok then
         self.cellDebugVisible = false
         self:ClearCellDebugGeometry()
         return nil, statsOrReason
     end
-    print(string.format("[BgeoDungeon] cell debug=%s boxes=%d",
+    print(string.format("[PCGDungeon] cell debug=%s boxes=%d",
         tostring(self.cellDebugVisible), statsOrReason.total or 0))
     return self.cellDebugVisible, statsOrReason
 end
 
-function BgeoDungeonRenderer:ToggleCellDebug()
+function PCGDungeonRenderer:ToggleCellDebug()
     return self:SetCellDebugVisible(not self.cellDebugVisible)
 end
 
-function BgeoDungeonRenderer:RefreshCellDebugGeometry()
+function PCGDungeonRenderer:RefreshCellDebugGeometry()
     self:ClearCellDebugGeometry()
     if not self.cellDebugVisible then
         return true, { rooms = 0, corridors = 0, stairs = 0, total = 0 }
     end
     local data = self.cellDebugData
     if not data or type(data.rooms) ~= "table" or type(data.cells) ~= "table" then
-        return false, "Shadow Castle canonical cells are unavailable"
+        return false, "PCG Dungeon canonical cells are unavailable"
     end
 
     local cubePath = self.diagnosticMeshes and self.diagnosticMeshes.cell_volume or nil
     local cube = cubePath and cache:GetResource("Model", cubePath) or nil
     if not cube then return false, "missing diagnostic cell-volume model " .. tostring(cubePath) end
     local modelBounds = cube.boundingBox
-    local root = self.scene:CreateChild("ShadowCastleCellDebug")
+    local root = self.scene:CreateChild("PCGDungeonCellDebug")
     local groupRoots, materials, materialsByKey = {}, {}, {}
 
     for _, key in ipairs({ "room", "corridor", "stair" }) do
@@ -892,7 +944,7 @@ function BgeoDungeonRenderer:RefreshCellDebugGeometry()
         if room.position and room.size then
             stats.rooms = stats.rooms + 1
             AddCellDebugInstance(groupRoots.room, cube, materialsByKey.room, modelBounds,
-                HoudiniPosition(room.position), HoudiniSize(room.size), "Room-" .. tostring(room.id))
+                DungeonPosition(room.position), DungeonSize(room.size), "Room-" .. tostring(room.id))
         end
     end
 
@@ -903,25 +955,25 @@ function BgeoDungeonRenderer:RefreshCellDebugGeometry()
         if cell.position and cellType == 2 then
             stats.corridors = stats.corridors + 1
             AddCellDebugInstance(groupRoots.corridor, cube, materialsByKey.corridor, modelBounds,
-                HoudiniPosition(cell.position), cellDimensions, "Corridor-" .. tostring(cell.id))
+                DungeonPosition(cell.position), cellDimensions, "Corridor-" .. tostring(cell.id))
         elseif cell.position and (cellType == 3 or cellType == 4) then
             stats.stairs = stats.stairs + 1
             if cellType == 3 then stats.physicalStairs = stats.physicalStairs + 1
             else stats.headroom = stats.headroom + 1 end
             AddCellDebugInstance(groupRoots.stair, cube, materialsByKey.stair, modelBounds,
-                HoudiniPosition(cell.position), cellDimensions, "Stair-" .. tostring(cell.id))
+                DungeonPosition(cell.position), cellDimensions, "Stair-" .. tostring(cell.id))
         end
     end
     stats.total = stats.rooms + stats.corridors + stats.stairs
     self.cellDebugRoot, self.cellDebugMaterials, self.cellDebugStats = root, materials, stats
     self:DestroyDungeonGeometry()
     print(string.format(
-        "[BgeoDungeon] built cell debug rooms=%d corridors=%d stairs=%d physical=%d headroom=%d",
+        "[PCGDungeon] built cell debug rooms=%d corridors=%d stairs=%d physical=%d headroom=%d",
         stats.rooms, stats.corridors, stats.stairs, stats.physicalStairs, stats.headroom))
     return true, stats
 end
 
-function BgeoDungeonRenderer:BuildBase(data, transformsByMesh, roomsByMesh)
+function PCGDungeonRenderer:BuildBase(data, transformsByMesh, roomsByMesh)
     local inheritByMesh, prefabBySource, lightByMesh, rulesById = {}, {}, {}, {}
     for _, rule in ipairs(data.meshes or {}) do
         if rule.id then rulesById[rule.id] = rule end
@@ -957,7 +1009,7 @@ function BgeoDungeonRenderer:BuildBase(data, transformsByMesh, roomsByMesh)
                 end
             end
         elseif rule and rule.visible ~= false and not lightByMesh[source.mesh] then
-            local group, node = self:CreateGroup("BGEO-" .. rule.id, rule.mesh, rule)
+            local group, node = self:CreateGroup("PCGDungeon-" .. rule.id, rule.mesh, rule)
             if group then
                 for index, transform in ipairs(source.transforms) do
                     self:AddRuleInstance(group, node, transform, rule, index - 1)
@@ -969,7 +1021,7 @@ function BgeoDungeonRenderer:BuildBase(data, transformsByMesh, roomsByMesh)
     return count
 end
 
-function BgeoDungeonRenderer:BuildAttachments(data, transformsByMesh)
+function PCGDungeonRenderer:BuildAttachments(data, transformsByMesh)
     local count, lightCount = 0, 0
     for _, rule in ipairs(data.meshes or {}) do
         if rule.usage == "attach" and rule.visible ~= false then
@@ -1010,7 +1062,7 @@ local function AppendCandidates(target, candidates, count)
     for index = 1, math.min(count, #candidates) do target[#target + 1] = candidates[index] end
 end
 
-function BgeoDungeonRenderer:BuildMarkerLights(data, transformsByMesh, roomsByMesh)
+function PCGDungeonRenderer:BuildMarkerLights(data, transformsByMesh, roomsByMesh)
     if not self.lightingEnabled or self.referenceLightsEnabled then return 0 end
     local count = 0
     local lightRoot = self.root:CreateChild("ManifestLights")
@@ -1089,7 +1141,7 @@ local function VectorLength(value)
     return math.sqrt(value[1] * value[1] + value[2] * value[2] + value[3] * value[3])
 end
 
-function BgeoDungeonRenderer:BuildScatter(data)
+function PCGDungeonRenderer:BuildScatter(data)
     local surfaces = {}
     for _, surface in ipairs(data.scene.surfaces or {}) do surfaces[string.lower(surface.name)] = surface end
     local sharedAccepted, total = {}, 0
@@ -1149,7 +1201,7 @@ function BgeoDungeonRenderer:BuildScatter(data)
                                     location = { location[1] + offset[1], location[2] + offset[2], location[3] + offset[3] }
                                     local instance = node:CreateChild(rule.id .. "-" .. total)
                                     instance.position = ConvertPosition(location)
-                                    instance.rotation = HoudiniCoordinateSystem.UEScatterRotation(
+                                    instance.rotation = PCGDungeonCoordinateSystem.UEScatterRotation(
                                         cross, rule.local_up_axis, yaw, rule.align_to_normal == true)
                                     instance.scale = Vector3(scale, scale, scale)
                                     self:AddGroupInstance(group, instance)
@@ -1166,7 +1218,7 @@ function BgeoDungeonRenderer:BuildScatter(data)
     return total
 end
 
-function BgeoDungeonRenderer:BuildManifest(data, source, lightData, lightSource, pipelineStats)
+function PCGDungeonRenderer:BuildManifest(data, source, lightData, lightSource, pipelineStats)
     local started = os.clock()
     local valid, reason = ValidateManifest(data)
     if not valid then return false, reason end
@@ -1175,12 +1227,12 @@ function BgeoDungeonRenderer:BuildManifest(data, source, lightData, lightSource,
     self.diagnosticMeshes = data.diagnostic_meshes
     self.lightDefaults = data.light_defaults
     if not self.lightingEnabled then
-        print("[BgeoDungeon] all scene lights disabled")
+        print("[PCGDungeon] all scene lights disabled")
     elseif not lightData then
-        print("[BgeoDungeon] exact DungeonMap lights unavailable; using deterministic fallback: " .. tostring(lightSource))
+        print("[PCGDungeon] reference lights unavailable; using deterministic fallback: " .. tostring(lightSource))
     end
     self.previewStart = FindPreviewStart(data)
-    self.root = self.scene:CreateChild("BgeoDungeon")
+    self.root = self.scene:CreateChild("PCGDungeon")
     local transformsByMesh, roomsByMesh = {}, {}
     local baseCount = self:BuildBase(data, transformsByMesh, roomsByMesh)
     local attachCount, companionLights = self:BuildAttachments(data, transformsByMesh)
@@ -1211,13 +1263,13 @@ function BgeoDungeonRenderer:BuildManifest(data, source, lightData, lightSource,
     }
     self:RefreshLightDebugGeometry()
     print(string.format(
-        "[BgeoDungeon] refreshed source=%d base=%d attached=%d scatter=%d lights=%d doors=%d groups=%d buildMs=%.1f",
+        "[PCGDungeon] refreshed source=%d base=%d attached=%d scatter=%d lights=%d doors=%d groups=%d buildMs=%.1f",
         self.stats.sourceInstances, baseCount, attachCount, scatterCount, self.stats.lights,
         self.stats.doors, self.stats.groups, self.stats.buildMs))
     return true, self.stats
 end
 
-function BgeoDungeonRenderer:Rebuild()
+function PCGDungeonRenderer:Rebuild()
     self:Clear()
     self.cellDebugVisible = false
     local data, source = ReadManifest()
@@ -1230,18 +1282,18 @@ function BgeoDungeonRenderer:Rebuild()
     return ok, result
 end
 
-function BgeoDungeonRenderer:RebuildFromHoudini(markerResult, cellDebugData)
+function PCGDungeonRenderer:RebuildFromMarkers(markerResult, cellDebugData)
     self:Clear()
     local data, source = ReadManifest()
     if not data then return false, source end
-    local adapted, pipelineStats = HoudiniMeshInfoAdapter.Apply(data, markerResult)
+    local adapted, pipelineStats = PCGDungeonMeshInfoAdapter.Apply(data, markerResult)
     if not adapted then return false, pipelineStats end
-    local ok, result = self:BuildManifest(adapted, "houdini-runtime + " .. source,
+    local ok, result = self:BuildManifest(adapted, "pcg-runtime + " .. source,
         nil, "dynamic Marker lights", pipelineStats)
     if not ok then return false, result end
     self.cachedBuild = {
         data = adapted,
-        source = "houdini-runtime + " .. source,
+        source = "pcg-runtime + " .. source,
         lightData = nil,
         lightSource = "dynamic Marker lights",
         pipelineStats = pipelineStats,
@@ -1249,21 +1301,22 @@ function BgeoDungeonRenderer:RebuildFromHoudini(markerResult, cellDebugData)
     self.cellDebugData = cellDebugData
     local debugOk, debugReason = self:RefreshCellDebugGeometry()
     if not debugOk then
-        log:Write(LOG_ERROR, "[BgeoDungeon] cell debug rebuild failed: " .. tostring(debugReason))
+        log:Write(LOG_ERROR, "[PCGDungeon] cell debug rebuild failed: " .. tostring(debugReason))
         self.cellDebugVisible = false
         self:ClearCellDebugGeometry()
     end
+    self:RefreshEditorSelection()
     return true, result
 end
 
-function BgeoDungeonRenderer:InteractNearestDoor(position, forward)
+function PCGDungeonRenderer:InteractNearestDoor(position, forward)
     return self.doorSystem:InteractNearestDoor(position, forward)
 end
 
-function BgeoDungeonRenderer:Update(timeStep)
+function PCGDungeonRenderer:Update(timeStep)
     self.elapsed = self.elapsed + math.max(0, timeStep or 0)
     for _, entry in ipairs(self.lights) do
-        if entry.lightFunction == BRAZIER_LIGHT_FUNCTION then
+        if entry.isBrazier then
             local position = entry.node.worldPosition
             -- UE light function uses WorldPos.xy in centimeters. UE X/Y map to UrhoX Z/X.
             local phase = position.z * 1.3 + position.x * 1.7
@@ -1276,8 +1329,10 @@ function BgeoDungeonRenderer:Update(timeStep)
     self.doorSystem:Update(timeStep)
 end
 
-function BgeoDungeonRenderer:Dispose()
+function PCGDungeonRenderer:Dispose()
+    self:ClearEditorSelection()
     self:Clear()
+    if self.selectionMaterial then self.selectionMaterial:Dispose(); self.selectionMaterial = nil end
 end
 
-return BgeoDungeonRenderer
+return PCGDungeonRenderer

@@ -1,5 +1,5 @@
-local HoudiniMeshInfoAdapter = {}
-local HoudiniCoordinateSystem = require("Generation.HoudiniCoordinateSystem")
+local PCGDungeonMeshInfoAdapter = {}
+local PCGDungeonCoordinateSystem = require("Generation.PCGDungeonCoordinateSystem")
 
 local function RoomId(marker)
     local attributes = marker.attributes or {}
@@ -28,7 +28,7 @@ end
 local function MarkerCopy(marker, copyRule)
     local offset = copyRule and copyRule.local_offset_m or nil
     if type(offset) ~= "table" then return marker end
-    local rotated = HoudiniCoordinateSystem.RotateHoudiniVector(
+    local rotated = PCGDungeonCoordinateSystem.RotateMarkerVector(
         marker.orient or { 0, 0, 0, 1 }, offset)
     local position = marker.position or { 0, 0, 0 }
     return {
@@ -63,7 +63,7 @@ local function BuildInstanceGroups(rules, markersByName)
             for _, marker in ipairs(markers) do
                 for _, copyRule in ipairs(copies) do
                     local copiedMarker = MarkerCopy(marker, copyRule)
-                    group.transforms[#group.transforms + 1] = HoudiniCoordinateSystem.PackMarkerTransform(
+                    group.transforms[#group.transforms + 1] = PCGDungeonCoordinateSystem.PackMarkerTransform(
                         copiedMarker, rule.marker_yaw_offset_deg)
                     group.room_ids[#group.room_ids + 1] = RoomId(marker)
                 end
@@ -103,12 +103,12 @@ local function BuildGroundSurface(groundMarkers)
     return { name = "GroundScatterSurface", vertices_cm = vertices, indices = indices }
 end
 
-function HoudiniMeshInfoAdapter.Apply(meshInfo, markerResult)
+function PCGDungeonMeshInfoAdapter.Apply(meshInfo, markerResult)
     if type(meshInfo) ~= "table" or type(meshInfo.meshes) ~= "table" then
         return nil, "mesh_info rules are missing"
     end
     if type(markerResult) ~= "table" or type(markerResult.markers) ~= "table" then
-        return nil, "Houdini Marker result is missing"
+        return nil, "PCG Dungeon Marker result is missing"
     end
 
     local markersByName = {}
@@ -133,4 +133,4 @@ function HoudiniMeshInfoAdapter.Apply(meshInfo, markerResult)
     }
 end
 
-return HoudiniMeshInfoAdapter
+return PCGDungeonMeshInfoAdapter

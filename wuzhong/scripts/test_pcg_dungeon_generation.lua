@@ -1,4 +1,4 @@
-local ShadowCastleGenerator = require("Generation.ShadowCastleGenerator")
+local PCGDungeonGenerator = require("Generation.PCGDungeonGenerator")
 
 local function Check(condition, message)
     if not condition then error(message, 2) end
@@ -9,12 +9,12 @@ local function Near(a, b, epsilon)
 end
 
 local function LoadFixture()
-    local file = cache:GetFile("BgeoDungeon/HoudiniGenerationFixture.json")
-    Check(file ~= nil, "Houdini generation fixture could not be opened")
+    local file = cache:GetFile("PCGDungeon/LegacyReference/GenerationFixture.json")
+    Check(file ~= nil, "legacy reference generation fixture could not be opened")
     local raw = file:ReadString()
     file:Close()
     local ok, data = pcall(cjson.decode, raw)
-    Check(ok and type(data) == "table", "Houdini generation fixture is invalid JSON")
+    Check(ok and type(data) == "table", "legacy reference generation fixture is invalid JSON")
     return data
 end
 
@@ -22,16 +22,16 @@ local function CheckVector(actual, expected, label)
     Check(#actual == #expected, label .. " vector length differs")
     for index = 1, #expected do
         Check(Near(actual[index], expected[index]), string.format(
-            "%s[%d] differs: Lua=%g Houdini=%g", label, index, actual[index], expected[index]))
+            "%s[%d] differs: Lua=%g legacy reference=%g", label, index, actual[index], expected[index]))
     end
 end
 
 local function CheckIntegerArray(actual, expected, label)
-    Check(#actual == #expected, string.format("%s length differs: Lua=%d Houdini=%d",
+    Check(#actual == #expected, string.format("%s length differs: Lua=%d legacy reference=%d",
         label, #actual, #expected))
     for index = 1, #expected do
         Check(actual[index] == expected[index], string.format(
-            "%s[%d] differs: Lua=%s Houdini=%s", label, index,
+            "%s[%d] differs: Lua=%s legacy reference=%s", label, index,
             tostring(actual[index]), tostring(expected[index])))
     end
 end
@@ -91,17 +91,17 @@ local function CheckStairContracts(astar, label)
 end
 
 function Start()
-    print("[ShadowCastleVexGeneration] START")
+    print("[PCGDungeonGeneration] START")
     local ok, errorMessage = xpcall(function()
         local fixture = LoadFixture()
         local parameters = fixture.parameters
-        local generated = ShadowCastleGenerator.Generate({
+        local generated = PCGDungeonGenerator.Generate({
             seed = parameters.seed,
             roomCount = parameters.room_count,
             floorCount = parameters.floor_count,
             cellSize = parameters.cell_size,
         })
-        log:Write(LOG_INFO, string.format("[ShadowCastleVexGeneration] actual valid=%s rooms=%s tets=%s edges=%s mst=%s loops=%s stairs=%s failedMst=%s",
+        log:Write(LOG_INFO, string.format("[PCGDungeonGeneration] actual valid=%s rooms=%s tets=%s edges=%s mst=%s loops=%s stairs=%s failedMst=%s",
             tostring(generated.valid), tostring(generated.roomCount),
             tostring(generated.delaunay and #generated.delaunay.tets),
             tostring(generated.delaunay and #generated.delaunay.edges),
@@ -109,12 +109,12 @@ function Start()
             tostring(generated.graph and #generated.graph.loopEdges),
             tostring(generated.astar and generated.astar.stairCount),
             tostring(generated.astar and generated.astar.failedMstPaths)))
-        Check(generated.valid, "default VEX generation failed: " .. tostring(generated.error))
+        Check(generated.valid, "default float32 generation failed: " .. tostring(generated.error))
         Check(generated.roomCount == 22 and generated.astar.stairCount == 26,
-            "default Houdini room/stair counts were not reproduced")
+            "default legacy reference room/stair counts were not reproduced")
         CheckStairContracts(generated.astar, "default")
         Check(generated.layout.attempts == fixture.layout.attempts,
-            string.format("room attempts differ: Lua=%d Houdini=%d",
+            string.format("room attempts differ: Lua=%d legacy reference=%d",
                 generated.layout.attempts, fixture.layout.attempts))
         CheckVector(generated.layout.gridCells, fixture.layout.grid_cells, "grid_cells")
         CheckVector(generated.layout.spaceMin, fixture.layout.space_min, "space_min")
@@ -129,7 +129,7 @@ function Start()
         end
 
         Check(#generated.delaunay.tets == #fixture.delaunay.tetrahedra,
-            string.format("Delaunay tet count differs: Lua=%d Houdini=%d",
+            string.format("Delaunay tet count differs: Lua=%d legacy reference=%d",
                 #generated.delaunay.tets, #fixture.delaunay.tetrahedra))
         local expectedTets = {}
         for _, tet in ipairs(fixture.delaunay.tetrahedra) do expectedTets[SortedTetKey(tet)] = true end
@@ -137,12 +137,12 @@ function Start()
             Check(expectedTets[SortedTetKey(tet)], "unexpected Delaunay tet " .. SortedTetKey(tet))
         end
         Check(#generated.delaunay.edges == #fixture.delaunay.edges,
-            string.format("Delaunay edge count differs: Lua=%d Houdini=%d",
+            string.format("Delaunay edge count differs: Lua=%d legacy reference=%d",
                 #generated.delaunay.edges, #fixture.delaunay.edges))
         for index, expected in ipairs(fixture.delaunay.edges) do
             local actual = generated.delaunay.edges[index]
             Check(actual.a == expected.a and actual.b == expected.b,
-                string.format("Delaunay edge %d differs: Lua=%d-%d Houdini=%d-%d",
+                string.format("Delaunay edge %d differs: Lua=%d-%d legacy reference=%d-%d",
                     index, actual.a, actual.b, expected.a, expected.b))
             Check(actual.sourcePrimitive == expected.source_primitive,
                 "Delaunay primitive number differs at edge " .. index)
@@ -152,14 +152,14 @@ function Start()
         for index, expected in ipairs(fixture.graph.mst_edges) do
             local actual = generated.graph.mstEdges[index]
             Check(actual.a == expected.a and actual.b == expected.b,
-                string.format("MST edge %d differs: Lua=%d-%d Houdini=%d-%d",
+                string.format("MST edge %d differs: Lua=%d-%d legacy reference=%d-%d",
                     index, actual.a, actual.b, expected.a, expected.b))
         end
         Check(#generated.graph.loopEdges == #fixture.graph.loop_edges, "loop edge count differs")
         for index, expected in ipairs(fixture.graph.loop_edges) do
             local actual = generated.graph.loopEdges[index]
             Check(actual.a == expected.a and actual.b == expected.b,
-                string.format("loop edge %d differs: Lua=%d-%d Houdini=%d-%d",
+                string.format("loop edge %d differs: Lua=%d-%d legacy reference=%d-%d",
                     index, actual.a, actual.b, expected.a, expected.b))
         end
 
@@ -187,7 +187,7 @@ function Start()
         end
 
         -- These cases contain A* score ties that diverge when Lua keeps its
-        -- native double precision instead of matching Houdini VEX floats.
+        -- native double precision instead of matching legacy reference float32 floats.
         local precisionCases = {
             { seed = 3, paths = 35, stairs = 33, corridors = 99, doors = 70 },
             { seed = 9, paths = 34, stairs = 32, corridors = 124, doors = 68 },
@@ -197,7 +197,7 @@ function Start()
             { seed = 18, paths = 37, stairs = 31, corridors = 128, doors = 74 },
         }
         for _, expected in ipairs(precisionCases) do
-            local precisionResult = ShadowCastleGenerator.Generate({
+            local precisionResult = PCGDungeonGenerator.Generate({
                 seed = expected.seed,
                 roomCount = parameters.room_count,
                 floorCount = parameters.floor_count,
@@ -216,27 +216,26 @@ function Start()
             CheckStairContracts(astar, "seed " .. expected.seed)
         end
 
-        local repeatResult = ShadowCastleGenerator.Generate({
+        local repeatResult = PCGDungeonGenerator.Generate({
             seed = parameters.seed, roomCount = parameters.room_count,
             floorCount = parameters.floor_count, cellSize = parameters.cell_size,
         })
         Check(repeatResult.valid and repeatResult.hash == generated.hash,
             "same seed did not reproduce the same topology")
-        local alternate = ShadowCastleGenerator.Generate({
+        local alternate = PCGDungeonGenerator.Generate({
             seed = parameters.seed + 1, roomCount = parameters.room_count,
             floorCount = parameters.floor_count, cellSize = parameters.cell_size,
         })
         Check(alternate.hash ~= generated.hash, "different seed did not change the topology")
-        print(string.format(
-            "[ShadowCastleVexGeneration] PASS rooms=%d delaunay=%d mst=%d loops=%d stairs=%d doors=%d hash=%s",
+        local passMessage = string.format(
+            "[PCGDungeonGeneration] PASS rooms=%d delaunay=%d mst=%d loops=%d stairs=%d doors=%d hash=%s",
             generated.roomCount, #generated.delaunay.edges, #generated.graph.mstEdges,
             #generated.graph.loopEdges, generated.astar.stairCount,
-            generated.astar.doorwayCount, generated.hash))
+            generated.astar.doorwayCount, generated.hash)
+        ErrorExit(passMessage, 0)
     end, debug.traceback)
     if not ok then
-        log:Write(LOG_ERROR, "[ShadowCastleVexGeneration] FAIL " .. tostring(errorMessage))
-        engine:Exit()
+        ErrorExit("[PCGDungeonGeneration] FAIL\n" .. tostring(errorMessage), 1)
         return
     end
-    engine:Exit()
 end

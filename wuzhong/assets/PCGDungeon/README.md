@@ -1,4 +1,4 @@
-# 暗影古堡 PCG 资产与 Marker 对照
+# PCG Dungeon 资产与 Marker 对照
 
 本文件对应 `PCGDungeon.mesh_info.json`。当前配置包含 20 条 Marker 规则、13 条地面散布规则和 25 个资源绑定。
 
@@ -49,11 +49,11 @@
 | `pillar_placement_transport` | `PillarPlacement` | `inherit` | 不可见传输节点 | 无 | `visible = false`，给 attach 规则提供变换 |
 | `wall_separator_roaster02` | `PillarPlacement` | `attach` | `Models/roaster02.mdl` | `Materials/Chandelier.xml` | `density = 0.35`，点光 brightness 0.3、range 4.8m、投射阴影 |
 | `stair_stairs01` | `Stair` | `inherit` | `Models/Stairs01.mdl` | `Materials/Stairs.xml` | 两份 `marker_copies` 覆盖上下楼梯段 |
-| `light_interior_cell` | `Light` | `point_light_marker` | 无可见模型 | 无 | `density = 0.75`，每房间至少 2 盏；brightness 0.1、range 7m |
-| `light_ambient_cool_fill` | `Light_Ambient` | `point_light_marker` | 无可见模型 | 无 | `density = 0.5`；brightness 0.1、range 20m |
-| `light_door_guide` | `Light_Door` | `point_light_marker` | 无可见模型 | 无 | 每个候选点；brightness 0.1、range 20m、投射阴影 |
-| `light_stair_safety` | `Light_Stair` | `point_light_marker` | 无可见模型 | 无 | `density = 0.5`；brightness 0.1、range 20m |
-| `light_hero_room` | `Light_Hero` | `point_light_marker` | 无可见模型 | 无 | `density = 0.5`；brightness 0.1、range 20m、投射阴影 |
+| `light_interior_cell` | `Light` | `point_light_marker` | 无可见模型 | 无 | `density = 0.75`，每房间至少 2 盏；brightness 0.3、range 7m、投射阴影 |
+| `light_ambient_cool_fill` | `Light_Ambient` | `point_light_marker` | 无可见模型 | 无 | `density = 0.5`；brightness 0.3、range 20m、投射阴影 |
+| `light_door_guide` | `Light_Door` | `point_light_marker` | 无可见模型 | 无 | 每个候选点；brightness 0.3、range 20m、投射阴影 |
+| `light_stair_safety` | `Light_Stair` | `point_light_marker` | 无可见模型 | 无 | `density = 0.5`；brightness 0.3、range 20m、投射阴影 |
+| `light_hero_room` | `Light_Hero` | `point_light_marker` | 无可见模型 | 无 | `density = 0.5`；brightness 0.3、range 20m、投射阴影 |
 | `ceil_roof11` | `Ceil` | `inherit` | `Models/Roof11.mdl` | `Materials/Roof02.xml` | 房间、走廊和楼梯顶部 |
 
 ## 当前地面散布资产
@@ -110,13 +110,13 @@
 1. 运行静态校验：
 
    ```powershell
-   node skills/configure-shadow-castle-assets/scripts/validate_mesh_info.js . assets/PCGDungeon/PCGDungeon.mesh_info.json
+   node skills/configure-pcg-dungeon-assets/scripts/validate_mesh_info.js . assets/PCGDungeon/PCGDungeon.mesh_info.json
    ```
 
 2. 确认运行时加载器指向同一配置：
 
    ```powershell
-   node skills/configure-shadow-castle-assets/scripts/validate_mesh_info.js . assets/PCGDungeon/PCGDungeon.mesh_info.json --check-runtime
+   node skills/configure-pcg-dungeon-assets/scripts/validate_mesh_info.js . assets/PCGDungeon/PCGDungeon.mesh_info.json --check-runtime
    ```
 
-3. 进入暗影古堡并点击“刷新地牢”，至少检查两个不同种子。验证模型存在、材质正确、比例和朝向合理、没有悬空或严重穿插，并确认门、楼梯和第一人称通行没有回归。
+3. 进入使用 PCG Dungeon 流程的主题并点击“刷新地牢”，至少检查两个不同种子。验证模型存在、材质正确、比例和朝向合理、没有悬空或严重穿插，并确认门、楼梯和第一人称通行没有回归。

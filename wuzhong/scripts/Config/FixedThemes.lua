@@ -16,7 +16,7 @@ FixedThemes.order = {
 FixedThemes.presets = {
     shadowCastle = {
         id = "shadowCastle",
-        externalScene = "bgeoManifest",
+        dungeonFlow = "pcgDungeon",
         -- Keep the authored Night SH/IBL so imported surface materials retain
         -- their texture response. Marker lights provide the local illumination.
         lightingEnabled = true,

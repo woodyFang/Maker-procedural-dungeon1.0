@@ -1,8 +1,33 @@
-local ShadowCastleRooms = require("Generation.ShadowCastleRooms")
-local ShadowCastleGraph = require("Generation.ShadowCastleGraph")
-local ShadowCastleAStar = require("Generation.ShadowCastleAStar")
+local PCGDungeonRooms = require("Generation.PCGDungeonRooms")
+local PCGDungeonGraph = require("Generation.PCGDungeonGraph")
+local PCGDungeonAStar = require("Generation.PCGDungeonAStar")
 
-local ShadowCastleGenerator = {}
+local PCGDungeonGenerator = {}
+
+local function CopyValue(value, seen)
+    if type(value) ~= "table" then return value end
+    seen = seen or {}
+    if seen[value] then return seen[value] end
+    local result = {}
+    seen[value] = result
+    for key, item in pairs(value) do result[key] = CopyValue(item, seen) end
+    return result
+end
+
+local function EditorEdges(layout, graph)
+    local result = {}
+    for index, source in ipairs(graph.edges or {}) do
+        local edge = CopyValue(source)
+        edge.id = index
+        edge.a, edge.b = source.a + 1, source.b + 1
+        edge.isLoop = source.isLoop == true
+        edge.kind = source.kind or (layout.rooms[source.a + 1].floor ~= layout.rooms[source.b + 1].floor
+            and "stairs" or "corridor")
+        edge.connectorId = nil
+        result[index] = edge
+    end
+    return result
+end
 
 local function HashText(text)
     local hash = 2166136261
@@ -29,21 +54,23 @@ local function TopologyHash(layout, graphResult, routed)
     return HashText(table.concat(values, "|"))
 end
 
-function ShadowCastleGenerator.Generate(options)
+function PCGDungeonGenerator.Generate(options)
     options = options or {}
-    local layout = ShadowCastleRooms.Generate(options)
-    if layout.placedRoomCount ~= layout.targetRoomCount then
-        return { valid = false, error = layout.warning, layout = layout, errors = { layout.warning } }
+    local layout = PCGDungeonRooms.Generate(options)
+    if layout.valid == false or layout.placedRoomCount ~= layout.targetRoomCount then
+        local reason = layout.warning or "PCG Dungeon room layout is invalid"
+        return { valid = false, error = reason, layout = layout, errors = layout.errors or { reason } }
     end
-    local graphResult = ShadowCastleGraph.Generate(layout)
+    local graphResult = PCGDungeonGraph.Generate(layout,
+        options.editorEnabled and options.editorEdges or nil)
     if not graphResult.graph.connected then
-        local reason = graphResult.graph.warning or "Houdini Prim graph is disconnected"
+        local reason = graphResult.graph.warning or "PCG Dungeon graph is disconnected"
         return { valid = false, error = reason, layout = layout, graphResult = graphResult, errors = { reason } }
     end
-    local routed = ShadowCastleAStar.Generate(layout, graphResult.graph)
+    local routed = PCGDungeonAStar.Generate(layout, graphResult.graph)
     local valid = routed.allRoomsReachable and routed.failedMstPaths == 0
         and routed.stairTopologyValid ~= false
-    local reason = valid and nil or (routed.warning or "Houdini 3D A* failed to connect every room")
+    local reason = valid and nil or (routed.warning or "PCG Dungeon A* failed to connect every room")
     return {
         schemaVersion = 1,
         valid = valid,
@@ -55,8 +82,12 @@ function ShadowCastleGenerator.Generate(options)
         roomCount = layout.placedRoomCount,
         roomCountsByFloor = layout.roomCountsByFloor,
         rooms = layout.rooms,
-        width = layout.gridCells[1],
-        height = layout.gridCells[3],
+        edges = EditorEdges(layout, graphResult.graph),
+        connectors = {},
+        floorHeight = layout.cellSize,
+        cellSize = layout.cellSize,
+        width = (layout.editorGridCells or layout.gridCells)[1],
+        height = (layout.editorGridCells or layout.gridCells)[3],
         hash = TopologyHash(layout, graphResult, routed),
         topology = { cells = routed.cells, doors = routed.doors },
         layout = layout,
@@ -77,4 +108,4 @@ function ShadowCastleGenerator.Generate(options)
     }
 end
 
-return ShadowCastleGenerator
+return PCGDungeonGenerator

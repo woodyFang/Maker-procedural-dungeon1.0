@@ -1,14 +1,14 @@
-local ShadowCastleGenerator = require("Generation.ShadowCastleGenerator")
-local HoudiniMarkerPipeline = require("Generation.HoudiniMarkerPipeline")
-local BgeoDungeonRenderer = require("Rendering.BgeoDungeonRenderer")
+local PCGDungeonGenerator = require("Generation.PCGDungeonGenerator")
+local PCGDungeonMarkerPipeline = require("Generation.PCGDungeonMarkerPipeline")
+local PCGDungeonRenderer = require("Rendering.PCGDungeonRenderer")
 local ForgeCameraController = require("Input.ForgeCameraController")
 
 ---@type Scene|nil
 local scene = nil
----@type BgeoDungeonRenderer|nil
-local bgeoRenderer = nil
+---@type PCGDungeonRenderer|nil
+local pcgDungeonRenderer = nil
 local elapsed = 0
-local screenshotPath = ".tmp/bgeo-cell-debug-scene.png"
+local screenshotPath = ".tmp/pcgDungeon-cell-debug-scene.png"
 
 for _, argument in ipairs(GetArguments()) do
     local configuredPath = argument:match("^%-smoke_output=(.+)$")
@@ -39,16 +39,16 @@ function Start()
         renderer:SetViewport(0, Viewport:new(scene, camera))
         renderer.hdrRendering = false
 
-        local dungeon = ShadowCastleGenerator.Generate({
+        local dungeon = PCGDungeonGenerator.Generate({
             seed = 5, floorCount = 3, roomCount = 22, cellSize = 5.0,
         })
-        assert(dungeon.valid, dungeon.error or "shadow castle generation failed")
-        local markerResult = HoudiniMarkerPipeline.GenerateFromTopology(dungeon.topology, {
+        assert(dungeon.valid, dungeon.error or "PCG Dungeon generation failed")
+        local markerResult = PCGDungeonMarkerPipeline.GenerateFromTopology(dungeon.topology, {
             cellSize = 5.0, pillarPlacementDistance = 1.2,
         })
 
-        bgeoRenderer = BgeoDungeonRenderer.new(scene)
-        local built, stats = bgeoRenderer:RebuildFromHoudini(markerResult, {
+        pcgDungeonRenderer = PCGDungeonRenderer.new(scene)
+        local built, stats = pcgDungeonRenderer:RebuildFromMarkers(markerResult, {
             rooms = dungeon.rooms,
             cells = dungeon.topology.cells,
             cellSize = 5.0,
@@ -60,22 +60,22 @@ function Start()
         controller.defaultDistance = math.max(80, math.max(dungeon.width, dungeon.height) * 4.25)
         controller:Reset()
 
-        local visible, cellStats = bgeoRenderer:SetCellDebugVisible(true)
+        local visible, cellStats = pcgDungeonRenderer:SetCellDebugVisible(true)
         assert(visible and cellStats.total > 0, "cell debug geometry was not created")
-        assert(bgeoRenderer.root == nil and #bgeoRenderer.groups == 0,
+        assert(pcgDungeonRenderer.root == nil and #pcgDungeonRenderer.groups == 0,
             "the final dungeon geometry remained alive in cell debug mode")
 
-        SubscribeToEvent("Update", "HandleBgeoCellDebugSceneUpdate")
+        SubscribeToEvent("Update", "HandlePCGDungeonCellDebugSceneUpdate")
     end, debug.traceback)
     if not ok then
         WriteResult("FAIL startup\n" .. tostring(err))
-        ErrorExit("[bgeo-cell-debug-scene] FAIL\n" .. tostring(err), 1)
+        ErrorExit("[pcgDungeon-cell-debug-scene] FAIL\n" .. tostring(err), 1)
     end
 end
 
 ---@param eventType string
 ---@param eventData UpdateEventData
-function HandleBgeoCellDebugSceneUpdate(eventType, eventData)
+function HandlePCGDungeonCellDebugSceneUpdate(eventType, eventData)
     elapsed = elapsed + eventData:GetFloat("TimeStep")
     if elapsed < 2.0 then return end
     if not fileSystem:DirExists(".tmp") then fileSystem:CreateDir(".tmp") end
@@ -84,18 +84,18 @@ function HandleBgeoCellDebugSceneUpdate(eventType, eventData)
     screenshot:Dispose()
     if not saved then
         WriteResult("FAIL screenshot capture")
-        ErrorExit("[bgeo-cell-debug-scene] FAIL screenshot", 1)
+        ErrorExit("[pcgDungeon-cell-debug-scene] FAIL screenshot", 1)
         return
     end
     WriteResult(string.format("PASS rooms=%d corridors=%d stairs=%d total=%d",
-        bgeoRenderer.cellDebugStats.rooms, bgeoRenderer.cellDebugStats.corridors,
-        bgeoRenderer.cellDebugStats.stairs, bgeoRenderer.cellDebugStats.total))
+        pcgDungeonRenderer.cellDebugStats.rooms, pcgDungeonRenderer.cellDebugStats.corridors,
+        pcgDungeonRenderer.cellDebugStats.stairs, pcgDungeonRenderer.cellDebugStats.total))
     UnsubscribeFromEvent("Update")
     engine:Exit()
 end
 
 function Stop()
     renderer:SetViewport(0, nil)
-    if bgeoRenderer then bgeoRenderer:Dispose(); bgeoRenderer = nil end
+    if pcgDungeonRenderer then pcgDungeonRenderer:Dispose(); pcgDungeonRenderer = nil end
     if scene then scene:Dispose(); scene = nil end
 end

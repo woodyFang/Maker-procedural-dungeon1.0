@@ -924,44 +924,44 @@ function ControlPanel.new(callbacks, initial)
             if ok == false then self:SetStatus(reason or "房间组赋予失败") end
         end,
     }
-    self.shadowCastleSeed = initial.seed or 5
-    self.shadowCastleFloorCount = 3
-    self.shadowCastleSeedField = UI.TextField {
-        value = tostring(self.shadowCastleSeed), placeholder = "随机种子", width = "100%", height = 30,
+    self.pcgDungeonSeed = initial.seed or 5
+    self.pcgDungeonFloorCount = 3
+    self.pcgDungeonSeedField = UI.TextField {
+        value = tostring(self.pcgDungeonSeed), placeholder = "随机种子", width = "100%", height = 30,
         borderRadius = 6, borderColor = C.inputLine, focusedBorderColor = C.accent,
         paddingHorizontal = 8, fontSize = 10.5,
         onChange = function(_, value)
             local parsed = tonumber(value)
-            if parsed then self.shadowCastleSeed = math.max(0, math.min(0xffffffff, math.floor(parsed))) end
+            if parsed then self.pcgDungeonSeed = math.max(0, math.min(0xffffffff, math.floor(parsed))) end
         end,
     }
-    self.shadowCastleFloorValue = Label("3", 10.5, C.accent, { fontWeight = "bold" })
-    self.shadowCastleFloorSlider = UI.Slider {
+    self.pcgDungeonFloorValue = Label("3", 10.5, C.accent, { fontWeight = "bold" })
+    self.pcgDungeonFloorSlider = UI.Slider {
         value = 3, min = 1, max = 6, step = 1,
         onChange = function(_, value)
-            self.shadowCastleFloorCount = math.floor(value + 0.5)
-            self.shadowCastleFloorValue:SetText(tostring(self.shadowCastleFloorCount))
+            self.pcgDungeonFloorCount = math.floor(value + 0.5)
+            self.pcgDungeonFloorValue:SetText(tostring(self.pcgDungeonFloorCount))
         end,
     }
-    self.shadowCastleParametersPanel = UI.Panel {
+    self.pcgDungeonParametersPanel = UI.Panel {
         width = "100%", gap = 5, padding = { 7, 7, 6, 7 },
         backgroundColor = { 25, 24, 27, 255 }, borderColor = { 73, 59, 45, 255 },
         borderWidth = 1, borderRadius = 6,
         children = {
             Label("生成参数", 9.5, { 214, 177, 132, 255 }, { fontWeight = "bold" }),
             Label("随机种子", 9, C.dim),
-            self.shadowCastleSeedField,
+            self.pcgDungeonSeedField,
             UI.Panel { width = "100%", gap = 2, children = {
-                Row({ Label("层数", 9.5, C.text, { flexGrow = 1 }), self.shadowCastleFloorValue }),
-                self.shadowCastleFloorSlider,
+                Row({ Label("层数", 9.5, C.text, { flexGrow = 1 }), self.pcgDungeonFloorValue }),
+                self.pcgDungeonFloorSlider,
             } },
         },
     }
-    self.shadowCastleParametersPanel:SetVisible(false)
-    self.shadowCastleRefreshButton = SmallButton("刷新地牢", function()
-        local ok, reason = callbacks.onShadowCastleRefresh({
-            seed = self.shadowCastleSeed,
-            floorCount = self.shadowCastleFloorCount,
+    self.pcgDungeonParametersPanel:SetVisible(false)
+    self.pcgDungeonRefreshButton = SmallButton("刷新地牢", function()
+        local ok, reason = callbacks.onPCGDungeonRefresh({
+            seed = self.pcgDungeonSeed,
+            floorCount = self.pcgDungeonFloorCount,
         })
         if ok == false then self:SetStatus(reason or "暗影古堡刷新失败") end
     end, {
@@ -969,9 +969,9 @@ function ControlPanel.new(callbacks, initial)
         backgroundColor = { 35, 29, 27, 255 }, borderColor = { 120, 82, 49, 255 },
         textColor = { 255, 205, 151, 255 },
     })
-    self.shadowCastleRefreshButton:SetVisible(false)
-    self.shadowCastleCellDebugButton = SmallButton("方块调试：关闭", function()
-        local enabled, statsOrReason = callbacks.onShadowCastleCellDebug()
+    self.pcgDungeonRefreshButton:SetVisible(false)
+    self.pcgDungeonCellDebugButton = SmallButton("方块调试：关闭", function()
+        local enabled, statsOrReason = callbacks.onPCGDungeonCellDebug()
         if enabled == nil then
             self:SetStatus(statsOrReason or "方块调试切换失败")
             return
@@ -988,9 +988,9 @@ function ControlPanel.new(callbacks, initial)
         backgroundColor = { 35, 30, 21, 255 }, borderColor = { 151, 101, 22, 255 },
         textColor = { 255, 190, 74, 255 },
     })
-    self.shadowCastleCellDebugButton:SetVisible(false)
-    self.shadowCastleLightDebugButton = SmallButton("灯光调试：关闭", function()
-        local enabled, countOrReason = callbacks.onShadowCastleLightDebug()
+    self.pcgDungeonCellDebugButton:SetVisible(false)
+    self.pcgDungeonLightDebugButton = SmallButton("灯光调试：关闭", function()
+        local enabled, countOrReason = callbacks.onPCGDungeonLightDebug()
         if enabled == nil then
             self:SetStatus(countOrReason or "灯光调试切换失败")
             return
@@ -1002,7 +1002,7 @@ function ControlPanel.new(callbacks, initial)
         backgroundColor = { 20, 29, 34, 255 }, borderColor = { 55, 105, 112, 255 },
         textColor = { 154, 218, 220, 255 },
     })
-    self.shadowCastleLightDebugButton:SetVisible(false)
+    self.pcgDungeonLightDebugButton:SetVisible(false)
 
     local logicalWidth = graphics:GetWidth() / math.max(1, graphics:GetDPR())
     local roomInspectorWidth = math.max(216, math.min(320, logicalWidth - 310 - 498))
@@ -1056,7 +1056,7 @@ function ControlPanel.new(callbacks, initial)
             Section({
                 Row({ Label("房间", 10.5, C.dim, { flexGrow = 1, letterSpacing = 0.5 }),
                     self.roomGroupAddButton, self.roomGroupToggleTooltip }),
-                self.shadowCastleRefreshButton,
+                self.pcgDungeonRefreshButton,
                 self.roomGroupHint,
                 self.roomGroupList,
             }),
@@ -1920,26 +1920,26 @@ function ControlPanel:SetState(state)
     local fixedTheme = FixedThemes.Get(state.activeFixedThemeId)
     self.cameraOnlyTheme = state.activeFixedThemeId == "shadowCastle"
     self.thirdPreviewButton:SetVisible(not self.cameraOnlyTheme)
-    local shadowCastleActive = state.activeFixedThemeId == "shadowCastle"
-    self.shadowCastleParametersPanel:SetVisible(false)
-    self.shadowCastleRefreshButton:SetVisible(shadowCastleActive)
-    self.shadowCastleCellDebugButton:SetVisible(false)
-    self.shadowCastleLightDebugButton:SetVisible(false)
-    if shadowCastleActive then
-        self.shadowCastleSeed = state.seed or self.shadowCastleSeed
-        self.shadowCastleFloorCount = state.floorCount or self.shadowCastleFloorCount
-        self.shadowCastleSeedField:SetValue(tostring(self.shadowCastleSeed))
-        self.shadowCastleFloorSlider:SetValue(self.shadowCastleFloorCount)
-        self.shadowCastleFloorValue:SetText(tostring(self.shadowCastleFloorCount))
+    local pcgDungeonActive = state.activeFixedThemeId == "shadowCastle"
+    self.pcgDungeonParametersPanel:SetVisible(false)
+    self.pcgDungeonRefreshButton:SetVisible(pcgDungeonActive)
+    self.pcgDungeonCellDebugButton:SetVisible(false)
+    self.pcgDungeonLightDebugButton:SetVisible(false)
+    if pcgDungeonActive then
+        self.pcgDungeonSeed = state.seed or self.pcgDungeonSeed
+        self.pcgDungeonFloorCount = state.floorCount or self.pcgDungeonFloorCount
+        self.pcgDungeonSeedField:SetValue(tostring(self.pcgDungeonSeed))
+        self.pcgDungeonFloorSlider:SetValue(self.pcgDungeonFloorCount)
+        self.pcgDungeonFloorValue:SetText(tostring(self.pcgDungeonFloorCount))
     end
-    self.shadowCastleLightDebugButton:SetText(state.lightDebugVisible and "灯光调试：开启" or "灯光调试：关闭")
-    self.shadowCastleLightDebugButton:SetStyle({
+    self.pcgDungeonLightDebugButton:SetText(state.lightDebugVisible and "灯光调试：开启" or "灯光调试：关闭")
+    self.pcgDungeonLightDebugButton:SetStyle({
         backgroundColor = state.lightDebugVisible and { 24, 57, 57, 255 } or { 20, 29, 34, 255 },
         borderColor = state.lightDebugVisible and C.teal or { 55, 105, 112, 255 },
         textColor = state.lightDebugVisible and { 184, 255, 239, 255 } or { 154, 218, 220, 255 },
     })
-    self.shadowCastleCellDebugButton:SetText(state.cellDebugVisible and "方块调试：开启" or "方块调试：关闭")
-    self.shadowCastleCellDebugButton:SetStyle({
+    self.pcgDungeonCellDebugButton:SetText(state.cellDebugVisible and "方块调试：开启" or "方块调试：关闭")
+    self.pcgDungeonCellDebugButton:SetStyle({
         backgroundColor = state.cellDebugVisible and { 19, 58, 38, 255 } or { 35, 30, 21, 255 },
         borderColor = state.cellDebugVisible and { 36, 196, 94, 255 } or { 151, 101, 22, 255 },
         textColor = state.cellDebugVisible and { 128, 255, 164, 255 } or { 255, 190, 74, 255 },
@@ -2037,7 +2037,7 @@ function ControlPanel:SetState(state)
     self:SetEditorActive(state.editorActive == true, state.editorMode)
 end
 
-function ControlPanel:SetBgeoStats(stats)
+function ControlPanel:SetPCGDungeonStats(stats)
     if stats.markerCount then
         self.stats:SetText(string.format(
             "暗影古堡 · %d 层 · %d 总房间 · %d 楼梯\n%d Marker · %d 面 · %d 结构 · %d 附加 · %d 灯光",
@@ -2052,7 +2052,7 @@ function ControlPanel:SetBgeoStats(stats)
         return
     end
     self.stats:SetText(string.format(
-        "BGEO 清单 · %d 源实例\n%d 结构 · %d 附加 · %d 散布 · %d 灯光",
+        "PCG Dungeon 清单 · %d 源实例\n%d 结构 · %d 附加 · %d 散布 · %d 灯光",
         stats.sourceInstances or 0,
         stats.baseInstances or 0,
         stats.attachedInstances or 0,
@@ -2060,7 +2060,7 @@ function ControlPanel:SetBgeoStats(stats)
         stats.lights or 0))
 end
 
-function ControlPanel:SetHoudiniFlowStats(report)
+function ControlPanel:SetMarkerFlowStats(report)
     self.stats:SetText(string.format(
         "Marker 验证通过\n%d 类型 · %d 点 · %d 面 · %.1f 毫秒",
         report.markerTypeCount or 0,

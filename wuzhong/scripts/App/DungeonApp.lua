@@ -1,9 +1,9 @@
 local DungeonGenerator = require("Generation.DungeonGenerator")
-local ShadowCastleGenerator = require("Generation.ShadowCastleGenerator")
+local PCGDungeonGenerator = require("Generation.PCGDungeonGenerator")
 local MultiFloor = require("Generation.MultiFloor")
 local NativeDungeonRenderer = require("Rendering.NativeDungeonRenderer")
-local BgeoDungeonRenderer = require("Rendering.BgeoDungeonRenderer")
-local HoudiniMarkerPipeline = require("Generation.HoudiniMarkerPipeline")
+local PCGDungeonRenderer = require("Rendering.PCGDungeonRenderer")
+local PCGDungeonMarkerPipeline = require("Generation.PCGDungeonMarkerPipeline")
 local ForgeCameraController = require("Input.ForgeCameraController")
 local ControlPanel = require("UI.ControlPanel")
 local LayoutEditor = require("UI.LayoutEditor")
@@ -29,8 +29,8 @@ local CUSTOMIZATION_CLOUD_KEY = "procedural_dungeon_customizations_v1"
 -- lightweight editor visuals, while authoritative generation is coalesced
 -- after the gesture has finished.
 local EDITOR_REBUILD_DEBOUNCE_SECONDS = 0.18
-local SHADOW_CASTLE_CELL_SIZE = 5.0
-local SHADOW_CASTLE_MAX_FLOORS = 6
+local PCG_DUNGEON_CELL_SIZE = 5.0
+local PCG_DUNGEON_MAX_FLOORS = 6
 local TOPIC_MODE_BASE = "base"
 local TOPIC_MODE_CUSTOM = "custom"
 local TOPIC_MODE_FIXED_PCG = "fixedPCG"
@@ -416,7 +416,7 @@ function DungeonApp:CreateScene()
     self.overviewViewport = Viewport:new(self.scene, self.camera)
     renderer:SetViewport(0, self.overviewViewport); renderer.hdrRendering = true
     self.dungeonRenderer = NativeDungeonRenderer.new(self.scene)
-    self.bgeoRenderer = BgeoDungeonRenderer.new(self.scene)
+    self.pcgDungeonRenderer = PCGDungeonRenderer.new(self.scene)
     self.forgeCamera = ForgeCameraController.new(self.cameraNode, self.camera)
     print("[DungeonForge] native UrhoX viewport ready")
 end
@@ -426,14 +426,14 @@ function DungeonApp:IsEmptyFixedThemeActive()
     return preset ~= nil and preset.emptyScene == true
 end
 
-function DungeonApp:IsBgeoFixedThemeActive()
+function DungeonApp:IsPCGDungeonThemeActive()
     local preset = FixedThemes.Get(self.activeFixedThemeId)
-    return preset ~= nil and preset.externalScene == "bgeoManifest"
+    return preset ~= nil and preset.dungeonFlow == "pcgDungeon"
 end
 
-function DungeonApp:ClearInactiveBgeoScene()
-    if self:IsBgeoFixedThemeActive() or not self.bgeoRenderer then return false end
-    local renderer = self.bgeoRenderer
+function DungeonApp:ClearInactivePCGDungeonScene()
+    if self:IsPCGDungeonThemeActive() or not self.pcgDungeonRenderer then return false end
+    local renderer = self.pcgDungeonRenderer
     local hasScene = renderer.root ~= nil
         or renderer.lightDebugRoot ~= nil
         or renderer.cellDebugRoot ~= nil
@@ -442,8 +442,8 @@ function DungeonApp:ClearInactiveBgeoScene()
         or #(renderer.lights or {}) > 0
     if not hasScene then return false end
     renderer:Clear()
-    self.lastHoudiniMarkerResult = nil
-    print("[DungeonForge] cleared inactive Shadow Castle BGEO scene")
+    self.lastPCGDungeonMarkerResult = nil
+    print("[DungeonForge] cleared inactive PCG Dungeon scene")
     return true
 end
 
@@ -470,7 +470,10 @@ function DungeonApp:ClearSceneContent()
     if self.editor2D then self.editor2D:SetVisible(false) end
     if self.editor3D then self.editor3D:SetVisible(false) end
     if self.dungeonRenderer then self.dungeonRenderer:Clear() end
-    if self.bgeoRenderer then self.bgeoRenderer:Clear() end
+    if self.pcgDungeonRenderer then
+        self.pcgDungeonRenderer:ClearEditorSelection()
+        self.pcgDungeonRenderer:Clear()
+    end
     if self.editor3D and self.editor3D.ClearOverlay then self.editor3D:ClearOverlay() end
     if self.lightGroupNode then self.lightGroupNode:Dispose() end
     self.lightGroupNode, self.zone, self.sun, self.lightPreset = nil, nil, nil, nil
@@ -546,9 +549,9 @@ function DungeonApp:State()
         customSettings = self.customSettings, roomGroups = self.roomGroups, customPalettes = self.customPalettes,
         activeCustomSettingId = self.activeCustomSettingId, customSettingName = self.customSettingName,
         activeFixedThemeId = self.activeFixedThemeId,
-        bgeoStats = self.bgeoRenderer and self.bgeoRenderer.stats or nil,
-        lightDebugVisible = self.bgeoRenderer and self.bgeoRenderer.lightDebugVisible == true,
-        cellDebugVisible = self.bgeoRenderer and self.bgeoRenderer.cellDebugVisible == true,
+        pcgDungeonStats = self.pcgDungeonRenderer and self.pcgDungeonRenderer.stats or nil,
+        lightDebugVisible = self.pcgDungeonRenderer and self.pcgDungeonRenderer.lightDebugVisible == true,
+        cellDebugVisible = self.pcgDungeonRenderer and self.pcgDungeonRenderer.cellDebugVisible == true,
         topicMode = self.topicMode,
         editorActive = self.editorActive, editorMode = self.editorMode,
         selectedEditorRoom = self.selectedEditorRoom,
@@ -613,7 +616,7 @@ function DungeonApp:CreatePanel()
             self.activeFixedThemeId = preset.id
             self.activeCustomSettingId, self.customSettingName = nil, nil
             self.settingKey, self.themeKey = preset.settingKey, preset.themeKey
-            self.floorCount = ClampInteger(preset.floorCount, 1, SHADOW_CASTLE_MAX_FLOORS, self.floorCount)
+            self.floorCount = ClampInteger(preset.floorCount, 1, PCG_DUNGEON_MAX_FLOORS, self.floorCount)
             self.currentFloor = math.min(self.currentFloor, self.floorCount - 1)
             self.floorHeight = MultiFloor.NormalizeFloorHeight(preset.floorHeight)
             self.roomCounts, self.loopRates, self.decorDensities = {}, {}, {}
@@ -628,13 +631,13 @@ function DungeonApp:CreatePanel()
             end
             self.editorRooms = nil
             local switched, switchReason = true, nil
-            if preset.externalScene == "bgeoManifest" then
-                switched, switchReason = self:RefreshShadowCastle(true)
+            if preset.dungeonFlow == "pcgDungeon" then
+                switched, switchReason = self:RefreshPCGDungeon(true)
             elseif preset.emptyScene then
                 self:ClearSceneContent()
                 self:RefreshPanel()
             else
-                if previousPreset and previousPreset.externalScene then
+                if previousPreset and previousPreset.dungeonFlow then
                     self:ClearSceneContent()
                 end
                 self:ApplyTheme()
@@ -644,33 +647,33 @@ function DungeonApp:CreatePanel()
             self.fixedSettingInputCooldown = 0.25
             if not switched then return false, switchReason end
             self.fixedSettingSceneId = preset.id
-            if self.panel and preset.externalScene ~= "bgeoManifest" then
+            if self.panel and preset.dungeonFlow ~= "pcgDungeon" then
                 self.panel:SetStatus(preset.emptyScene
                     and ("固定题材“" .. preset.label .. "”已切换为空场景")
                     or ("固定题材“" .. preset.label .. "”已按 PCG 规则生成"))
             end
             return true
         end,
-        onShadowCastleRefresh = function(parameters)
-            if not self:IsBgeoFixedThemeActive() then return false, "请先选择暗影古堡。" end
-            return self:RefreshShadowCastle(true, parameters)
+        onPCGDungeonRefresh = function(parameters)
+            if not self:IsPCGDungeonThemeActive() then return false, "请先选择暗影古堡。" end
+            return self:RefreshPCGDungeon(true, parameters)
         end,
-        onShadowCastleLightDebug = function()
-            if not self:IsBgeoFixedThemeActive() then return nil, "请先选择暗影古堡。" end
-            local enabled, count = self.bgeoRenderer:ToggleLightDebug()
+        onPCGDungeonLightDebug = function()
+            if not self:IsPCGDungeonThemeActive() then return nil, "请先选择暗影古堡。" end
+            local enabled, count = self.pcgDungeonRenderer:ToggleLightDebug()
             self:RefreshPanel()
             return enabled, count
         end,
-        onShadowCastleCellDebug = function()
-            if not self:IsBgeoFixedThemeActive() then return nil, "请先选择暗影古堡。" end
-            local enabled, statsOrReason = self.bgeoRenderer:ToggleCellDebug()
+        onPCGDungeonCellDebug = function()
+            if not self:IsPCGDungeonThemeActive() then return nil, "请先选择暗影古堡。" end
+            local enabled, statsOrReason = self.pcgDungeonRenderer:ToggleCellDebug()
             renderer:SetViewport(0, nil)
             renderer:SetViewport(0, self.overviewViewport)
             self:RefreshPanel()
             return enabled, statsOrReason
         end,
-        onHoudiniFlow = function()
-            return self:RunHoudiniMarkerFlowValidation()
+        onMarkerFlow = function()
+            return self:RunMarkerFlowValidation()
         end,
         onFixedPCG = function()
             self:MarkTopicSelectionChanged()
@@ -712,7 +715,7 @@ function DungeonApp:CreatePanel()
                     return self.panel:SetStatus("题材切换未保存：" .. tostring(reason))
                 end
             end
-            if previousPreset and previousPreset.externalScene then
+            if previousPreset and previousPreset.dungeonFlow then
                 self:ClearSceneContent()
                 self.fixedSettingSceneId = nil
             end
@@ -742,7 +745,7 @@ function DungeonApp:CreatePanel()
                     return self.panel:SetStatus("随机题材切换未保存")
                 end
             end
-            if previousPreset and previousPreset.externalScene then
+            if previousPreset and previousPreset.dungeonFlow then
                 self:ClearSceneContent()
                 self.fixedSettingSceneId = nil
             end
@@ -1175,9 +1178,16 @@ function DungeonApp:Start()
             self.selectedEditorRoom = index
             self.selectedEditorRoomGroupId = room and room.roomGroupId or nil
             if mode == "2d" then
-                self.dungeonRenderer:SetEditorSelection(self.dungeon, index, linkIndex, link)
+                if self:IsPCGDungeonThemeActive() then
+                    self.dungeonRenderer:ClearEditorSelection()
+                    self.pcgDungeonRenderer:SetEditorSelection(self.dungeon, index)
+                else
+                    self.pcgDungeonRenderer:ClearEditorSelection()
+                    self.dungeonRenderer:SetEditorSelection(self.dungeon, index, linkIndex, link)
+                end
             else
                 self.dungeonRenderer:ClearEditorSelection()
+                self.pcgDungeonRenderer:ClearEditorSelection()
             end
             self:RefreshPanel()
         end,
@@ -1198,8 +1208,8 @@ function DungeonApp:Start()
             if not active then self:RestoreOverview() end
         end,
         onInteract = function(position, forward)
-            if not self:IsBgeoFixedThemeActive() then return false end
-            return self.bgeoRenderer:InteractNearestDoor(position, forward)
+            if not self:IsPCGDungeonThemeActive() then return false end
+            return self.pcgDungeonRenderer:InteractNearestDoor(position, forward)
         end,
     })
     self.eventObject:SubscribeToEvent("Update", function(_, _, eventData) self:HandleUpdate(eventData:GetFloat("TimeStep")) end)
@@ -1243,8 +1253,8 @@ function DungeonApp:ApplyTheme()
     renderer:SetViewport(0, self.overviewViewport)
     local theme = Themes.Get(self.themeKey)
     local fixedPreset = FixedThemes.Get(self.activeFixedThemeId)
-    if self.bgeoRenderer then
-        self.bgeoRenderer:SetLightingEnabled(self:IsSceneLightingEnabled())
+    if self.pcgDungeonRenderer then
+        self.pcgDungeonRenderer:SetLightingEnabled(self:IsSceneLightingEnabled())
     end
     self:LoadLightingPreset(self.settingKey)
     self.zone.fogColor = HexColor(theme.fog, 1.0)
@@ -1285,11 +1295,11 @@ function DungeonApp:ApplyTheme()
     end
 end
 
-function DungeonApp:ApplyShadowCastleParameters(parameters)
+function DungeonApp:ApplyPCGDungeonParameters(parameters)
     parameters = parameters or {}
     local preset = FixedThemes.Get("shadowCastle")
     self.seed = ClampInteger(parameters.seed, 0, 0xffffffff, self.seed)
-    self.floorCount = ClampInteger(parameters.floorCount, 1, SHADOW_CASTLE_MAX_FLOORS,
+    self.floorCount = ClampInteger(parameters.floorCount, 1, PCG_DUNGEON_MAX_FLOORS,
         self.floorCount or preset.floorCount or 3)
     self.currentFloor = math.min(self.currentFloor, self.floorCount - 1)
     local normalizedRoomCounts, roomCount = NormalizeRoomCounts(
@@ -1309,35 +1319,45 @@ function DungeonApp:ApplyShadowCastleParameters(parameters)
     }
 end
 
-function DungeonApp:RefreshShadowCastle(frameCamera, parameters)
-    if not self:IsBgeoFixedThemeActive() then return false, "暗影古堡未激活" end
-    local preloadOk, preloadResult = self.bgeoRenderer:PreloadResources()
+function DungeonApp:RefreshPCGDungeon(frameCamera, parameters, useEditor)
+    if not self:IsPCGDungeonThemeActive() then return false, "暗影古堡未激活" end
+    local preloadOk, preloadResult = self.pcgDungeonRenderer:PreloadResources()
     if not preloadOk then
         local reason = "暗影古堡资源加载失败：" .. tostring(preloadResult)
         if self.panel then self.panel:SetStatus(reason) end
         log:Write(LOG_ERROR, "[DungeonForge] " .. reason)
         return false, reason
     end
-    local applied = self:ApplyShadowCastleParameters(parameters)
+    useEditor = useEditor == true
+    self.generationSerial = self.generationSerial + 1
+    print(string.format("[DungeonForge] PCG generate #%d seed=%u floors=%d editor=%s",
+        self.generationSerial, self.seed & 0xffffffff, self.floorCount, tostring(useEditor)))
+    local applied = self:ApplyPCGDungeonParameters(parameters)
     local started = os.clock()
     local topologyStarted = os.clock()
-    local dungeon = ShadowCastleGenerator.Generate({
+    local previousLayout = self.dungeon and self.dungeon.layout or nil
+    local dungeon = PCGDungeonGenerator.Generate({
         seed = applied.seed,
         floorCount = applied.floorCount,
         roomCountsByFloor = applied.roomCountsByFloor,
-        cellSize = SHADOW_CASTLE_CELL_SIZE,
+        cellSize = PCG_DUNGEON_CELL_SIZE,
+        editorEnabled = useEditor,
+        editorRooms = useEditor and self.editorRooms or nil,
+        editorEdges = useEditor and self.editorLinks or nil,
+        editorGridCells = useEditor and previousLayout
+            and (previousLayout.editorGridCells or previousLayout.gridCells) or nil,
     })
     local topologyMs = (os.clock() - topologyStarted) * 1000
     if not dungeon.valid then
-        local reason = dungeon.error or "Houdini PCG 生成了无效布局"
+        local reason = dungeon.error or "PCG Dungeon 生成了无效布局"
         if self.panel then self.panel:SetStatus("暗影古堡刷新失败：" .. tostring(reason)) end
         return false, reason
     end
     self.seed = dungeon.requestedSeed or self.seed
     applied.seed = self.seed
     local markerStarted = os.clock()
-    local markerResult = HoudiniMarkerPipeline.GenerateFromTopology(dungeon.topology, {
-        cellSize = SHADOW_CASTLE_CELL_SIZE,
+    local markerResult = PCGDungeonMarkerPipeline.GenerateFromTopology(dungeon.topology, {
+        cellSize = PCG_DUNGEON_CELL_SIZE,
         pillarPlacementDistance = 1.2,
     })
     local markerMs = (os.clock() - markerStarted) * 1000
@@ -1345,87 +1365,100 @@ function DungeonApp:RefreshShadowCastle(frameCamera, parameters)
         local reason = "stair topology invalid: "
             .. table.concat(markerResult.stairTopologyErrors or {}, "; ")
         if self.panel then self.panel:SetStatus("暗影古堡刷新失败：" .. reason) end
-        log:Write(LOG_ERROR, "[BgeoDungeon] " .. reason)
+        log:Write(LOG_ERROR, "[PCGDungeon] " .. reason)
         return false, reason
     end
-    self:ClearSceneContent()
+    if useEditor then
+        self.dungeonRenderer:Clear()
+    else
+        self:ClearSceneContent()
+    end
     self:ApplyTheme()
     local buildStarted = os.clock()
-    local ok, result = self.bgeoRenderer:RebuildFromHoudini(markerResult, {
+    local ok, result = self.pcgDungeonRenderer:RebuildFromMarkers(markerResult, {
         rooms = dungeon.rooms,
         cells = dungeon.topology.cells,
-        cellSize = SHADOW_CASTLE_CELL_SIZE,
+        cellSize = PCG_DUNGEON_CELL_SIZE,
     })
     local sceneBuildMs = (os.clock() - buildStarted) * 1000
     if not ok then
         if self.panel then self.panel:SetStatus("暗影古堡刷新失败：" .. tostring(result)) end
-        log:Write(LOG_ERROR, "[BgeoDungeon] refresh failed: " .. tostring(result))
+        log:Write(LOG_ERROR, "[PCGDungeon] refresh failed: " .. tostring(result))
         return false, result
     end
     result.generationMs = (os.clock() - started) * 1000
     result.topologyMs, result.markerMs, result.sceneBuildMs = topologyMs, markerMs, sceneBuildMs
-    result.seed, result.floorCount, result.roomCount = applied.seed, applied.floorCount, applied.roomCount
+    result.seed, result.floorCount, result.roomCount = applied.seed, applied.floorCount, dungeon.roomCount
     result.stairCount = dungeon.astar.stairCount
     result.delaunayEdgeCount = #dungeon.delaunay.edges
     result.mstEdgeCount = #dungeon.graph.mstEdges
     result.loopEdgeCount = #dungeon.graph.loopEdges
     result.dungeonHash = dungeon.hash
-    self.dungeon, self.editorRooms, self.editorLinks = dungeon, nil, nil
+    self.dungeon = dungeon
+    if not useEditor then self.editorRooms, self.editorLinks = nil, nil end
     self.roomCounts = {}
     for floor = 1, self.floorCount do
         self.roomCounts[floor] = dungeon.roomCountsByFloor[floor] or 0
     end
-    self.lastHoudiniMarkerResult = markerResult
+    self.lastPCGDungeonMarkerResult = markerResult
+    if self.editor2D then self.editor2D:SyncDungeon(dungeon, self.currentFloor, self:ActiveRoomGroups()) end
+    if self.editor3D then self.editor3D:SyncDungeon(dungeon, self.currentFloor, self:ActiveRoomGroups()) end
+    if self.editor then
+        local editorShouldBeVisible = self.editorActive and not self.editorTransition
+        if self.editor:IsVisible() ~= editorShouldBeVisible then
+            self.editor:SetVisible(editorShouldBeVisible)
+        end
+    end
     print(string.format(
-        "[DungeonForge] Shadow Castle ready topologyMs=%.1f markerMs=%.1f sceneBuildMs=%.1f totalMs=%.1f",
+        "[PCGDungeon] ready topologyMs=%.1f markerMs=%.1f sceneBuildMs=%.1f totalMs=%.1f",
         topologyMs, markerMs, sceneBuildMs, result.generationMs))
     if frameCamera ~= false and self.forgeCamera then
-        self.forgeCamera.defaultTarget = Vector3(0, (self.floorCount - 1) * SHADOW_CASTLE_CELL_SIZE * 0.5, 0)
+        self.forgeCamera.defaultTarget = Vector3(0, (self.floorCount - 1) * PCG_DUNGEON_CELL_SIZE * 0.5, 0)
         self.forgeCamera.defaultDistance = math.max(80,
-            math.max(dungeon.width, dungeon.height) * SHADOW_CASTLE_CELL_SIZE * 0.85)
+            math.max(dungeon.width, dungeon.height) * PCG_DUNGEON_CELL_SIZE * 0.85)
         self.forgeCamera:Reset()
     end
     if self.panel then
-        if self.panel.SetBgeoStats then self.panel:SetBgeoStats(result) end
+        if self.panel.SetPCGDungeonStats then self.panel:SetPCGDungeonStats(result) end
         self.panel:SetStatus(string.format(
             "暗影古堡已刷新：%d 层，%d 个总房间，%d 组楼梯，%d 个 Marker，种子 %u",
-            applied.floorCount, applied.roomCount, result.stairCount or 0,
+            applied.floorCount, dungeon.roomCount, result.stairCount or 0,
             result.markerCount or 0, applied.seed))
     end
     self:RefreshPanel()
     return true, result
 end
 
-function DungeonApp:RunHoudiniMarkerFlowValidation()
+function DungeonApp:RunMarkerFlowValidation()
     local started = os.clock()
-    local valid, report = HoudiniMarkerPipeline.RunReferenceValidation()
-    report = report or { errors = { "Houdini Marker 验证没有返回报告" } }
+    local valid, report = PCGDungeonMarkerPipeline.RunReferenceValidation()
+    report = report or { errors = { "Marker 流程验证没有返回报告" } }
     report.elapsedMs = (os.clock() - started) * 1000
     if not valid then
         local reason = table.concat(report.errors or { "未知错误" }, "; ")
-        if self.panel then self.panel:SetStatus("Houdini 流程失败：" .. reason) end
-        log:Write(LOG_ERROR, "[HoudiniMarkerFlow] " .. reason)
+        if self.panel then self.panel:SetStatus("Marker 流程失败：" .. reason) end
+        log:Write(LOG_ERROR, "[PCGDungeonMarkerFlow] " .. reason)
         return false, reason
     end
 
-    self.lastHoudiniMarkerResult = report.result
+    self.lastPCGDungeonMarkerResult = report.result
     if self.panel then
-        if self.panel.SetHoudiniFlowStats then self.panel:SetHoudiniFlowStats(report) end
+        if self.panel.SetMarkerFlowStats then self.panel:SetMarkerFlowStats(report) end
         self.panel:SetStatus(string.format(
-            "Houdini 流程通过：%d 类 Marker，%d 点，%d 面（%.1f ms）",
+            "Marker 流程通过：%d 类 Marker，%d 点，%d 面（%.1f ms）",
             report.markerTypeCount or 0, report.markerCount or 0,
             report.faceCount or 0, report.elapsedMs))
     end
     print(string.format(
-        "[HoudiniMarkerFlow] PASS fixture=%s markers=%d faces=%d types=%d time=%.1fms",
+        "[PCGDungeonMarkerFlow] PASS fixture=%s markers=%d faces=%d types=%d time=%.1fms",
         tostring(report.fixturePath), report.markerCount or 0, report.faceCount or 0,
         report.markerTypeCount or 0, report.elapsedMs))
     return true, report
 end
 
 function DungeonApp:RebuildView(animate)
-    if self:IsBgeoFixedThemeActive() then return end
-    self:ClearInactiveBgeoScene()
+    if self:IsPCGDungeonThemeActive() then return end
+    self:ClearInactivePCGDungeonScene()
     if self:IsEmptyFixedThemeActive() then
         self:ClearSceneContent()
         return
@@ -1460,11 +1493,11 @@ function DungeonApp:GenerationOptions(useEditor, changedFloor, preserveDungeon)
 end
 
 function DungeonApp:Generate(useEditor, frameCamera, changedFloor, preserveDungeon)
-    if self:IsBgeoFixedThemeActive() then
-        self:RefreshShadowCastle(frameCamera ~= false)
-        return
+    if self:IsPCGDungeonThemeActive() then
+        local ok = self:RefreshPCGDungeon(frameCamera ~= false, nil, useEditor == true)
+        return ok == true
     end
-    self:ClearInactiveBgeoScene()
+    self:ClearInactivePCGDungeonScene()
     local started = os.clock(); self.generationSerial = self.generationSerial + 1
     print(string.format("[DungeonForge] generate #%d seed=%u floors=%d editor=%s", self.generationSerial,
         self.seed & 0xffffffff, self.floorCount, tostring(useEditor)))
@@ -1635,6 +1668,7 @@ function DungeonApp:ToggleEditor(force, preferredMode)
         self.editor2D:SetVisible(false)
         self.editor3D:SetVisible(false)
         self.dungeonRenderer:ClearEditorSelection()
+        self.pcgDungeonRenderer:ClearEditorSelection()
         if self.editorDirty then
             self.editorDirty = false
             self.editorRebuildPending = false
@@ -1681,7 +1715,7 @@ end
 
 function DungeonApp:ActivatePreview(mode)
     if not self.preview then return end
-    local cameraOnly = self:IsBgeoFixedThemeActive()
+    local cameraOnly = self:IsPCGDungeonThemeActive()
     if not cameraOnly and not self.dungeon then return end
     if self.forgeCamera:IsTransitioning() then return end
     if self.editorActive then
@@ -1692,7 +1726,7 @@ function DungeonApp:ActivatePreview(mode)
     if cameraOnly then
         if not self.preview:IsActive() then self.floorViewBeforePreview = self.floorViewMode end
         self.forgeCamera.enabled = false
-        self.preview:ActivateCameraOnly(self.bgeoRenderer:GetPreviewStart())
+        self.preview:ActivateCameraOnly(self.pcgDungeonRenderer:GetPreviewStart())
         return
     end
     if not self.preview:IsActive() then
@@ -1723,7 +1757,7 @@ end
 function DungeonApp:HandleUpdate(timeStep)
     self.fixedSettingInputCooldown = math.max(0, (self.fixedSettingInputCooldown or 0) - timeStep)
     self.dungeonRenderer:Update(timeStep)
-    self.bgeoRenderer:Update(timeStep)
+    self.pcgDungeonRenderer:Update(timeStep)
     if self.preview and self.preview:IsActive() then self.preview:Update(timeStep); return end
     if input:GetKeyPress(KEY_E) then self:ToggleEditorMode("3d") end
     if self.editorTransition then
@@ -1790,7 +1824,7 @@ function DungeonApp:Stop()
     if self.panel then self.panel:Dispose() end
     renderer:SetViewport(0, nil)
     if self.preview then self.preview:Dispose() end
-    if self.bgeoRenderer then self.bgeoRenderer:Dispose() end
+    if self.pcgDungeonRenderer then self.pcgDungeonRenderer:Dispose() end
     self.preview, self.editor, self.editor2D, self.editor3D = nil, nil, nil, nil
     self.panel, self.eventObject, self.eventNode, self.scene = nil, nil, nil, nil
 end

@@ -1,5 +1,5 @@
 local DungeonApp = require("App.DungeonApp")
-local BgeoDungeonRenderer = require("Rendering.BgeoDungeonRenderer")
+local PCGDungeonRenderer = require("Rendering.PCGDungeonRenderer")
 
 local function Check(condition, message)
     if not condition then error(message, 2) end
@@ -43,52 +43,52 @@ function Start()
         Check(app.lightGroupNode:GetComponent("Light", true) == nil,
             "shadow castle retained a directional Light component")
 
-        local bgeoRenderer = BgeoDungeonRenderer.new(scene)
-        bgeoRenderer:SetLightingEnabled(true)
-        local rebuilt, stats = bgeoRenderer:Rebuild()
-        Check(rebuilt, "shadow castle BGEO rebuild failed: " .. tostring(stats))
-        Check(stats.lights > 0, "shadow castle BGEO generated no local point lights")
-        Check(bgeoRenderer.lights[1] and bgeoRenderer.lights[1].light.lightType == LIGHT_POINT,
-            "shadow castle BGEO did not generate point lights")
+        local pcgDungeonRenderer = PCGDungeonRenderer.new(scene)
+        pcgDungeonRenderer:SetLightingEnabled(true)
+        local rebuilt, stats = pcgDungeonRenderer:Rebuild()
+        Check(rebuilt, "shadow castle PCG Dungeon rebuild failed: " .. tostring(stats))
+        Check(stats.lights > 0, "shadow castle PCG Dungeon generated no local point lights")
+        Check(pcgDungeonRenderer.lights[1] and pcgDungeonRenderer.lights[1].light.lightType == LIGHT_POINT,
+            "shadow castle PCG Dungeon did not generate point lights")
         Check(app.lightGroupNode:GetComponent("Light", true) == nil,
-            "shadow castle retained a directional Light component after BGEO rebuild")
-        bgeoRenderer:Dispose()
+            "shadow castle retained a directional Light component after PCG Dungeon rebuild")
+        pcgDungeonRenderer:Dispose()
 
-        bgeoRenderer = BgeoDungeonRenderer.new(scene)
-        app.bgeoRenderer = bgeoRenderer
+        pcgDungeonRenderer = PCGDungeonRenderer.new(scene)
+        app.pcgDungeonRenderer = pcgDungeonRenderer
         app.currentFloor = 0
         app.roomCounts = { 8, 7, 7 }
-        local firstBuilt, firstStats = app:RefreshShadowCastle(false, { seed = 5, floorCount = 3 })
+        local firstBuilt, firstStats = app:RefreshPCGDungeon(false, { seed = 5, floorCount = 3 })
         Check(firstBuilt, "initial app-level Shadow Castle refresh failed: " .. tostring(firstStats))
         local firstHash = app.dungeon.hash
-        local firstPositions = LightPositionSet(bgeoRenderer.lights)
-        local debugEnabled = bgeoRenderer:SetLightDebugVisible(true)
-        Check(debugEnabled and bgeoRenderer.lightDebugRoot ~= nil,
+        local firstPositions = LightPositionSet(pcgDungeonRenderer.lights)
+        local debugEnabled = pcgDungeonRenderer:SetLightDebugVisible(true)
+        Check(debugEnabled and pcgDungeonRenderer.lightDebugRoot ~= nil,
             "light debug geometry was not available before refresh")
-        local firstDebugRoot = bgeoRenderer.lightDebugRoot
+        local firstDebugRoot = pcgDungeonRenderer.lightDebugRoot
 
-        local secondBuilt, secondStats = app:RefreshShadowCastle(false, { seed = 6, floorCount = 3 })
+        local secondBuilt, secondStats = app:RefreshPCGDungeon(false, { seed = 6, floorCount = 3 })
         Check(secondBuilt, "second app-level Shadow Castle refresh failed: " .. tostring(secondStats))
         Check(app.dungeon.hash ~= firstHash, "app-level refresh did not change the dungeon layout")
-        Check(SetsDiffer(firstPositions, LightPositionSet(bgeoRenderer.lights)),
+        Check(SetsDiffer(firstPositions, LightPositionSet(pcgDungeonRenderer.lights)),
             "app-level refresh did not update point-light transforms")
-        Check(bgeoRenderer.lightDebugVisible and bgeoRenderer.lightDebugRoot ~= nil
-                and bgeoRenderer.lightDebugRoot ~= firstDebugRoot,
+        Check(pcgDungeonRenderer.lightDebugVisible and pcgDungeonRenderer.lightDebugRoot ~= nil
+                and pcgDungeonRenderer.lightDebugRoot ~= firstDebugRoot,
             "app-level refresh did not rebuild point-light debug geometry")
-        Check(secondStats.lights == #bgeoRenderer.lights,
+        Check(secondStats.lights == #pcgDungeonRenderer.lights,
             "app-level refresh reported a stale point-light count")
-        bgeoRenderer:SetLightDebugVisible(false)
+        pcgDungeonRenderer:SetLightDebugVisible(false)
 
         app.activeFixedThemeId = nil
-        Check(app:ClearInactiveBgeoScene(),
-            "leaving shadow castle did not clear the inactive BGEO scene")
-        Check(bgeoRenderer.root == nil and bgeoRenderer.stats == nil
-                and #bgeoRenderer.groups == 0 and #bgeoRenderer.lights == 0,
+        Check(app:ClearInactivePCGDungeonScene(),
+            "leaving shadow castle did not clear the inactive PCG Dungeon scene")
+        Check(pcgDungeonRenderer.root == nil and pcgDungeonRenderer.stats == nil
+                and #pcgDungeonRenderer.groups == 0 and #pcgDungeonRenderer.lights == 0,
             "shadow castle renderer retained assets or point lights")
-        Check(bgeoRenderer.lightDebugRoot == nil and bgeoRenderer.cellDebugRoot == nil,
+        Check(pcgDungeonRenderer.lightDebugRoot == nil and pcgDungeonRenderer.cellDebugRoot == nil,
             "shadow castle renderer retained debug geometry")
-        Check(scene:GetChild("BgeoDungeon", true) == nil,
-            "scene retained the Shadow Castle BGEO root")
+        Check(scene:GetChild("PCGDungeon", true) == nil,
+            "scene retained the Shadow Castle PCG Dungeon root")
         app:ApplyTheme()
         Check(app.sun ~= nil, "directional light was not restored after leaving shadow castle")
         Check(app.lightGroupNode:GetComponent("Light", true) ~= nil,

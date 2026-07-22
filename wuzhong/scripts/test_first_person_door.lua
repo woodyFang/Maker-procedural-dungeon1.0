@@ -1,5 +1,5 @@
 local FirstPersonDoorSystem = require("Gameplay.FirstPersonDoorSystem")
-local BgeoDungeonRenderer = require("Rendering.BgeoDungeonRenderer")
+local PCGDungeonRenderer = require("Rendering.PCGDungeonRenderer")
 
 local function Check(condition, message)
     if not condition then error(message, 2) end
@@ -57,23 +57,22 @@ function Start()
         Check(Near(math.abs(front.currentAngle), 100), "door did not reach exact open angle")
         Check(Near(math.abs(frontNode.rotation:YawAngle()), 100, 0.01), "door node did not reach open rotation")
 
-        local renderer = BgeoDungeonRenderer.new(scene)
+        local renderer = PCGDungeonRenderer.new(scene)
         local rebuilt, stats = renderer:Rebuild()
-        Check(rebuilt, "BGEO renderer rebuild failed: " .. tostring(stats))
-        Check(stats.doors > 0, "BGEO manifest registered no interactive door leaves")
-        Check(renderer.doorSystem:GetDoorCount() == stats.doors, "BGEO door count is inconsistent")
+        Check(rebuilt, "PCG Dungeon renderer rebuild failed: " .. tostring(stats))
+        Check(stats.doors > 0, "PCG Dungeon manifest registered no interactive door leaves")
+        Check(renderer.doorSystem:GetDoorCount() == stats.doors, "PCG Dungeon door count is inconsistent")
         Check(Near(renderer.doorSystem.doors[1].interactionDistance, 3.0),
-            "BGEO door interaction distance is not 3 m")
+            "PCG Dungeon door interaction distance is not 3 m")
         renderer:Dispose()
 
         scene:Dispose()
-        print(string.format(
-            "[FirstPersonDoor] PASS registration, range, facing, toggle, reversal, animation, bgeo=%d doors",
-            stats.doors))
+        ErrorExit(string.format(
+            "[FirstPersonDoor] PASS registration, range, facing, toggle, reversal, animation, pcgDungeon=%d doors",
+            stats.doors), 0)
     end, debug.traceback)
     if not ok then
         ErrorExit("[FirstPersonDoor] FAIL\n" .. tostring(errorMessage), 1)
         return
     end
-    engine:Exit()
 end

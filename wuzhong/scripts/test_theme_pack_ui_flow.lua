@@ -31,8 +31,8 @@ function Start()
         "basic scene information diverged from the authoritative geometry contract")
     Check(panel.sceneFloorHeightValue == nil,
         "floor height is still displayed in the side result panel instead of theme generation")
-    Check(panel.shadowCastleRoomSlider == nil and panel.shadowCastleRoomValue == nil,
-        "shadow castle still displays a separate total room control")
+    Check(panel.pcgDungeonRoomSlider == nil and panel.pcgDungeonRoomValue == nil,
+        "PCG Dungeon still displays a separate total room control")
     local empty = DungeonGenerator.Generate({
         seed = 20260720, floorCount = 2, roomCountsByFloor = { 21, 21 },
         emptyScene = true, floorHeight = 5.0, settingKey = "dungeon", theme = "ancient",
@@ -80,10 +80,10 @@ function Start()
     Check(app.preview:IsActive() and app.preview.root and app.preview.root:IsEnabled(),
         "preview character was not active before the dynamic-scene test")
     local emptyApplied, emptyApplyReason = panel.callbacks.onFixedSetting("shadowCastle")
-    Check(emptyApplied, emptyApplyReason or "Houdini fixed PCG theme callback failed")
-    Check(app.dungeon ~= nil and app.bgeoRenderer.root ~= nil
-            and (app.bgeoRenderer.stats.markerCount or 0) > 0,
-        "shadow castle did not retain its generated Dungeon and Houdini scene")
+    Check(emptyApplied, emptyApplyReason or "legacy reference fixed PCG theme callback failed")
+    Check(app.dungeon ~= nil and app.pcgDungeonRenderer.root ~= nil
+            and (app.pcgDungeonRenderer.stats.markerCount or 0) > 0,
+        "shadow castle did not retain its generated Dungeon and legacy reference scene")
     Check(app.preview.root == nil and app.preview.character == nil,
         "shadow castle retained character preview nodes")
     Check(not app.editorActive and not app.preview:IsActive(),
@@ -93,8 +93,8 @@ function Start()
     Check(restored, restoreReason or "non-empty fixed PCG theme did not restore the scene")
     Check(app.dungeon and app.preview.root and app.preview.character,
         "non-empty fixed PCG theme did not rebuild dungeon and preview character state")
-    Check(app.bgeoRenderer.root == nil and app.bgeoRenderer.stats == nil,
-        "non-empty fixed PCG theme retained the shadow castle BGEO scene")
+    Check(app.pcgDungeonRenderer.root == nil and app.pcgDungeonRenderer.stats == nil,
+        "non-empty fixed PCG theme retained the shadow castle PCG Dungeon scene")
 
     app:ToggleEditorMode("3d")
     Check(app.editorActive and app.forgeCamera:IsTransitioning(),
@@ -107,26 +107,26 @@ function Start()
     app:ActivatePreview("first")
     Check(app.preview:IsFirstPerson() and app.preview.cameraOnly,
         "shadow castle first-person camera did not activate after the scene switch")
-    local shadowCastleRoot = app.bgeoRenderer.root
+    local pcgDungeonRoot = app.pcgDungeonRenderer.root
     panel.callbacks.onRandomTheme()
     Check(app.topicMode == "fixedPCG" and app.activeFixedThemeId == "shadowCastle",
         "random palette cleared the active shadow castle preset")
-    Check(app.bgeoRenderer.root == shadowCastleRoot and app.preview:IsFirstPerson()
+    Check(app.pcgDungeonRenderer.root == pcgDungeonRoot and app.preview:IsFirstPerson()
             and app.preview.cameraOnly,
         "random palette replaced the shadow castle scene or disabled its first-person camera")
     Check(panel.cameraOnlyTheme
-            and not panel.shadowCastleParametersPanel:IsVisible()
-            and not panel.shadowCastleCellDebugButton:IsVisible()
-            and not panel.shadowCastleLightDebugButton:IsVisible(),
+            and not panel.pcgDungeonParametersPanel:IsVisible()
+            and not panel.pcgDungeonCellDebugButton:IsVisible()
+            and not panel.pcgDungeonLightDebugButton:IsVisible(),
         "random palette exposed internal shadow castle controls")
     local paletteApplied, paletteReason = panel.callbacks.onTheme("ancient")
     Check(paletteApplied, paletteReason or "shadow castle palette selection failed")
     Check(app.topicMode == "fixedPCG" and app.activeFixedThemeId == "shadowCastle"
-            and not panel.shadowCastleParametersPanel:IsVisible(),
+            and not panel.pcgDungeonParametersPanel:IsVisible(),
         "manual palette selection cleared the shadow castle preset")
     panel:SetFixedSettingExpanded(true)
-    Check(panel.houdiniFlowButton == nil,
-        "fixed-topic expansion retained the internal Houdini flow control")
+    Check(panel.markerFlowButton == nil,
+        "fixed-topic expansion retained the internal legacy reference flow control")
     panel:SetFixedSettingExpanded(false)
     app.fixedSettingInputCooldown = 0
     local transitionRestored, transitionRestoreReason = panel.callbacks.onFixedSetting("frozenSanctum")
@@ -142,23 +142,23 @@ function Start()
     app.roomGroups = {}
     app.activeCustomSettingId = nil
 
-    local shadowRefreshCalls = 0
-    app.RefreshShadowCastle = function()
-        shadowRefreshCalls = shadowRefreshCalls + 1
+    local pcgDungeonRefreshCalls = 0
+    app.RefreshPCGDungeon = function()
+        pcgDungeonRefreshCalls = pcgDungeonRefreshCalls + 1
         return true
     end
     app.fixedSettingInputCooldown = 0
-    local shadowGenerated, shadowReason = panel.callbacks.onFixedSetting("shadowCastle")
-    Check(shadowGenerated, shadowReason or "shadow castle fixed PCG callback failed")
+    local pcgGenerated, pcgReason = panel.callbacks.onFixedSetting("shadowCastle")
+    Check(pcgGenerated, pcgReason or "shadow castle fixed PCG callback failed")
     Check(app.topicMode == "fixedPCG" and app.activeFixedThemeId == "shadowCastle"
-            and app.activeCustomSettingId == nil and shadowRefreshCalls == 1,
+            and app.activeCustomSettingId == nil and pcgDungeonRefreshCalls == 1,
         "shadow castle did not remain an exclusive fixed PCG preset")
     Check(applyThemeCalls == 0 and generateCalls == 0,
-        "shadow castle bypass did not use its dedicated Houdini refresh path")
+        "shadow castle bypass did not use its dedicated legacy reference refresh path")
 
     Check(panel.callbacks.onFixedSetting("shadowCastle"),
         "reselecting the active fixed preset failed")
-    Check(shadowRefreshCalls == 1,
+    Check(pcgDungeonRefreshCalls == 1,
         "reselecting the active fixed preset rebuilt the scene")
 
     app.fixedSettingSwitchInProgress = true
@@ -197,7 +197,7 @@ function Start()
             and app.activeCustomSettingId == nil,
         "cloud customization reload replaced the selected fixed preset")
 
-    app.RefreshShadowCastle = function() return false, "synthetic refresh failure" end
+    app.RefreshPCGDungeon = function() return false, "synthetic refresh failure" end
     app.fixedSettingInputCooldown = 0
     local failedShadow, failedShadowReason = panel.callbacks.onFixedSetting("shadowCastle")
     Check(failedShadow == false and failedShadowReason == "synthetic refresh failure",

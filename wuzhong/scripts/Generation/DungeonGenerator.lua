@@ -64,7 +64,7 @@ local function ScatterRooms(rng, count, floor, centerX, centerY, firstId, roomCe
     local largeCount = 0
     local minimum = roomCellBounds and roomCellBounds.min or nil
     local maximum = roomCellBounds and roomCellBounds.max or nil
-    -- Houdini room bounds are Y-up vectors. DungeonGenerator is a floor-plane
+    -- PCG room bounds are Y-up vectors. DungeonGenerator is a floor-plane
     -- graph, so vector X maps to room width and vector Z maps to room depth;
     -- vector Y remains the single-floor vertical cell count.
     local minWidth = minimum and Clamp(math.floor((minimum[1] or 1) + 0.5), 1, 24) or nil
@@ -309,7 +309,7 @@ local function BuildGraph(rooms, floorCount, loopRates, floorSeeds, roomCellBoun
         if lower and upper then
             local edge = { a = lower.id, b = upper.id, isLoop = false, isCritical = true }
             if compactStairs then
-                -- X/Z are the Houdini floor plane. Small 1-3 cell rooms need a
+                -- X/Z are the PCG floor plane. Small 1-3 cell rooms need a
                 -- compact stair footprint; Y remains the independent floor axis.
                 edge.stairSpec = { style = "straight", width = 1, landingDepth = 1 }
                 lower.stairRoom, upper.stairRoom = true, true

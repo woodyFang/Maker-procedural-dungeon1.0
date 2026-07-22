@@ -1,4 +1,4 @@
-local HoudiniCoordinateSystem = {}
+local PCGDungeonCoordinateSystem = {}
 
 local function Value(values, index, fallback)
     local value = values and values[index]
@@ -20,22 +20,22 @@ local function MultiplyQuaternion(a, b)
     }
 end
 
-function HoudiniCoordinateSystem.OrientLocalX(direction)
+function PCGDungeonCoordinateSystem.OrientLocalX(direction)
     return YawQuaternion(math.atan(-Value(direction, 3, 0), Value(direction, 1, 0)))
 end
 
-function HoudiniCoordinateSystem.OrientLocalForward(direction)
+function PCGDungeonCoordinateSystem.OrientLocalForward(direction)
     return YawQuaternion(math.atan(Value(direction, 1, 0), Value(direction, 3, 0)))
 end
 
-function HoudiniCoordinateSystem.OrientPillarPlacement(direction)
+function PCGDungeonCoordinateSystem.OrientPillarPlacement(direction)
     -- The source wrangle passes an atan2 result through radians() again. Preserve it
     -- because attached brazier placement observes this transport Marker orientation.
     local sourceRadians = math.atan(-Value(direction, 3, 0), Value(direction, 1, 0))
     return YawQuaternion(math.rad(sourceRadians))
 end
 
-function HoudiniCoordinateSystem.ApplyMarkerYawOffset(orient, degrees)
+function PCGDungeonCoordinateSystem.ApplyMarkerYawOffset(orient, degrees)
     if not degrees or math.abs(degrees) < 0.00000001 then
         return {
             Value(orient, 1, 0), Value(orient, 2, 0),
@@ -45,7 +45,7 @@ function HoudiniCoordinateSystem.ApplyMarkerYawOffset(orient, degrees)
     return MultiplyQuaternion(orient, YawQuaternion(math.rad(degrees)))
 end
 
-function HoudiniCoordinateSystem.RotateHoudiniVector(orient, vector)
+function PCGDungeonCoordinateSystem.RotateMarkerVector(orient, vector)
     local qx, qy, qz, qw = Value(orient, 1, 0), Value(orient, 2, 0),
         Value(orient, 3, 0), Value(orient, 4, 1)
     local vx, vy, vz = Value(vector, 1, 0), Value(vector, 2, 0), Value(vector, 3, 0)
@@ -59,9 +59,9 @@ function HoudiniCoordinateSystem.RotateHoudiniVector(orient, vector)
     }
 end
 
-function HoudiniCoordinateSystem.PackMarkerTransform(marker, markerYawOffsetDegrees)
+function PCGDungeonCoordinateSystem.PackMarkerTransform(marker, markerYawOffsetDegrees)
     local position = marker.position or { 0, 0, 0 }
-    local orient = HoudiniCoordinateSystem.ApplyMarkerYawOffset(
+    local orient = PCGDungeonCoordinateSystem.ApplyMarkerYawOffset(
         marker.orient or { 0, 0, 0, 1 }, markerYawOffsetDegrees)
     local scale = marker.scale or { 1, 1, 1 }
     local pscale = tonumber(marker.pscale) or 1
@@ -81,42 +81,42 @@ function HoudiniCoordinateSystem.PackMarkerTransform(marker, markerYawOffsetDegr
     }
 end
 
-function HoudiniCoordinateSystem.UEVectorToUrho(values, scale)
+function PCGDungeonCoordinateSystem.UEVectorToUrho(values, scale)
     scale = scale or 1
     return Vector3(Value(values, 2, 0) * scale, Value(values, 3, 0) * scale,
         Value(values, 1, 0) * scale)
 end
 
-function HoudiniCoordinateSystem.PackedPositionToUrho(values)
-    return HoudiniCoordinateSystem.UEVectorToUrho(values, 0.01)
+function PCGDungeonCoordinateSystem.PackedPositionToUrho(values)
+    return PCGDungeonCoordinateSystem.UEVectorToUrho(values, 0.01)
 end
 
-function HoudiniCoordinateSystem.PackedScaleToUrho(values)
+function PCGDungeonCoordinateSystem.PackedScaleToUrho(values)
     return Vector3(Value(values, 2, 1), Value(values, 3, 1), Value(values, 1, 1))
 end
 
-function HoudiniCoordinateSystem.PackedTransformScaleToUrho(values)
+function PCGDungeonCoordinateSystem.PackedTransformScaleToUrho(values)
     return Vector3(Value(values, 9, 1), Value(values, 10, 1), Value(values, 8, 1))
 end
 
-function HoudiniCoordinateSystem.PackedQuaternionToUrho(values)
+function PCGDungeonCoordinateSystem.PackedQuaternionToUrho(values)
     return Quaternion(Value(values, 7, 1), Value(values, 5, 0),
         Value(values, 6, 0), Value(values, 4, 0))
 end
 
-function HoudiniCoordinateSystem.UERotatorToUrho(rotation)
+function PCGDungeonCoordinateSystem.UERotatorToUrho(rotation)
     -- UE pitch/yaw/roll axes Y/Z/X map to UrhoX X/Y/Z. The cyclic
     -- UE-to-Urho permutation preserves handedness, so angle signs stay unchanged.
     return Quaternion(Value(rotation, 1, 0), Value(rotation, 2, 0), Value(rotation, 3, 0))
 end
 
-function HoudiniCoordinateSystem.UEScatterRotation(normal, localUpAxis, yawDegrees, alignToNormal)
-    local localUp = HoudiniCoordinateSystem.UEVectorToUrho(localUpAxis or { 0, 0, 1 }, 1)
+function PCGDungeonCoordinateSystem.UEScatterRotation(normal, localUpAxis, yawDegrees, alignToNormal)
+    local localUp = PCGDungeonCoordinateSystem.UEVectorToUrho(localUpAxis or { 0, 0, 1 }, 1)
     if localUp:LengthSquared() < 0.00000001 then localUp = Vector3.UP else localUp = localUp:Normalized() end
     local yaw = Quaternion(yawDegrees or 0, localUp)
     if not alignToNormal then return yaw end
 
-    local targetUp = HoudiniCoordinateSystem.UEVectorToUrho(normal or { 0, 0, 1 }, 1)
+    local targetUp = PCGDungeonCoordinateSystem.UEVectorToUrho(normal or { 0, 0, 1 }, 1)
     if targetUp:LengthSquared() < 0.00000001 then return yaw end
     targetUp = targetUp:Normalized()
     local alignment = Quaternion()
@@ -124,4 +124,4 @@ function HoudiniCoordinateSystem.UEScatterRotation(normal, localUpAxis, yawDegre
     return alignment * yaw
 end
 
-return HoudiniCoordinateSystem
+return PCGDungeonCoordinateSystem

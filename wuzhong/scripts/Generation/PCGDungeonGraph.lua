@@ -1,6 +1,6 @@
-local VexRandom = require("Generation.VexRandom")
+local PCGRandomStream = require("Generation.PCGRandomStream")
 
-local ShadowCastleGraph = {}
+local PCGDungeonGraph = {}
 
 local function V(x, y, z) return { x or 0, y or 0, z or 0 } end
 local function Sub(a, b) return V(a[1] - b[1], a[2] - b[2], a[3] - b[3]) end
@@ -13,6 +13,16 @@ local function Cross(a, b)
 end
 local function Length2(a) return Dot(a, a) end
 local function Distance(a, b) return math.sqrt(Length2(Sub(a, b))) end
+
+local function CopyValue(value, seen)
+    if type(value) ~= "table" then return value end
+    seen = seen or {}
+    if seen[value] then return seen[value] end
+    local result = {}
+    seen[value] = result
+    for key, item in pairs(value) do result[key] = CopyValue(item, seen) end
+    return result
+end
 
 local function SortedKey(values)
     table.sort(values)
@@ -40,7 +50,7 @@ local function AddUniqueEdge(edges, edgeKeys, a, b)
     edges[#edges + 1] = { a = x, b = y }
 end
 
-function ShadowCastleGraph.BuildDelaunay(layout)
+function PCGDungeonGraph.BuildDelaunay(layout)
     local rooms = layout.rooms or {}
     local roomCount = #rooms
     local positions = {}
@@ -62,9 +72,9 @@ function ShadowCastleGraph.BuildDelaunay(layout)
     local sphereEpsilon = math.max(1, scale * scale) * 1e-6
     for index = 0, roomCount - 1 do
         local jitter = V(
-            VexRandom.Rand(VexRandom.Affine(8147, index, 17.123)) - 0.5,
-            VexRandom.Rand(VexRandom.Affine(8147, index, 41.731)) - 0.5,
-            VexRandom.Rand(VexRandom.Affine(8147, index, 73.357)) - 0.5)
+            PCGRandomStream.Rand(PCGRandomStream.Affine(8147, index, 17.123)) - 0.5,
+            PCGRandomStream.Rand(PCGRandomStream.Affine(8147, index, 41.731)) - 0.5,
+            PCGRandomStream.Rand(PCGRandomStream.Affine(8147, index, 73.357)) - 0.5)
         positions[index + 1] = Add(positions[index + 1], Scale(jitter, scale * 1e-5))
     end
 
@@ -148,7 +158,7 @@ function ShadowCastleGraph.BuildDelaunay(layout)
     return { tets = finalTets, edges = edges, warning = warning, scale = scale }
 end
 
-function ShadowCastleGraph.BuildMst(layout, delaunay)
+function PCGDungeonGraph.BuildMst(layout, delaunay)
     local rooms, inputEdges = layout.rooms or {}, delaunay.edges or {}
     local roomCount = #rooms
     if roomCount < 2 or #inputEdges == 0 then
@@ -200,7 +210,7 @@ function ShadowCastleGraph.BuildMst(layout, delaunay)
     local loops = {}
     for _, edge in ipairs(inputEdges) do
         if not mstSources[edge.sourcePrimitive]
-            and VexRandom.Rand(VexRandom.Affine(19037, edge.sourcePrimitive, 37.719)) < 0.125 then
+            and PCGRandomStream.Rand(PCGRandomStream.Affine(19037, edge.sourcePrimitive, 37.719)) < 0.125 then
             loops[#loops + 1] = {
                 a = edge.a, b = edge.b, weight = edge.weight,
                 isMst = false, isLoop = true, isFallback = false,
@@ -220,9 +230,78 @@ function ShadowCastleGraph.BuildMst(layout, delaunay)
     }
 end
 
-function ShadowCastleGraph.Generate(layout)
-    local delaunay = ShadowCastleGraph.BuildDelaunay(layout)
-    return { delaunay = delaunay, graph = ShadowCastleGraph.BuildMst(layout, delaunay) }
+function PCGDungeonGraph.BuildAuthored(layout, editorEdges)
+    local rooms, edges, mst, loops, errors = layout.rooms or {}, {}, {}, {}, {}
+    local seen = {}
+    for index, source in ipairs(editorEdges or {}) do
+        local editorA = math.floor(tonumber(source.a) or 0)
+        local editorB = math.floor(tonumber(source.b) or 0)
+        local a, b = editorA - 1, editorB - 1
+        local key = math.min(a, b) .. ":" .. math.max(a, b)
+        if a < 0 or b < 0 or a >= #rooms or b >= #rooms then
+            errors[#errors + 1] = "Editor edge " .. index .. " references an unknown room"
+        elseif a == b then
+            errors[#errors + 1] = "Editor edge " .. index .. " connects a room to itself"
+        elseif seen[key] then
+            errors[#errors + 1] = "Editor edge " .. index .. " duplicates " .. key
+        else
+            seen[key] = true
+            local edge = CopyValue(source)
+            edge.a, edge.b = a, b
+            edge.isLoop = source.isLoop == true
+            edge.isMst = not edge.isLoop
+            edge.isFallback = false
+            edge.sourcePrimitive = index - 1
+            edge.weight = Distance(rooms[a + 1].position, rooms[b + 1].position)
+            edge.kind = source.kind or (rooms[a + 1].floor ~= rooms[b + 1].floor and "stairs" or "corridor")
+            edges[#edges + 1] = edge
+            if edge.isLoop then loops[#loops + 1] = edge else mst[#mst + 1] = edge end
+        end
+    end
+
+    local visited, queue = {}, {}
+    if #rooms > 0 then visited[1], queue[1] = true, 1 end
+    local head = 1
+    while queue[head] do
+        local room = queue[head]
+        head = head + 1
+        for _, edge in ipairs(edges) do
+            local nextRoom
+            if edge.a + 1 == room then nextRoom = edge.b + 1
+            elseif edge.b + 1 == room then nextRoom = edge.a + 1 end
+            if nextRoom and not visited[nextRoom] then
+                visited[nextRoom] = true
+                queue[#queue + 1] = nextRoom
+            end
+        end
+    end
+    local visitedCount = 0
+    for _ in pairs(visited) do visitedCount = visitedCount + 1 end
+    local connected = #rooms > 0 and visitedCount == #rooms
+    if not connected then errors[#errors + 1] = "Editor graph is disconnected" end
+    return {
+        edges = edges,
+        mstEdges = mst,
+        loopEdges = loops,
+        connected = connected and #errors == 0,
+        fallbackCount = 0,
+        totalWeight = 0,
+        warning = errors[1],
+        errors = errors,
+        authored = true,
+    }
 end
 
-return ShadowCastleGraph
+function PCGDungeonGraph.Generate(layout, editorEdges)
+    if editorEdges ~= nil then
+        local graph = PCGDungeonGraph.BuildAuthored(layout, editorEdges)
+        return {
+            delaunay = { tets = {}, edges = graph.edges, authored = true },
+            graph = graph,
+        }
+    end
+    local delaunay = PCGDungeonGraph.BuildDelaunay(layout)
+    return { delaunay = delaunay, graph = PCGDungeonGraph.BuildMst(layout, delaunay) }
+end
+
+return PCGDungeonGraph

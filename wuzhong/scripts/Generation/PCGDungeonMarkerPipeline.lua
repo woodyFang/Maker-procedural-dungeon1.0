@@ -1,8 +1,8 @@
-local HoudiniMarkerPipeline = {}
-local HoudiniCoordinateSystem = require("Generation.HoudiniCoordinateSystem")
+local PCGDungeonMarkerPipeline = {}
+local PCGDungeonCoordinateSystem = require("Generation.PCGDungeonCoordinateSystem")
 
-HoudiniMarkerPipeline.SCHEMA_VERSION = 9
-HoudiniMarkerPipeline.MARKER_TYPES = {
+PCGDungeonMarkerPipeline.SCHEMA_VERSION = 9
+PCGDungeonMarkerPipeline.MARKER_TYPES = {
     "Ground", "Wall", "Door", "WallSeparator", "Stair", "Ceil", "Light",
     "Light_Ambient", "Light_Door", "Light_Stair", "Light_Hero",
     "PillarPlacement", "PillarWebPlacement", "Curbstone01Placement",
@@ -50,9 +50,9 @@ local function AngleDegrees(normal)
     local angle = math.deg(math.atan(-normal[1], normal[3]))
     return angle < 0 and angle + 360 or angle
 end
-local OrientLocalX = HoudiniCoordinateSystem.OrientLocalX
-local OrientLocalForward = HoudiniCoordinateSystem.OrientLocalForward
-local OrientPillarPlacement = HoudiniCoordinateSystem.OrientPillarPlacement
+local OrientLocalX = PCGDungeonCoordinateSystem.OrientLocalX
+local OrientLocalForward = PCGDungeonCoordinateSystem.OrientLocalForward
+local OrientPillarPlacement = PCGDungeonCoordinateSystem.OrientPillarPlacement
 
 local function NewMarker(name, position, normal, attributes)
     attributes = attributes or {}
@@ -83,6 +83,10 @@ end
 
 local function FindCell(byPosition, position)
     return byPosition[PositionKey(position)]
+end
+
+local function IsStairCell(cell)
+    return cell ~= nil and (cell.cell_type == 3 or cell.cell_type == 4)
 end
 
 local function PairStairCells(cells, cellSize)
@@ -216,6 +220,20 @@ local function BuildWalls(cells, doors, stairPairs, cellSize)
     local byPosition = CellMaps(cells)
     local doorPositions = DoorPositionMap(doors, cellSize)
     local result, emitted = {}, {}
+    local stairDirectionByCell = {}
+    for _, pair in ipairs(stairPairs) do
+        for _, position in ipairs({
+            pair.lower.position,
+            pair.upper.position,
+            Add(pair.lower.position, V(0, cellSize, 0)),
+            Add(pair.upper.position, V(0, cellSize, 0)),
+        }) do
+            local cell = FindCell(byPosition, position)
+            if IsStairCell(cell) and cell.stairwell_id == pair.lower.stairwell_id then
+                stairDirectionByCell[cell] = pair.direction
+            end
+        end
+    end
 
     local function emit(position, normal, cellType, roomId, priority, extra)
         local key = PositionKey(position)
@@ -305,7 +323,24 @@ local function BuildWalls(cells, doors, stairPairs, cellSize)
             })
         end
     end
-    return result
+
+    local filtered, removed = {}, 0
+    local half = cellSize * 0.5
+    for _, marker in ipairs(result) do
+        local center = Add(marker.position, V(0, half, 0))
+        local negativeSide = FindCell(byPosition, Add(center, Scale(marker.normal, -half)))
+        local positiveSide = FindCell(byPosition, Add(center, Scale(marker.normal, half)))
+        local negativeDirection = stairDirectionByCell[negativeSide]
+        local positiveDirection = stairDirectionByCell[positiveSide]
+        local sameDirection = negativeDirection and positiveDirection
+            and Dot(negativeDirection, positiveDirection) > 0.999
+        if IsStairCell(negativeSide) and IsStairCell(positiveSide) and sameDirection then
+            removed = removed + 1
+        else
+            filtered[#filtered + 1] = marker
+        end
+    end
+    return filtered, removed
 end
 
 local function BuildDoors(doors, cellSize)
@@ -843,19 +878,19 @@ end
 
 local function CountMarkers(markers)
     local counts = {}
-    for _, name in ipairs(HoudiniMarkerPipeline.MARKER_TYPES) do counts[name] = 0 end
+    for _, name in ipairs(PCGDungeonMarkerPipeline.MARKER_TYPES) do counts[name] = 0 end
     for _, marker in ipairs(markers) do counts[marker.name] = (counts[marker.name] or 0) + 1 end
     return counts
 end
 
-function HoudiniMarkerPipeline.GenerateFromTopology(input, options)
+function PCGDungeonMarkerPipeline.GenerateFromTopology(input, options)
     options = options or {}
     local cells, doors = input.cells or {}, input.doors or {}
     local cellSize = tonumber(options.cellSize) or 5
     local stairPairs = PairStairCells(cells, cellSize)
     local stairTopologyValid, stairTopologyErrors = ValidateStairPairs(cells, stairPairs, cellSize)
     local ground = BuildGround(cells, cellSize)
-    local walls = BuildWalls(cells, doors, stairPairs, cellSize)
+    local walls, removedStairInteriorMarkers = BuildWalls(cells, doors, stairPairs, cellSize)
     local doorMarkers = BuildDoors(doors, cellSize)
     local stairs = BuildStairs(stairPairs, cellSize)
     local ceil = BuildCeil(cells, cellSize)
@@ -883,9 +918,10 @@ function HoudiniMarkerPipeline.GenerateFromTopology(input, options)
     end
     local faces = BuildFaces(cells, doorMarkers, walls, cellSize)
     return {
-        schemaVersion = HoudiniMarkerPipeline.SCHEMA_VERSION,
+        schemaVersion = PCGDungeonMarkerPipeline.SCHEMA_VERSION,
         markers = markers, faces = faces, counts = CountMarkers(markers),
         cellCount = #cells, stairCount = #stairPairs,
+        removedStairInteriorMarkerCount = removedStairInteriorMarkers,
         stairTopologyValid = stairTopologyValid,
         stairTopologyErrors = stairTopologyErrors,
         branches = {
@@ -944,12 +980,12 @@ local function CompareKeys(label, actual, expected, errors)
     end
 end
 
-function HoudiniMarkerPipeline.Validate(result, expected)
+function PCGDungeonMarkerPipeline.Validate(result, expected)
     local errors = {}
-    if result.schemaVersion ~= (expected.marker_schema_version or HoudiniMarkerPipeline.SCHEMA_VERSION) then
+    if result.schemaVersion ~= (expected.marker_schema_version or PCGDungeonMarkerPipeline.SCHEMA_VERSION) then
         errors[#errors + 1] = "marker schema version mismatch"
     end
-    for _, name in ipairs(HoudiniMarkerPipeline.MARKER_TYPES) do
+    for _, name in ipairs(PCGDungeonMarkerPipeline.MARKER_TYPES) do
         local actualCount = result.counts[name] or 0
         local expectedCount = (expected.marker_counts or {})[name] or 0
         if actualCount ~= expectedCount then
@@ -959,7 +995,7 @@ function HoudiniMarkerPipeline.Validate(result, expected)
     end
     if expected.marker_keys then
         local actualByType, expectedByType = {}, {}
-        for _, name in ipairs(HoudiniMarkerPipeline.MARKER_TYPES) do
+        for _, name in ipairs(PCGDungeonMarkerPipeline.MARKER_TYPES) do
             actualByType[name], expectedByType[name] = {}, {}
         end
         for _, marker in ipairs(result.markers) do
@@ -969,7 +1005,7 @@ function HoudiniMarkerPipeline.Validate(result, expected)
             local name = key:match("^([^|]+)")
             if expectedByType[name] then expectedByType[name][#expectedByType[name] + 1] = key end
         end
-        for _, name in ipairs(HoudiniMarkerPipeline.MARKER_TYPES) do
+        for _, name in ipairs(PCGDungeonMarkerPipeline.MARKER_TYPES) do
             table.sort(actualByType[name]); table.sort(expectedByType[name])
             CompareKeys(name .. " key", actualByType[name], expectedByType[name], errors)
         end
@@ -982,14 +1018,14 @@ function HoudiniMarkerPipeline.Validate(result, expected)
     end
     return #errors == 0, {
         errors = errors, markerCount = #result.markers, faceCount = #result.faces,
-        markerTypeCount = #HoudiniMarkerPipeline.MARKER_TYPES, counts = result.counts,
+        markerTypeCount = #PCGDungeonMarkerPipeline.MARKER_TYPES, counts = result.counts,
     }
 end
 
-function HoudiniMarkerPipeline.LoadFixture()
+function PCGDungeonMarkerPipeline.LoadFixture()
     local candidates = {
-        "assets/BgeoDungeon/HoudiniMarkerFixture.json",
-        "BgeoDungeon/HoudiniMarkerFixture.json",
+        "assets/PCGDungeon/LegacyReference/MarkerFixture.json",
+        "PCGDungeon/LegacyReference/MarkerFixture.json",
     }
     for _, path in ipairs(candidates) do
         if cache:Exists(path) then
@@ -1001,24 +1037,24 @@ function HoudiniMarkerPipeline.LoadFixture()
             return nil, "fixture JSON is invalid: " .. path
         end
     end
-    return nil, "HoudiniMarkerFixture.json was not found"
+    return nil, "PCG Dungeon marker reference fixture was not found"
 end
 
-function HoudiniMarkerPipeline.RunReferenceValidation()
-    local fixture, pathOrError = HoudiniMarkerPipeline.LoadFixture()
+function PCGDungeonMarkerPipeline.RunReferenceValidation()
+    local fixture, pathOrError = PCGDungeonMarkerPipeline.LoadFixture()
     if not fixture then return false, { errors = { pathOrError } } end
-    local result = HoudiniMarkerPipeline.GenerateFromTopology(fixture.input, {
+    local result = PCGDungeonMarkerPipeline.GenerateFromTopology(fixture.input, {
         cellSize = fixture.source.cell_size,
         pillarPlacementDistance = fixture.source.pillar_placement_distance,
     })
-    local valid, report = HoudiniMarkerPipeline.Validate(result, fixture.expected)
+    local valid, report = PCGDungeonMarkerPipeline.Validate(result, fixture.expected)
     report.fixturePath, report.result = pathOrError, result
     return valid, report
 end
 
 local function GridIndex(x, y, width) return y * width + x + 1 end
 
-function HoudiniMarkerPipeline.TopologyFromDungeon(dungeon, overrides)
+function PCGDungeonMarkerPipeline.TopologyFromDungeon(dungeon, overrides)
     overrides = overrides or {}
     local cellSize = tonumber(overrides.cellSize)
         or (dungeon.sceneInfo and dungeon.sceneInfo.cellSize) or 1
@@ -1084,9 +1120,9 @@ function HoudiniMarkerPipeline.TopologyFromDungeon(dungeon, overrides)
             or math.min(1.2, cellSize * 0.24) }
 end
 
-function HoudiniMarkerPipeline.GenerateFromDungeon(dungeon, overrides)
-    local topology, options = HoudiniMarkerPipeline.TopologyFromDungeon(dungeon, overrides)
-    return HoudiniMarkerPipeline.GenerateFromTopology(topology, options)
+function PCGDungeonMarkerPipeline.GenerateFromDungeon(dungeon, overrides)
+    local topology, options = PCGDungeonMarkerPipeline.TopologyFromDungeon(dungeon, overrides)
+    return PCGDungeonMarkerPipeline.GenerateFromTopology(topology, options)
 end
 
-return HoudiniMarkerPipeline
+return PCGDungeonMarkerPipeline

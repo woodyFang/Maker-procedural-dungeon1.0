@@ -1,4 +1,0 @@
-interface:
-  display_name: "配置暗影古堡资产"
-  short_description: "根据现有 Marker 配置、刷新并验证暗影古堡中的场景资产"
-  default_prompt: "使用 $configure-shadow-castle-assets 根据现有 Marker 在 mesh_info 中添加古堡资产并完成刷新验证。"

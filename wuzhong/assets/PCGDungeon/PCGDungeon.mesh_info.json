@@ -3,9 +3,9 @@
   "units": "centimeters",
   "offset_space": "mesh_local",
   "rotation_order": "pitch_yaw_roll",
-  "transform_order": "mesh_offset * bgeo_instance_transform",
+  "transform_order": "mesh_offset * marker_instance_transform",
   "usage_modes": {
-    "inherit": "Use instances already emitted by BGEO for this mesh.",
+    "inherit": "Use transforms emitted by the PCG Dungeon Marker flow for this mesh.",
     "attach": "Create this mesh from the raw marker transforms supplied by source_mesh."
   },
   "asset_bindings": {
@@ -579,7 +579,7 @@
       "point_light_range_m": 4.8,
       "point_light_intensity_variation": 0,
       "point_light_radius_variation": 0.04,
-      "point_light_function_material": "/Game/HoudiniImports/Support/M_BrazierLightFlicker.M_BrazierLightFlicker",
+      "point_light_animation": "brazier_flicker",
       "point_light_mobility": "Stationary",
       "point_light_cast_shadows": true,
       "can_affect_navigation": false,
@@ -638,7 +638,7 @@
       "marker": "Light",
       "usage": "point_light_marker",
       "prompt_hint": "Deterministically keep 75% of indoor light candidates per room, with a minimum of two non-brazier lights in every room.",
-      "mesh": "/Game/HoudiniImports/Support/SM_IndoorLightMarkerTransport.SM_IndoorLightMarkerTransport",
+      "mesh": "PCGDungeon/Internal/IndoorLightMarkerTransport",
       "component_group": "layered_light_interior",
       "density": 0.75,
       "minimum_per_room": 2,
@@ -1390,7 +1390,7 @@
   ],
   "scene": {
     "schema_version": 1,
-    "source_bgeo": "DungeonInstances.bgeo.sc",
+    "runtime_source": "PCGDungeonMarkerPipeline",
     "source_sha256": "5db0bc8bdb83b247f8e925945f491235d3b33ddfd2bc52032105607b667bde46",
     "instance_group_count": 14,
     "instance_count": 2401,
@@ -6762,7 +6762,7 @@
             0,
             0,
             0.707107,
-            -0.707107,
+            0.707107,
             1,
             1,
             1
@@ -6798,7 +6798,7 @@
             0,
             0,
             0.707107,
-            -0.707107,
+            0.707107,
             1,
             1,
             1
@@ -25791,7 +25791,7 @@
         ]
       },
       {
-        "mesh": "/Game/HoudiniImports/Support/SM_IndoorLightMarkerTransport.SM_IndoorLightMarkerTransport",
+        "mesh": "PCGDungeon/Internal/IndoorLightMarkerTransport",
         "marker": "Light",
         "transforms": [
           [
