@@ -322,6 +322,11 @@ function Start()
         Check(preloaded, "PCG Dungeon resources could not be queued for preload")
         Check(preloadStats.models > 0 and preloadStats.materials > 0 and preloadStats.failed == 0,
             "PCG Dungeon preload did not queue every manifest resource")
+        pcgDungeonRenderer.preloadStats = { failed = 1 }
+        local cachedFailureAccepted, cachedFailureStats = pcgDungeonRenderer:PreloadResources()
+        Check(not cachedFailureAccepted and cachedFailureStats.failed == 1,
+            "cached PCG Dungeon preload failure was incorrectly accepted as success")
+        pcgDungeonRenderer.preloadStats = preloadStats
         local cellDebugData = {
             rooms = dungeon.rooms,
             cells = dungeon.topology.cells,

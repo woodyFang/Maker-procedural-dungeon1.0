@@ -534,7 +534,9 @@ local function AddMaterialOverrides(resources, seen, rule)
 end
 
 function PCGDungeonRenderer:PreloadResources()
-    if self.preloadStats then return true, self.preloadStats end
+    if self.preloadStats then
+        return self.preloadStats.failed == 0, self.preloadStats
+    end
     local data, source = ReadManifest()
     if not data then return false, source end
     local valid, reason = ValidateManifest(data)

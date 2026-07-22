@@ -1,5 +1,0 @@
-<material>
-	<surfaceshader name="Shaders/BLGL/Generated/mat_spiderweb_ee16170a.shader"/>
-	<surfacetexture name="tex_base_color" texture="Textures/SpiderWeb_D.png" type="Texture2D"/>
-	<surfacetexture name="tex_emissive" texture="Textures/base_gray_d.png" type="Texture2D"/>
-</material>

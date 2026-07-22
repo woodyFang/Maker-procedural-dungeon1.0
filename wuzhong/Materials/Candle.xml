@@ -1,7 +1,0 @@
-<material>
-	<surfaceshader name="Shaders/BLGL/Generated/mat_candlematerial_06eae7a4.shader"/>
-	<surfacetexture name="tex_base_color" texture="Textures/candle_D.png" type="Texture2D"/>
-	<surfacetexture name="tex_normal" texture="Textures/candle_N.png" type="Texture2D"/>
-	<parameter name="param_roughness" value="0.349999994"/>
-	<parameter name="param_metallic" value="0"/>
-</material>

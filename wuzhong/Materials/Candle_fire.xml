@@ -1,6 +1,0 @@
-<material>
-	<surfaceshader name="Shaders/BLGL/Generated/mat_candle_fire_base_c0cf8f8f.shader"/>
-	<surfacetexture name="tex_diffuse" texture="Textures/candle_D.png" type="Texture2D"/>
-	<parameter name="param_color" value="1 0.408520013 0.312685996 0"/>
-	<parameter name="param_emmisive_str" value="3"/>
-</material>
