@@ -235,6 +235,13 @@ function Start()
                 and switchedState.loopRates[1] == 15 and switchedState.loopRates[2] == 15
                 and switchedState.decorDensities[1] == 60 and switchedState.decorDensities[2] == 60,
             "fixed PCG parameters leaked into the AI scene panel state")
+        for _, editor in ipairs({ app.editor2D, app.editor3D }) do
+            Check(editor.editorWorldScale == 1 and editor.editorSwapAxes == false
+                    and editor.editorCenterOffset == 0.5,
+                "fixed PCG coordinate transform leaked into the AI editor view")
+            Check(editor.roomMinimumWidth == 5 and editor.roomMinimumHeight == 5,
+                "fixed PCG room minimum leaked into the AI editor view")
+        end
 
         local message = string.format("PASS rooms=%d edges=%d selected=%d serial=%d",
             #app.dungeon.rooms, #app.dungeon.edges, appRoomIndex, app.generationSerial)

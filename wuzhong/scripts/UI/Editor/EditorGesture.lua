@@ -181,12 +181,15 @@ function EditorGesture.Finish(editor, mousePosition)
         local minX, maxX = math.min(editor.draw.gx, editor.draw.ex), math.max(editor.draw.gx, editor.draw.ex)
         local minY, maxY = math.min(editor.draw.gy, editor.draw.ey), math.max(editor.draw.gy, editor.draw.ey)
         if maxX - minX >= 3 and maxY - minY >= 3 then
+            local minimumWidth = math.max(1, tonumber(editor.roomMinimumWidth) or 5)
+            local minimumHeight = math.max(1, tonumber(editor.roomMinimumHeight) or 5)
             editor.rooms[#editor.rooms + 1] = {
                 cx = math.floor((minX + maxX) * 0.5 + 0.5),
                 cy = math.floor((minY + maxY) * 0.5 + 0.5),
-                w = Clamp(math.floor(maxX - minX + 0.5), 5, 24),
-                h = Clamp(math.floor(maxY - minY + 0.5), 5, 24),
+                w = Clamp(math.floor(maxX - minX + 0.5), minimumWidth, 24),
+                h = Clamp(math.floor(maxY - minY + 0.5), minimumHeight, 24),
                 floor = editor.floor,
+                pendingConnection = true,
             }
             editor.selected = #editor.rooms
             editor:NotifySelection()

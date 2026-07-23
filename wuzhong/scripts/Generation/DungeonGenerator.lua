@@ -1440,6 +1440,14 @@ local function GenerateAttempt(seed, parameters)
     local dungeon = {
         seed = seed, width = width, height = height, W = width, H = height,
         floorCount = floorCount, floorHeight = floorHeight,
+        -- Keep the normal generator's editor contract explicit. Fixed PCG
+        -- scenes use a 5m cell and swapped X/Z axes; authored scenes must
+        -- restore their own 1m coordinate space when the topic changes.
+        editorWorldScale = GeometryRules.CELL_SIZE,
+        editorSwapAxes = false,
+        editorCenterOffset = 0.5,
+        editorRoomMinimumWidth = 5,
+        editorRoomMinimumHeight = 5,
         sceneInfo = {
             floorHeight = floorHeight,
             cellSize = GeometryRules.CELL_SIZE,

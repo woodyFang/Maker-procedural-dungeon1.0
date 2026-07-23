@@ -891,6 +891,15 @@ local function Test2D3DSessionSynchronization()
     target.generatedOffset.x = 99
     Check(source.generatedOffset.x == 13, "editor view session shared a mutable generated coordinate offset")
     Check(target.refreshed and target.notified, "editor view session did not refresh the destination view")
+
+    target.roomMinimumWidth, target.roomMinimumHeight = 1, 1
+    target.editorWorldScale, target.editorSwapAxes, target.editorCenterOffset = 5, true, 0
+    Check(EditorSession.Apply(target, { rooms = {}, links = {} }),
+        "legacy normal-scene editor snapshot could not be applied")
+    Check(target.roomMinimumWidth == 5 and target.roomMinimumHeight == 5
+            and target.editorWorldScale == 1 and target.editorSwapAxes == false
+            and target.editorCenterOffset == 0.5,
+        "PCG editor contract leaked through a normal-scene editor session")
 end
 
 local function TestGeneratedCoordinateMapping()

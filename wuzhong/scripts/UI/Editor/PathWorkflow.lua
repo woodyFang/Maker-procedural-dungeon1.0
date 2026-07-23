@@ -7,6 +7,7 @@ function PathWorkflow.Install(Editor, helpers)
     local Snap = RouteEditing.Snap
 
     function Editor:EnsureEditableRoute(link)
+        if not link or link.runtimeGenerated then return {} end
         link.bends = link.bends or {}
         local route = RouteEditing.Simplify(self:LinkRoute(link))
         if #link.bends == 0 then
@@ -16,7 +17,7 @@ function PathWorkflow.Install(Editor, helpers)
     end
 
     function Editor:NormalizeLink(link)
-        if not link or link.kind == "stairs" then return end
+        if not link or link.runtimeGenerated or link.kind == "stairs" then return end
         local route = RouteEditing.Simplify(self:LinkRoute(link))
         link.bends = {}
         for index = 2, #route - 1 do
@@ -25,7 +26,7 @@ function PathWorkflow.Install(Editor, helpers)
     end
 
     function Editor:StraightenLink(link)
-        if not link or link.kind == "stairs" then return false end
+        if not link or link.runtimeGenerated or link.kind == "stairs" then return false end
         local startPoint, endPoint = self:LinkEndpoints(link)
         if not startPoint or not endPoint then return false end
         local sourceRoute = RouteEditing.Simplify(self:LinkRoute(link))
@@ -60,7 +61,7 @@ function PathWorkflow.Install(Editor, helpers)
     function Editor:ControlSnapTargets(excludedPoints)
         local targets = {}
         for _, link in ipairs(self.links) do
-            if link.kind ~= "stairs" then
+            if not link.runtimeGenerated and link.kind ~= "stairs" then
                 local roomA, roomB = self.rooms[link.a], self.rooms[link.b]
                 if roomA and roomB and roomA.floor == self.floor and roomB.floor == self.floor then
                     local route = self:LinkRoute(link)
@@ -99,7 +100,8 @@ function PathWorkflow.Install(Editor, helpers)
             local hasBends = link.bends and #link.bends > 0
             local hasAutomaticRoute = not hasBends and not link.doorA and not link.doorB
                 and link.autoRoute and #link.autoRoute > 1
-            if connected and link.kind ~= "stairs" and (hasBends or hasAutomaticRoute) then
+            if connected and not link.runtimeGenerated and link.kind ~= "stairs"
+                and (hasBends or hasAutomaticRoute) then
                 local route = RouteEditing.Simplify(self:LinkRoute(link))
                 snapshots[#snapshots + 1] = {
                     link = linkIndex,
@@ -181,6 +183,7 @@ function PathWorkflow.Install(Editor, helpers)
     end
 
     function Editor:MoveLinkSegment(link, drag, gridX, gridY)
+        if not link or link.runtimeGenerated then return false end
         local points = {}
         for _, point in ipairs(drag.route) do points[#points + 1] = CopyPoint(point) end
         local deltaX, deltaY = gridX - drag.startX, gridY - drag.startY
@@ -243,6 +246,7 @@ function PathWorkflow.Install(Editor, helpers)
             link.bends[#link.bends + 1] = { x = Snap(route[index].x), y = Snap(route[index].y) }
         end
         link.autoRoute, link.isManual = {}, true
+        return true
     end
 end
 

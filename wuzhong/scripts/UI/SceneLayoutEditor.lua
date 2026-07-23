@@ -22,6 +22,17 @@ local function Clamp(value, low, high) return math.max(low, math.min(high, value
 local function Inside(x, y, rect)
     return rect and x >= rect.x and y >= rect.y and x <= rect.x + rect.w and y <= rect.y + rect.h end
 
+local function PointInsideCurrentFloorRoom(editor, x, y)
+    for _, room in ipairs(editor.rooms or {}) do
+        if room.floor == editor.floor
+            and x >= room.cx - room.w * 0.5 and x <= room.cx + room.w * 0.5
+            and y >= room.cy - room.h * 0.5 and y <= room.cy + room.h * 0.5 then
+            return true
+        end
+    end
+    return false
+end
+
 local CopyRooms = EditorData.CopyRooms
 local CopyPoint = RouteEditing.CopyPoint
 local CopyLink = EditorData.CopyLink
@@ -81,7 +92,12 @@ function SceneLayoutEditor.new(scene, camera, eventObject, callbacks)
         draw = nil,
         dungeonWidth = 1,
         dungeonHeight = 1,
+        roomMinimumWidth = RoomEditing.DEFAULT_MINIMUM_SIZE,
+        roomMinimumHeight = RoomEditing.DEFAULT_MINIMUM_SIZE,
         generatedOffset = { x = 0, y = 0 },
+        editorWorldScale = 1,
+        editorSwapAxes = false,
+        editorCenterOffset = 0.5,
         floorHeight = MultiFloor.FLOOR_HEIGHT,
         roomNodes = {},
         linkNodes = {},
@@ -220,7 +236,12 @@ function SceneLayoutEditor:SyncDungeon(dungeon, floor, roomGroups)
     self.connectors = dungeon and dungeon.connectors or {}
     self.dungeonWidth = dungeon and dungeon.width or 1
     self.dungeonHeight = dungeon and dungeon.height or 1
+    self.roomMinimumWidth, self.roomMinimumHeight = RoomEditing.ResolveMinimumSize(dungeon)
     self.generatedOffset = { x = 0, y = 0 }
+    self.editorWorldScale = math.max(0.001, tonumber(dungeon and dungeon.editorWorldScale) or 1)
+    self.editorSwapAxes = dungeon and dungeon.editorSwapAxes == true or false
+    self.editorCenterOffset = tonumber(dungeon and dungeon.editorCenterOffset)
+    if self.editorCenterOffset == nil then self.editorCenterOffset = 0.5 end
     self.floorHeight = dungeon and dungeon.floorHeight or MultiFloor.FLOOR_HEIGHT
     self.selected = self.rooms[selectedRoom] and selectedRoom or nil
     self.selectedLink = nil
@@ -250,6 +271,7 @@ function SceneLayoutEditor:SyncEditorState(source)
 end
 
 function SceneLayoutEditor:Commit()
+    EditorData.ResolvePendingConnections(self.rooms, self.links)
     for index, room in ipairs(self.rooms) do room.id = index end
     if self.callbacks.onCommit then
         self.callbacks.onCommit(self:GetRooms(), self:GetLinks())
@@ -283,12 +305,14 @@ function SceneLayoutEditor:ClearOverlay()
 end
 
 function SceneLayoutEditor:RoomWorldPosition(room, localY)
-    local offset = self.generatedOffset or { x = 0, y = 0 }
-    return Vector3(
-        room.cx + offset.x - self.dungeonWidth * 0.5 + 0.5,
-        room.floor * self.floorHeight + (localY or 0),
-        room.cy + offset.y - self.dungeonHeight * 0.5 + 0.5
-    )
+    local horizontal = self:GridToWorld({ x = room.cx, y = room.cy }, 0)
+    return Vector3(horizontal.x, room.floor * self.floorHeight + (localY or 0), horizontal.z)
+end
+
+function SceneLayoutEditor:RoomWorldScale(room, height)
+    local scale = self.editorWorldScale or 1
+    if self.editorSwapAxes then return Vector3(room.h * scale, height, room.w * scale) end
+    return Vector3(room.w * scale, height, room.h * scale)
 end
 
 function SceneLayoutEditor:AddBox(parent, name, position, scale, material)
@@ -399,9 +423,13 @@ end
 
 function SceneLayoutEditor:GridToWorld(point, localY)
     local offset = self.generatedOffset or { x = 0, y = 0 }
-    return Vector3(point.x + offset.x - self.dungeonWidth * 0.5 + 0.5,
-        self.floor * self.floorHeight + (localY or 0),
-        point.y + offset.y - self.dungeonHeight * 0.5 + 0.5)
+    local centerOffset = self.editorCenterOffset
+    if centerOffset == nil then centerOffset = 0.5 end
+    local scale = self.editorWorldScale or 1
+    local x = (point.x + offset.x - self.dungeonWidth * 0.5 + centerOffset) * scale
+    local y = (point.y + offset.y - self.dungeonHeight * 0.5 + centerOffset) * scale
+    if self.editorSwapAxes then x, y = y, x end
+    return Vector3(x, self.floor * self.floorHeight + (localY or 0), y)
 end
 
 function SceneLayoutEditor:AddLinkSegment(parent, link, linkIndex, segmentIndex, aPoint, bPoint, widthScale)
@@ -412,8 +440,10 @@ function SceneLayoutEditor:AddLinkSegment(parent, link, linkIndex, segmentIndex,
     local node = parent:CreateChild("EditorLink-" .. linkIndex .. "-" .. segmentIndex)
     node.position = (a + b) * 0.5
     node.rotation = Quaternion(math.deg(math.atan(delta.x, delta.z)), Vector3.UP)
-    local minimumWidth = widthScale and RouteEditing.CORRIDOR_MIN_WORLD_WIDTH or 0.35
-    node.scale = Vector3(math.max(minimumWidth, (link.width or 2) * (widthScale or 1)), 0.07, length)
+    local worldScale = self.editorWorldScale or 1
+    local minimumWidth = widthScale and RouteEditing.CORRIDOR_MIN_WORLD_WIDTH * worldScale or 0.35
+    node.scale = Vector3(math.max(minimumWidth,
+        (link.width or 2) * (widthScale or 1) * worldScale), 0.07, length)
     local model = node:CreateComponent("StaticModel")
     model:SetModel(cache:GetResource("Model", "Models/Box.mdl"))
     model:SetMaterial(self.selectedLink == linkIndex and self.materials.linkSelected
@@ -450,7 +480,8 @@ function SceneLayoutEditor:AddStairLink(parent, link, index)
     if platform then
         local node, model = self:AddBox(parent, "EditorStairPlatform-" .. index,
             self:GridToWorld(platform.center, 0.34),
-            Vector3(platform.visualSpan, 0.07, platform.visualSpan), material)
+            Vector3(platform.visualSpan * (self.editorWorldScale or 1), 0.07,
+                platform.visualSpan * (self.editorWorldScale or 1)), material)
         self.linkNodes[#self.linkNodes + 1] = { node = node, model = model, link = index, stair = true }
     end
 end
@@ -486,11 +517,13 @@ function SceneLayoutEditor:RefreshOverlay()
         local delta = (room.floor or 0) - self.floor
         if math.abs(delta) == 1 then
             self:AddBox(self.overlayRoot, "AdjacentRoom", self:RoomWorldPosition(room, delta > 0 and -self.floorHeight + 0.12 or self.floorHeight + 0.12),
-                Vector3(room.w, 0.035, room.h), delta > 0 and self.materials.adjacentAbove or self.materials.adjacentBelow)
+                self:RoomWorldScale(room, 0.035), delta > 0 and self.materials.adjacentAbove or self.materials.adjacentBelow)
         end
     end
     for index, link in ipairs(self.links) do
-        if link.kind == "stairs" or (self.rooms[link.a] and self.rooms[link.b]
+        if link.runtimeGenerated then
+            -- Runtime corridors and A* stairs are projected by EditorGizmos.
+        elseif link.kind == "stairs" or (self.rooms[link.a] and self.rooms[link.b]
             and self.rooms[link.a].floor ~= self.rooms[link.b].floor) then
             self:AddStairLink(self.overlayRoot, link, index)
         elseif not self.vg then
@@ -507,7 +540,7 @@ function SceneLayoutEditor:RefreshOverlay()
                 self.overlayRoot,
                 "EditorRoom-" .. index,
                 self:RoomWorldPosition(room, 0.22),
-                Vector3(room.w, 0.10, room.h),
+                self:RoomWorldScale(room, 0.10),
                 material
             )
             self.roomNodes[index] = { node = node, model = model }
@@ -566,7 +599,7 @@ function SceneLayoutEditor:UpdateRoomVisual(index)
     local room, entry = self.rooms[index], self.roomNodes[index]
     if room and entry then
         entry.node.position = self:RoomWorldPosition(room, 0.22)
-        entry.node.scale = Vector3(room.w, 0.10, room.h)
+        entry.node.scale = self:RoomWorldScale(room, 0.10)
     end
 end
 
@@ -582,12 +615,12 @@ function SceneLayoutEditor:UpdateDrawPreview()
         self.previewNode = self:AddBox(self.overlayRoot, "EditorDrawPreview", Vector3(0, 0, 0),
             Vector3(1, 1, 1), self.materials.preview)
     end
-    self.previewNode.position = Vector3(
-        (minX + maxX) * 0.5 - self.dungeonWidth * 0.5 + 0.5,
-        self.floor * self.floorHeight + 0.29,
-        (minY + maxY) * 0.5 - self.dungeonHeight * 0.5 + 0.5
-    )
-    self.previewNode.scale = Vector3(width, 0.12, height)
+    self.previewNode.position = self:GridToWorld({
+        x = (minX + maxX) * 0.5,
+        y = (minY + maxY) * 0.5,
+    }, 0.29)
+    local previewRoom = { w = width, h = height }
+    self.previewNode.scale = self:RoomWorldScale(previewRoom, 0.12)
 end
 
 -- Interaction regions (top view of the current floor):
@@ -614,8 +647,13 @@ end
 
 function SceneLayoutEditor:WorldToGrid(point)
     local offset = self.generatedOffset or { x = 0, y = 0 }
-    return point.x + self.dungeonWidth * 0.5 - 0.5 - offset.x,
-        point.z + self.dungeonHeight * 0.5 - 0.5 - offset.y
+    local centerOffset = self.editorCenterOffset
+    if centerOffset == nil then centerOffset = 0.5 end
+    local scale = self.editorWorldScale or 1
+    local x, y = point.x / scale, point.z / scale
+    if self.editorSwapAxes then x, y = y, x end
+    return x + self.dungeonWidth * 0.5 - centerOffset - offset.x,
+        y + self.dungeonHeight * 0.5 - centerOffset - offset.y
 end
 
 function SceneLayoutEditor:HitRoom(point)
@@ -632,9 +670,8 @@ function SceneLayoutEditor:HitRoom(point)
 end
 
 function SceneLayoutEditor:HitTolerance()
-    local dpr = math.max(1, graphics:GetDPR())
-    local logicalHeight = math.max(1, graphics:GetHeight() / dpr)
-    return math.max(0.7, (self.camera.orthoSize or 30) * 10 / logicalHeight)
+    local pixelsPerGrid = self.editorViewport:PixelsPerGrid(self, { x = 0, y = 0 })
+    return math.max(0.35, 10 / math.max(0.01, pixelsPerGrid))
 end
 
 function SceneLayoutEditor:HitRoomHandle(gridX, gridY)
@@ -666,6 +703,7 @@ end
 function SceneLayoutEditor:HitLinkHandle(gridX, gridY)
     local link = self.links[self.selectedLink]
     if not link then return nil end
+    if link.runtimeGenerated then return nil end
     if link.kind == "stairs" and link.connector and link.connector.lower and link.connector.upper then
         local tolerance = self:HitTolerance()
         local rotate, width = StairEditing.RotationHandle(link.connector), StairEditing.WidthHandle(link.connector)
@@ -689,10 +727,17 @@ function SceneLayoutEditor:HitLinkHandle(gridX, gridY)
 end
 
 function SceneLayoutEditor:HitLink(gridX, gridY)
+    if PointInsideCurrentFloorRoom(self, gridX, gridY) then return nil end
     local best, tolerance = nil, self:HitTolerance()
     for linkIndex, link in ipairs(self.links) do
         local roomA, roomB = self.rooms[link.a], self.rooms[link.b]
-        if roomA and roomB and roomA.floor ~= roomB.floor and link.connector
+        if link.runtimeGenerated then
+            local runtimeHit = EditorGizmos.HitRuntimeLink(link, self.floor, gridX, gridY, tolerance)
+            if runtimeHit and (not best or runtimeHit.distance < best.distance) then
+                runtimeHit.index = linkIndex
+                best = runtimeHit
+            end
+        elseif roomA and roomB and roomA.floor ~= roomB.floor and link.connector
             and (roomA.floor == self.floor or roomB.floor == self.floor) then
             local stairSegments = StairEditing.VisualSegments(link.connector)
             local linkTolerance = math.max(tolerance, (link.connector.width or 2) * 0.5)
@@ -717,13 +762,14 @@ function SceneLayoutEditor:HitLink(gridX, gridY)
 end
 
 function SceneLayoutEditor:ResizeRoom(room, start, gridX, gridY, mode)
-    local resized = RoomEditing.Resize(start, { x = gridX, y = gridY }, mode)
+    local resized = RoomEditing.Resize(start, { x = gridX, y = gridY }, mode,
+        self.roomMinimumWidth, self.roomMinimumHeight)
     room.cx, room.cy, room.w, room.h = resized.cx, resized.cy, resized.w, resized.h
 end
 
 function SceneLayoutEditor:AddBend()
     local link = self.links[self.selectedLink]
-    if not link then return end
+    if not link or link.runtimeGenerated or link.kind == "stairs" then return end
     local route, bestSegment, bestLength = self:LinkRoute(link), nil, -1
     for segment = 1, #route - 1 do
         local dx, dy = route[segment + 1].x - route[segment].x, route[segment + 1].y - route[segment].y
@@ -851,7 +897,7 @@ end
 
 function SceneLayoutEditor:AdjustPathWidth(delta)
     local link = self.links[self.selectedLink]
-    if not link then return end
+    if not link or link.runtimeGenerated or link.kind == "stairs" then return end
     local nextWidth = Clamp((link.width or 2) + delta, 1, 6)
     if nextWidth == link.width then return end
     link.width, link.isManual = nextWidth, true
@@ -942,6 +988,10 @@ function SceneLayoutEditor:ContextItems(kind, context)
         }
     end
     if kind == "link" then
+        local selectedLink = self.links[context.link]
+        if selectedLink and selectedLink.runtimeGenerated then
+            return { { action = "deleteLink", label = "删除路径", danger = true } }
+        end
         if context.stair then
             local spec = self.links[context.link] and self.links[context.link].stairSpec
             return {
@@ -979,7 +1029,7 @@ function SceneLayoutEditor:OpenContextMenu(mousePosition, logicalX, logicalY)
         context = { link = self.selectedLink, bendIndex = handle.bendIndex, which = handle.which,
             x = gridX, y = gridY, stair = handle.kind:find("stair", 1, true) ~= nil }
     else
-        local path = self:HitLink(gridX, gridY)
+        local path = not hit and self:HitLink(gridX, gridY) or nil
         if path then
             self.selected, self.selectedLink = nil, path.index
             kind, context = "link", { link = path.index, segment = path.segment, x = gridX, y = gridY, stair = path.stair == true }
@@ -1134,7 +1184,8 @@ function SceneLayoutEditor:Update(_)
     end
     if input:GetKeyPress(KEY_DELETE) or input:GetKeyPress(KEY_BACKSPACE) then
         local selectedLink = self.links[self.selectedLink]
-        if selectedLink and selectedLink.kind == "stairs" then self:DeleteSelectedStair()
+        if selectedLink and selectedLink.runtimeGenerated then self:DeleteSelected()
+        elseif selectedLink and selectedLink.kind == "stairs" then self:DeleteSelectedStair()
         elseif selectedLink and selectedLink.bends and #selectedLink.bends > 0 then
             selectedLink.bends, selectedLink.doorA, selectedLink.doorB = {}, nil, nil
             self:Commit()
@@ -1198,7 +1249,7 @@ function SceneLayoutEditor:Update(_)
                 roomHandle = self:HitRoomHandle(gridX, gridY)
                 linkHandle = not roomHandle and self:HitLinkHandle(gridX, gridY) or nil
             end
-            local path = not roomHandle and not linkHandle and self:HitLink(gridX, gridY) or nil
+            local path = not hit and not roomHandle and not linkHandle and self:HitLink(gridX, gridY) or nil
             if roomHandle and self.selected then
                 local room = self.rooms[self.selected]
                 local stairEdit = self:CaptureRoomStairEdit(self.selected)
@@ -1225,7 +1276,9 @@ function SceneLayoutEditor:Update(_)
                 self.selected, self.selectedLink = nil, path.index
                 self:NotifySelection()
                 local link = self.links[path.index]
-                if path.stair then
+                if path.runtime then
+                    self.drag = nil
+                elseif path.stair then
                     local stair = self:CaptureStairDrag(path.index)
                     local anchor = stair and (stair.spec.previewAnchor or stair.spec.anchor or stair.connector.lower)
                     if stair and anchor then self.drag = { kind = "stairMove", link = path.index,
@@ -1392,7 +1445,9 @@ function SceneLayoutEditor:Render()
     if self.selectedLink and self.links[self.selectedLink] then
         local link = self.links[self.selectedLink]
         x, y = panelX + 14, panelY + 137
-        if link.kind == "stairs" then
+        if link.runtimeGenerated then
+            self:RenderButton("deletePath", "Delete Path", x, y, 92, false)
+        elseif link.kind == "stairs" then
             local spec = link.stairSpec or {}
             local style = spec.previewStyle or spec.style or "l-turn"
             self:RenderButton("stairStyleL", "L 型", x, y, 52, style == "l-turn"); x = x + 59

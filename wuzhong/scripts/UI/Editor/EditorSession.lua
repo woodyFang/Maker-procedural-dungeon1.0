@@ -33,7 +33,13 @@ function EditorSession.Capture(editor)
         floorCount = editor and editor.floorCount or 1,
         dungeonWidth = editor and editor.dungeonWidth or 1,
         dungeonHeight = editor and editor.dungeonHeight or 1,
+        roomMinimumWidth = editor and editor.roomMinimumWidth or 5,
+        roomMinimumHeight = editor and editor.roomMinimumHeight or 5,
         generatedOffset = CopyValue(editor and editor.generatedOffset or { x = 0, y = 0 }),
+        editorWorldScale = editor and editor.editorWorldScale or 1,
+        editorSwapAxes = editor and editor.editorSwapAxes == true,
+        editorCenterOffset = editor and editor.editorCenterOffset ~= nil
+            and editor.editorCenterOffset or 0.5,
         selected = editor and editor.selected or nil,
         selectedLink = editor and editor.selectedLink or nil,
         mode = editor and editor.mode or "select",
@@ -53,10 +59,16 @@ function EditorSession.Apply(editor, snapshot)
     editor.floorCount = math.max(1, snapshot.floorCount or editor.floorCount or 1)
     editor.dungeonWidth = snapshot.dungeonWidth or editor.dungeonWidth or 1
     editor.dungeonHeight = snapshot.dungeonHeight or editor.dungeonHeight or 1
+    editor.roomMinimumWidth = snapshot.roomMinimumWidth or 5
+    editor.roomMinimumHeight = snapshot.roomMinimumHeight or snapshot.roomMinimumWidth or 5
     editor.generatedOffset = CopyValue(snapshot.generatedOffset or { x = 0, y = 0 })
-    -- Keep the active theme's authoritative runtime floor height. A snapshot
-    -- must not replace it with stale browser/editor data.
-    editor.floorHeight = editor.floorHeight or MultiFloor.FLOOR_HEIGHT
+    editor.editorWorldScale = tonumber(snapshot.editorWorldScale) or 1
+    editor.editorSwapAxes = snapshot.editorSwapAxes == true
+    editor.editorCenterOffset = tonumber(snapshot.editorCenterOffset)
+    if editor.editorCenterOffset == nil then editor.editorCenterOffset = 0.5 end
+    -- Floor height is an engine-wide metre contract. Neither the source
+    -- snapshot nor stale state in the destination view may override it.
+    editor.floorHeight = MultiFloor.FLOOR_HEIGHT
     editor.selected = editor.rooms[snapshot.selected] and snapshot.selected or nil
     editor.selectedLink = editor.links[snapshot.selectedLink] and snapshot.selectedLink or nil
     editor.mode = (snapshot.mode == "draw" or snapshot.mode == "connect") and snapshot.mode or "select"
