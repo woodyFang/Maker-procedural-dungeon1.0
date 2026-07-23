@@ -7,7 +7,6 @@ local EDIT_TRANSITION_DURATION = 0.45
 local EDIT_PITCH = 90.0
 local EDIT_CAMERA_HEIGHT = 60.0
 local MIN_EDIT_ORTHO_SIZE = 5.0
-local MIN_OVERVIEW_DISTANCE = 45.0
 local ZOOM_RATE = 0.12
 local KEYBOARD_PAN_SCALE = 0.75
 local MIN_KEYBOARD_PAN_SPEED = 20.0
@@ -20,6 +19,17 @@ end
 
 local function CopyVector3(value)
     return Vector3(value.x, value.y, value.z)
+end
+
+local function CameraOffset(yawDegrees, pitchDegrees, distance)
+    local yaw = math.rad(yawDegrees)
+    local pitch = math.rad(pitchDegrees)
+    local horizontal = math.cos(pitch) * distance
+    return Vector3(
+        math.sin(yaw) * horizontal,
+        math.sin(pitch) * distance,
+        math.cos(yaw) * horizontal
+    )
 end
 
 local function EaseInOut(value)
@@ -66,7 +76,8 @@ function ForgeCameraController.new(cameraNode, camera)
 end
 
 function ForgeCameraController.ZoomValue(value, wheelStep, minimum)
-    return math.max(minimum, value * math.exp(-wheelStep * ZOOM_RATE))
+    local zoomed = value * math.exp(-wheelStep * ZOOM_RATE)
+    return minimum == nil and zoomed or math.max(minimum, zoomed)
 end
 
 function ForgeCameraController.GrabPanDelta(yawDegrees, moveX, moveY, worldPerPixel)
@@ -156,15 +167,9 @@ function ForgeCameraController:Apply()
     -- Zoom-out is intentionally unbounded. Grow the far plane with distance so
     -- the dungeon does not disappear after the former distance cap is crossed.
     self.camera.farClip = math.max(1000, self.distance * 2.0)
-    local yaw = math.rad(self.yaw)
-    local pitch = math.rad(self.pitch)
-    local horizontal = math.cos(pitch) * self.distance
-    self.cameraNode.position = Vector3(
-        self.target.x + math.sin(yaw) * horizontal,
-        self.target.y + math.sin(pitch) * self.distance,
-        self.target.z + math.cos(yaw) * horizontal
-    )
-    if math.abs(horizontal) < 0.0001 then
+    local offset = CameraOffset(self.yaw, self.pitch, self.distance)
+    self.cameraNode.position = self.target + offset
+    if math.abs(offset.x) < 0.0001 and math.abs(offset.z) < 0.0001 then
         -- A straight-down camera is singular with the default Y-up LookAt.
         -- Use world -Z as screen-up so edit mode is an exact, stable top view.
         self.cameraNode:LookAt(self.target, Vector3(0, 0, -1), TS_WORLD)
@@ -391,15 +396,21 @@ function ForgeCameraController:ApplyKeyboardPan(timeStep, orthographic)
         speed = speed * FAST_PAN_MULTIPLIER
     end
 
-    -- Move parallel to the floor and relative to the current camera heading.
+    -- Move relative to the camera's screen axes. Perspective WASD movement
+    -- follows the camera's actual forward direction, including its pitch;
+    -- orthographic edit movement stays on the floor plane.
     -- At yaw 0 the camera looks toward -Z. In UrhoX's left-handed coordinate
     -- system its screen-right direction is -X, so D advances along -X.
     local yaw = math.rad(self.yaw)
+    local pitch = orthographic and 0 or math.rad(self.pitch)
+    local horizontalForward = math.cos(pitch)
     local step = speed * timeStep
     self.target = Vector3(
-        self.target.x + (-right * math.cos(yaw) - forward * math.sin(yaw)) * step,
-        self.target.y,
-        self.target.z + (right * math.sin(yaw) - forward * math.cos(yaw)) * step
+        self.target.x + (-right * math.cos(yaw)
+            - forward * math.sin(yaw) * horizontalForward) * step,
+        self.target.y - forward * math.sin(pitch) * step,
+        self.target.z + (right * math.sin(yaw)
+            - forward * math.cos(yaw) * horizontalForward) * step
     )
     return true
 end
@@ -468,8 +479,9 @@ function ForgeCameraController:Update(timeStep, allowLeftPan, pointerBlocked)
         local mousePosition = input.mousePosition
         local before = self:ScreenToPlane(mousePosition, self.target.y)
         local wheelStep = wheel > 0 and 1 or -1
-        self.distance = ForgeCameraController.ZoomValue(
-            self.distance, wheelStep, MIN_OVERVIEW_DISTANCE)
+        -- Perspective zoom-in has no artificial stop; keep multiplying the
+        -- distance so the camera can advance as close to the target as needed.
+        self.distance = ForgeCameraController.ZoomValue(self.distance, wheelStep)
         self:Apply()
         local after = self:ScreenToPlane(mousePosition, self.target.y)
         if self:ApplyPointerAnchor(before, after) then self:Apply() end
@@ -479,8 +491,22 @@ function ForgeCameraController:Update(timeStep, allowLeftPan, pointerBlocked)
     local leftDown = allowLeftPan and input:GetMouseButtonDown(MOUSEB_LEFT)
     local middleDown = input:GetMouseButtonDown(MOUSEB_MIDDLE)
     local rightDown = input:GetMouseButtonDown(MOUSEB_RIGHT)
+    local shiftDown = input:GetKeyDown(KEY_LSHIFT) or input:GetKeyDown(KEY_RSHIFT)
+    local altDown = input:GetKeyDown(KEY_LALT) or input:GetKeyDown(KEY_RALT)
     if (leftDown or middleDown or rightDown) and not pointerOverUI then
-        if rightDown or input:GetKeyDown(KEY_LSHIFT) or input:GetKeyDown(KEY_RSHIFT) then
+        if leftDown and rightDown then
+            -- UE-style dolly: holding both mouse buttons moves the camera
+            -- forward/backward with the vertical mouse motion.
+            self.distance = self.distance * math.exp(move.y * 0.01)
+        elseif rightDown or (leftDown and shiftDown) then
+            -- UE-style free look: rotate in place instead of orbiting around
+            -- the cursor or a fixed viewport-center anchor.
+            local cameraPosition = CopyVector3(self.cameraNode.position)
+            self.yaw = self.yaw + move.x * math.deg(0.005)
+            self.pitch = Clamp(self.pitch + move.y * math.deg(0.005), -math.deg(1.5), math.deg(1.5))
+            self.target = cameraPosition - CameraOffset(self.yaw, self.pitch, self.distance)
+        elseif leftDown and altDown then
+            -- Alt+left keeps the conventional focused orbit behavior.
             self.yaw = self.yaw + move.x * math.deg(0.005)
             self.pitch = Clamp(self.pitch + move.y * math.deg(0.005), -math.deg(1.5), math.deg(1.5))
         elseif input:GetKeyDown(KEY_LCTRL) or input:GetKeyDown(KEY_RCTRL) then

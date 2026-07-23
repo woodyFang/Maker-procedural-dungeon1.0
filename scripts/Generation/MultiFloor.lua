@@ -1,6 +1,8 @@
 local MultiFloor = {}
 local Themes = require("Config.Themes")
+local EnvironmentProfiles = require("Config.EnvironmentProfiles")
 local StairContract = require("Generation.StairContract")
+local DoorContract = require("Generation.DoorContract")
 
 -- Authoritative floor-to-floor height in metres. Rendering, cameras, editor
 -- overlays and stair connectors must all derive their vertical spacing from it.
@@ -42,8 +44,14 @@ local function FilledArray(size, value)
     return result
 end
 
+-- Apply generic terrain-feature operations. The profile supplies the
+-- operation parameters and outputs; this function does not know which theme
+-- prop represents a pool, lake, cemetery or any other phenomenon.
 local function ApplyThemeCarving(layers, rooms, width, height, options)
-    if options.settingKey ~= "dungeon" or not options.rng then return end
+    if not options.rng then return end
+    local profile = EnvironmentProfiles.Resolve(options.settingKey)
+    local carving = profile.terrainCarving
+    if not carving then return end
     local theme = Themes.Get(options.theme or "ancient")
     local function NearDoor(layer, x, y, distance)
         for oy = -distance, distance do
@@ -54,15 +62,24 @@ local function ApplyThemeCarving(layers, rooms, width, height, options)
         end
         return false
     end
+    local function HasRoomField(room, fields)
+        for _, field in ipairs(fields or {}) do
+            if room[field] then return true end
+        end
+        return false
+    end
     for _, layer in ipairs(layers) do
         local rng = options.rngByFloor and options.rngByFloor[layer.floor + 1] or options.rng
-        local pools = layer.pools
-        if theme.pools and (theme.pools.amount or 0) > 0 then
+        local poolSpec = carving.poolField
+        local poolTheme = poolSpec and theme[poolSpec.themeField]
+        local pools = poolSpec and layer[poolSpec.output] or nil
+        if poolSpec and poolTheme and (poolTheme[poolSpec.amountField] or 0) > 0 then
             local candidates = {}
             for y = 1, height - 2 do
                 for x = 1, width - 2 do
                     local cell = Index(x, y, width)
-                    if layer.grid[cell] == MultiFloor.Tiles.WALL and not NearDoor(layer, x, y, 2) then
+                    if layer.grid[cell] == MultiFloor.Tiles.WALL
+                        and not NearDoor(layer, x, y, poolSpec.avoidDoorDistance or 2) then
                         local adjacent = 0
                         if layer.grid[Index(x+1,y,width)] == MultiFloor.Tiles.FLOOR then adjacent = adjacent + 1 end
                         if layer.grid[Index(x-1,y,width)] == MultiFloor.Tiles.FLOOR then adjacent = adjacent + 1 end
@@ -73,41 +90,48 @@ local function ApplyThemeCarving(layers, rooms, width, height, options)
                 end
             end
             rng:Shuffle(candidates)
-            local target = math.floor(#candidates * theme.pools.amount + 0.5)
+            local target = math.floor(#candidates * (poolTheme[poolSpec.amountField] or 0) + 0.5)
             for _, candidate in ipairs(candidates) do
                 if #pools >= target then break end
                 local close = false
                 for _, pool in ipairs(pools) do
-                    if math.max(math.abs(pool.x-candidate.x), math.abs(pool.y-candidate.y)) < 3 then close=true break end
+                    if math.max(math.abs(pool.x-candidate.x), math.abs(pool.y-candidate.y))
+                        < (poolSpec.spacing or 3) then close=true break end
                 end
                 if not close then
-                    layer.grid[Index(candidate.x,candidate.y,width)] = MultiFloor.Tiles.POOL
+                    layer.grid[Index(candidate.x,candidate.y,width)] = MultiFloor.Tiles[poolSpec.tile]
                     pools[#pools+1] = candidate
                 end
             end
         end
-        if theme.pools and theme.pools.pits then
+        local pitSpec = carving.pitField
+        local pitTheme = pitSpec and theme[pitSpec.themeField]
+        if pitSpec and pitTheme and pitTheme[pitSpec.countField] then
             for _, room in ipairs(rooms) do
-                if room.floor == layer.floor and (room.type == "combat" or room.type == "elite")
-                    and not room.lake and not room.grave then
-                    local remaining = math.min(theme.pools.pits, math.floor(room.w*room.h/45)+1)
+                if room.floor == layer.floor and pitSpec.roomTypes[room.type]
+                    and not HasRoomField(room, pitSpec.excludeRoomFields) then
+                    local remaining = math.min(pitTheme[pitSpec.countField], math.floor(room.w*room.h/45)+1)
                     local guard = 0
-                    while remaining > 0 and guard < 40 do
+                    while remaining > 0 and guard < (pitSpec.maxAttempts or 40) do
                         guard = guard + 1
-                        local x = rng:Int(math.floor(room.cx-room.w*0.5)+2, math.ceil(room.cx+room.w*0.5)-2)
-                        local y = rng:Int(math.floor(room.cy-room.h*0.5)+2, math.ceil(room.cy+room.h*0.5)-2)
+                        local x = rng:Int(math.floor(room.cx-room.w*0.5)+(pitSpec.margin or 2),
+                            math.ceil(room.cx+room.w*0.5)-(pitSpec.margin or 2))
+                        local y = rng:Int(math.floor(room.cy-room.h*0.5)+(pitSpec.margin or 2),
+                            math.ceil(room.cy+room.h*0.5)-(pitSpec.margin or 2))
                         local cell = Index(x,y,width)
                         local valid = InBounds(x,y,width,height) and layer.roomId[cell] == room.id
                             and layer.grid[cell] == MultiFloor.Tiles.FLOOR and not layer.doorway[cell]
-                            and not (x == room.cx and y == room.cy)
-                        for oy=-1,1 do for ox=-1,1 do
-                            if not valid or layer.grid[Index(x+ox,y+oy,width)] ~= MultiFloor.Tiles.FLOOR then valid=false end
-                        end end
+                            and (not pitSpec.avoidCenter or not (x == room.cx and y == room.cy))
+                        for oy=-pitSpec.neighborRadius,pitSpec.neighborRadius do
+                            for ox=-pitSpec.neighborRadius,pitSpec.neighborRadius do
+                                if not valid or layer.grid[Index(x+ox,y+oy,width)] ~= MultiFloor.Tiles.FLOOR then valid=false end
+                            end
+                        end
                         for _, pool in ipairs(pools) do
-                            if math.max(math.abs(pool.x-x),math.abs(pool.y-y)) < 4 then valid=false break end
+                            if math.max(math.abs(pool.x-x),math.abs(pool.y-y)) < (pitSpec.poolSpacing or 4) then valid=false break end
                         end
                         if valid then
-                            layer.grid[cell]=MultiFloor.Tiles.POOL
+                            layer.grid[cell]=MultiFloor.Tiles[pitSpec.tile]
                             pools[#pools+1]={x=x,y=y}
                             remaining=remaining-1
                         end
@@ -115,20 +139,28 @@ local function ApplyThemeCarving(layers, rooms, width, height, options)
                 end
             end
         end
-        for _, room in ipairs(rooms) do
-            if room.floor == layer.floor and room.lake then
-                for y=math.floor(room.cy-room.h*0.5)+2,math.ceil(room.cy+room.h*0.5)-2 do
-                    for x=math.floor(room.cx-room.w*0.5)+2,math.ceil(room.cx+room.w*0.5)-2 do
-                        if InBounds(x,y,width,height) then
-                            local cell=Index(x,y,width)
-                            local solid=false
-                            if layer.roomId[cell] == room.id and layer.grid[cell] == MultiFloor.Tiles.FLOOR and not layer.doorway[cell] then
-                                for oy=-1,1 do for ox=-1,1 do
-                                    if layer.grid[Index(x+ox,y+oy,width)] ~= MultiFloor.Tiles.FLOOR then solid=true end
-                                end end
-                                if not solid then
-                                    layer.lakeMask[cell]=true
-                                    layer.lakeCells[#layer.lakeCells+1]={x=x,y=y}
+        local surface = carving.roomSurface
+        if surface then
+            for _, room in ipairs(rooms) do
+                if room.floor == layer.floor and room[surface.roomField] then
+                    for y=math.floor(room.cy-room.h*0.5)+(surface.margin or 2),
+                        math.ceil(room.cy+room.h*0.5)-(surface.margin or 2) do
+                        for x=math.floor(room.cx-room.w*0.5)+(surface.margin or 2),
+                            math.ceil(room.cx+room.w*0.5)-(surface.margin or 2) do
+                            if InBounds(x,y,width,height) then
+                                local cell=Index(x,y,width)
+                                local solid=false
+                                if layer.roomId[cell] == room.id and layer.grid[cell] == MultiFloor.Tiles.FLOOR
+                                    and not layer.doorway[cell] then
+                                    for oy=-surface.neighborRadius,surface.neighborRadius do
+                                        for ox=-surface.neighborRadius,surface.neighborRadius do
+                                            if layer.grid[Index(x+ox,y+oy,width)] ~= MultiFloor.Tiles.FLOOR then solid=true end
+                                        end
+                                    end
+                                    if not solid then
+                                        layer[surface.mask][cell]=true
+                                        layer[surface.cells][#layer[surface.cells]+1]={x=x,y=y}
+                                    end
                                 end
                             end
                         end
@@ -186,38 +218,10 @@ local function WidthOffsets(width, lateralCenterOffset)
     return StairContract.WidthOffsets(width, lateralCenterOffset)
 end
 
-local function RoomDoorPoint(a, b, margin)
-    margin = margin or 1
-    local dx = b.cx - a.cx
-    local dy = b.cy - a.cy
-    local halfWidth = math.max(1, a.w * 0.5 - margin)
-    local halfHeight = math.max(1, a.h * 0.5 - margin)
-    if math.abs(dx) / halfWidth >= math.abs(dy) / halfHeight then
-        return {
-            x = math.floor(a.cx + (dx >= 0 and halfWidth or -halfWidth) + 0.5),
-            y = math.floor(a.cy + math.max(-halfHeight, math.min(halfHeight, dy)) + 0.5),
-            side = dx >= 0 and "east" or "west",
-        }
-    end
-    return {
-        x = math.floor(a.cx + math.max(-halfWidth, math.min(halfWidth, dx)) + 0.5),
-        y = math.floor(a.cy + (dy >= 0 and halfHeight or -halfHeight) + 0.5),
-        side = dy >= 0 and "south" or "north",
-    }
-end
-
-local function DoorSpecPoint(room, spec)
-    if not room or not spec then return nil end
-    local side = tostring(spec.side or "east")
-    if side == "n" then side = "north" end
-    if side == "s" then side = "south" end
-    if side == "w" then side = "west" end
-    if side == "e" then side = "east" end
-    local offset = math.max(-0.82, math.min(0.82, tonumber(spec.offset) or 0))
-    if side == "north" then return { x = room.cx + offset * room.w * 0.5, y = room.cy - room.h * 0.5, side = side } end
-    if side == "south" then return { x = room.cx + offset * room.w * 0.5, y = room.cy + room.h * 0.5, side = side } end
-    if side == "west" then return { x = room.cx - room.w * 0.5, y = room.cy + offset * room.h * 0.5, side = side } end
-    return { x = room.cx + room.w * 0.5, y = room.cy + offset * room.h * 0.5, side = "east" }
+local RoomDoorPoint = DoorContract.RoomDoorPoint
+local DoorSpecPoint = DoorContract.DoorSpecPoint
+local function StairDoorPoint(a, b)
+    return DoorContract.RoomDoorPoint(a, b, 1)
 end
 
 local function SimplifyCells(cells, width)
@@ -442,11 +446,6 @@ local function CarvePolyline(layer, points, corridorWidth, owner, mapWidth, mapH
     end
     CarveCells(layer, cells, corridorWidth, owner, mapWidth, mapHeight)
     return cells
-end
-
-local function MarkDoor(layer, point, width, height)
-    local x, y = math.floor(point.x + 0.5), math.floor(point.y + 0.5)
-    if InBounds(x, y, width, height) then layer.doorway[Index(x, y, width)] = true end
 end
 
 local function RasterizeRooms(layers, rooms, width, height)
@@ -851,6 +850,57 @@ local function ConnectorCandidates(aDoor, bDoor, width, height, run, style)
     return result
 end
 
+local function PinnedCandidates(anchor, requestedDirection, width, height, run, style, allowFallback)
+    local result, seen = {}, {}
+    local directions = {
+        requestedDirection,
+        { x = 1, y = 0, name = "east" }, { x = 0, y = 1, name = "south" },
+        { x = -1, y = 0, name = "west" }, { x = 0, y = -1, name = "north" },
+    }
+    local uniqueDirections, directionSeen = {}, {}
+    for _, direction in ipairs(directions) do
+        if direction and not directionSeen[direction.name] then
+            directionSeen[direction.name] = true
+            uniqueDirections[#uniqueDirections + 1] = direction
+        end
+    end
+    local function Add(dx, dy, direction)
+        local lower = { x = math.floor(anchor.x + dx + 0.5), y = math.floor(anchor.y + dy + 0.5) }
+        local key = lower.x .. ":" .. lower.y .. ":" .. direction.name
+        local _, upper = StairEndpoints(lower, direction, run, style)
+        if not seen[key] and InBounds(lower.x, lower.y, width, height)
+            and InBounds(upper.x, upper.y, width, height) then
+            seen[key] = true
+            result[#result + 1] = {
+                lower = lower,
+                direction = direction,
+                fallbackDistance = math.max(math.abs(dx), math.abs(dy)),
+                fallbackDirectionChanged = direction.name ~= requestedDirection.name,
+            }
+        end
+    end
+    Add(0, 0, requestedDirection)
+    if not allowFallback then return result end
+
+    local offsetsByRadius = {
+        { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 },
+        { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 },
+    }
+    for _, radius in ipairs({ 1, 2, 4, 6, 8, 12 }) do
+        for _, offset in ipairs(offsetsByRadius) do
+            Add(offset[1] * radius, offset[2] * radius, requestedDirection)
+        end
+    end
+    for index = 2, #uniqueDirections do
+        local direction = uniqueDirections[index]
+        Add(0, 0, direction)
+        for _, offset in ipairs({ { 4, 0 }, { -4, 0 }, { 0, 4 }, { 0, -4 } }) do
+            Add(offset[1], offset[2], direction)
+        end
+    end
+    return result
+end
+
 -- Stacked/overlapping rooms prefer an in-footprint stairwell. Search the plan
 -- overlap of the two rooms for anchors whose full reservation fits inside it.
 local function OverlappingRoomCandidates(lowerRoom, upperRoom, width, height, run, stairWidth,
@@ -892,8 +942,8 @@ local function PlaceConnector(edge, rooms, layers, width, height, connectorId, f
     if roomA.floor < roomB.floor then lowerRoom, upperRoom = roomA, roomB else lowerRoom, upperRoom = roomB, roomA end
     local lowerLayer = layers[lowerRoom.floor + 1]
     local upperLayer = layers[upperRoom.floor + 1]
-    local lowerDoor = RoomDoorPoint(lowerRoom, upperRoom)
-    local upperDoor = RoomDoorPoint(upperRoom, lowerRoom)
+    local lowerDoor = StairDoorPoint(lowerRoom, upperRoom)
+    local upperDoor = StairDoorPoint(upperRoom, lowerRoom)
     local spec = edge.stairSpec or {}
     local style = NormalizeStairStyle(spec.pending and (spec.previewStyle or spec.style) or spec.style)
     local requestedLength = spec.pending and spec.previewLength or spec.length
@@ -910,14 +960,12 @@ local function PlaceConnector(edge, rooms, layers, width, height, connectorId, f
     local anchor = spec.pending and spec.previewAnchor or spec.anchor
     local direction = DirectionByName(spec.pending and spec.previewDirection or spec.direction)
     local pinned = anchor ~= nil and direction ~= nil
+    local allowPinnedFallback = pinned and spec.allowFallback == true
     local allowRoomAdaptation = pinned or spec.pending == true
         or lowerRoom.stairRoom == true or upperRoom.stairRoom == true
     local candidates
     if pinned then
-        candidates = {{
-            lower = { x = math.floor(anchor.x + 0.5), y = math.floor(anchor.y + 0.5) },
-            direction = direction,
-        }}
+        candidates = PinnedCandidates(anchor, direction, width, height, run, style, allowPinnedFallback)
     else
         candidates = {}
         for _, candidate in ipairs(OverlappingRoomCandidates(lowerRoom, upperRoom, width, height, run,
@@ -950,8 +998,9 @@ local function PlaceConnector(edge, rooms, layers, width, height, connectorId, f
 
     for _, candidate in ipairs(candidates) do
         local sideClearance = (pinned or allowRoomAdaptation) and 0 or 1
+        local requestedOffset = spec.pending and spec.previewLateralCenterOffset or spec.lateralCenterOffset
         local contract = BuildStairContract(width, height, candidate.lower, candidate.direction, run,
-            stairWidth, landingDepth, sideClearance, style, spec.lateralCenterOffset,
+            stairWidth, landingDepth, sideClearance, style, requestedOffset,
             floorHeight, stepCount)
         if contract
             and StairContractClear(lowerLayer, upperLayer, contract, lowerRoom.id, upperRoom.id, allowRoomAdaptation) then
@@ -978,12 +1027,20 @@ local function PlaceConnector(edge, rooms, layers, width, height, connectorId, f
                         break
                     end
                 end
-                local score = lowerRoute.cost + upperRoute.cost + run + landingDepth * 2
-                    - (sharedRoomOverlap and 1000 or 0)
+                local fallbackDistance = candidate.fallbackDistance or 0
+                local directionPenalty = candidate.fallbackDirectionChanged and 2500 or 0
+                local score = (lowerRoute.cost or 0) + (upperRoute.cost or 0) + run + landingDepth * 2
+                    - (sharedRoomOverlap and 1000 or 0) + fallbackDistance * 10000 + directionPenalty
                 legal[#legal + 1] = {
                     contract = contract, lowerRoute = lowerRoute, upperRoute = upperRoute,
                     score = score, sharedRoomOverlap = sharedRoomOverlap,
+                    fallbackDistance = fallbackDistance,
+                    fallbackDirectionChanged = candidate.fallbackDirectionChanged == true,
                 }
+                -- Authored stairs prefer the first legal point in the ordered
+                -- fallback rings. Continuing would run A* dozens of times only
+                -- to rediscover farther alternatives during an interactive edit.
+                if pinned then break end
             end
         end
     end
@@ -998,12 +1055,13 @@ local function PlaceConnector(edge, rooms, layers, width, height, connectorId, f
     local selectedIndex = candidateCount > 0 and ((requestedIndex - 1) % candidateCount) + 1 or nil
     local best = selectedIndex and legal[selectedIndex] or nil
     if not best then return nil end
+    local selectedCandidateIndex = selectedIndex or 1
 
     CarveCells(lowerLayer, best.lowerRoute.cells, stairWidth, edge.id, width, height)
     CarveCells(upperLayer, best.upperRoute.cells, stairWidth, edge.id, width, height)
     ReserveStair(lowerLayer, upperLayer, best.contract, connectorId)
-    MarkDoor(lowerLayer, lowerDoor, width, height)
-    MarkDoor(upperLayer, upperDoor, width, height)
+    DoorContract.MarkDoor(lowerLayer, width, height, lowerDoor, 1)
+    DoorContract.MarkDoor(upperLayer, width, height, upperDoor, 1)
     lowerLayer.doorway[Index(best.contract.lower.x, best.contract.lower.y, width)] = true
     upperLayer.doorway[Index(best.contract.upper.x, best.contract.upper.y, width)] = true
 
@@ -1036,8 +1094,10 @@ local function PlaceConnector(edge, rooms, layers, width, height, connectorId, f
         wallMode = best.contract.wallMode,
         contract = best.contract,
         lowerRoute = best.lowerRoute.points, upperRoute = best.upperRoute.points,
-        mode = spec.mode or "stable-auto", candidateIndex = selectedIndex - 1,
+        mode = spec.mode or "stable-auto", candidateIndex = selectedCandidateIndex - 1,
         candidateCount = candidateCount, stairId = spec.id,
+        fallbackUsed = (best.fallbackDistance or 0) > 0 or best.fallbackDirectionChanged == true,
+        fallbackDistance = best.fallbackDistance or 0,
     }
     edge.connectorId = connectorId
     edge.lowerRoute = connector.lowerRoute
@@ -1062,7 +1122,9 @@ local function PlaceConnector(edge, rooms, layers, width, height, connectorId, f
         length = committedLength, previewLength = previewLength,
         landingDepth = landingDepth, previewLandingDepth = spec.pending and landingDepth or nil,
         lateralCenterOffset = best.contract.lateralCenterOffset,
-        manualPreview = spec.manualPreview == true, candidateIndex = selectedIndex - 1,
+        previewLateralCenterOffset = spec.pending and best.contract.lateralCenterOffset or nil,
+        manualPreview = spec.manualPreview == true, allowFallback = spec.allowFallback == true,
+        candidateIndex = selectedCandidateIndex - 1,
         candidateCount = candidateCount, invalid = false,
     }
     return connector
@@ -1321,42 +1383,76 @@ function MultiFloor.Build(options)
         local roomA, roomB = rooms[edge.a], rooms[edge.b]
         if edge.kind == "corridor" then
             local layer = layers[edge.floor + 1]
-            local startPoint = DoorSpecPoint(roomA, edge.doorA) or RoomDoorPoint(roomA, roomB)
-            local goalPoint = DoorSpecPoint(roomB, edge.doorB) or RoomDoorPoint(roomB, roomA)
-            local corridorWidth = math.max(1, math.min(6,
-                math.floor((edge.width or (edge.isCritical and 3 or 2)) + 0.5)))
-            local route = nil
-            if edge.isEditor and edge.bends and #edge.bends > 0 then
-                local points = { startPoint }
-                for _, bend in ipairs(edge.bends) do points[#points + 1] = { x = bend.x, y = bend.y } end
-                points[#points + 1] = goalPoint
-                route = { points = points, cells = CarvePolyline(layer, points, corridorWidth, edge.id, width, height) }
-            else
-                route = MultiFloor.RouteAStar(layer, startPoint, goalPoint, {
-                    width = width, height = height, startRoomId = roomA.id, goalRoomId = roomB.id,
-                })
-                if route then CarveCells(layer, route.cells, corridorWidth, edge.id, width, height) end
+            local defaultStart = RoomDoorPoint(roomA, roomB, 0)
+            local defaultGoal = RoomDoorPoint(roomB, roomA, 0)
+            local requestedStart = DoorSpecPoint(roomA, edge.doorA) or defaultStart
+            local requestedGoal = DoorSpecPoint(roomB, edge.doorB) or defaultGoal
+            local requestedWidth = DoorContract.NormalizeWidth(
+                edge.width or (edge.isCritical and 3 or 2))
+            local corridorWidth, startPoint, goalPoint = nil, nil, nil
+            for candidate = requestedWidth, DoorContract.MIN_WIDTH, -DoorContract.WIDTH_STEP do
+                local candidateStart = DoorContract.ResolveWallDoor(layer, width, height, roomA,
+                    requestedStart, defaultStart, candidate, edge.doorA == nil)
+                local candidateGoal = DoorContract.ResolveWallDoor(layer, width, height, roomB,
+                    requestedGoal, defaultGoal, candidate, edge.doorB == nil)
+                if candidateStart and candidateGoal then
+                    corridorWidth, startPoint, goalPoint = candidate, candidateStart, candidateGoal
+                    break
+                end
             end
-            if route then
-                MarkDoor(layer, startPoint, width, height)
-                MarkDoor(layer, goalPoint, width, height)
-                local centerOffset = corridorWidth % 2 == 0 and 0.5 or 0
-                layer.arches[#layer.arches + 1] = {
-                    x = startPoint.x + ((startPoint.side == "north" or startPoint.side == "south") and centerOffset or 0),
-                    y = startPoint.y + ((startPoint.side == "east" or startPoint.side == "west") and centerOffset or 0),
-                    anchorX = startPoint.x, anchorY = startPoint.y, side = startPoint.side,
-                    len = corridorWidth, roomId = roomA.id,
-                }
-                layer.arches[#layer.arches + 1] = {
-                    x = goalPoint.x + ((goalPoint.side == "north" or goalPoint.side == "south") and centerOffset or 0),
-                    y = goalPoint.y + ((goalPoint.side == "east" or goalPoint.side == "west") and centerOffset or 0),
-                    anchorX = goalPoint.x, anchorY = goalPoint.y, side = goalPoint.side,
-                    len = corridorWidth, roomId = roomB.id,
-                }
-                edge.route = route.points
-                edge.carvedWidth = corridorWidth
+            if not startPoint or not goalPoint then
+                errors[#errors + 1] = "edge " .. edge.id .. " has no legal wall door"
             else
-                errors[#errors + 1] = "edge " .. edge.id .. " has no A* route"
+                local startApproach = DoorContract.DoorApproach(startPoint)
+                local goalApproach = DoorContract.DoorApproach(goalPoint)
+                local route = nil
+                if edge.isEditor and edge.bends and #edge.bends > 0 then
+                    local points = { startPoint, startApproach }
+                    for _, bend in ipairs(edge.bends) do
+                        points[#points + 1] = { x = bend.x, y = bend.y }
+                    end
+                    points[#points + 1], points[#points + 1] = goalApproach, goalPoint
+                    route = {
+                        points = points,
+                        cells = CarvePolyline(layer, points, corridorWidth, edge.id, width, height),
+                    }
+                else
+                    route = MultiFloor.RouteAStar(layer, startApproach, goalApproach, {
+                        width = width, height = height, startRoomId = roomA.id, goalRoomId = roomB.id,
+                    })
+                    if route then
+                        local points = { startPoint }
+                        for _, point in ipairs(route.points or {}) do points[#points + 1] = point end
+                        points[#points + 1] = goalPoint
+                        route.points = points
+                        route.cells = CarvePolyline(layer, points, corridorWidth, edge.id, width, height)
+                    end
+                end
+                if route then
+                    DoorContract.MarkDoor(layer, width, height, startPoint, corridorWidth)
+                    DoorContract.MarkDoor(layer, width, height, goalPoint, corridorWidth)
+                    local startArch = DoorContract.BuildArch(layer, width, height, roomA,
+                        startPoint, corridorWidth)
+                    local goalArch = DoorContract.BuildArch(layer, width, height, roomB,
+                        goalPoint, corridorWidth)
+                    if not startArch or not goalArch then
+                        errors[#errors + 1] = "edge " .. edge.id .. " has no wall interface"
+                    else
+                        layer.arches[#layer.arches + 1] = startArch
+                        layer.arches[#layer.arches + 1] = goalArch
+                        edge.route = route.points
+                        edge.carvedWidth = corridorWidth
+                        edge.widthAdapted = corridorWidth ~= requestedWidth
+                        edge.resolvedDoorA = {
+                            x = startPoint.x, y = startPoint.y, side = startPoint.side,
+                        }
+                        edge.resolvedDoorB = {
+                            x = goalPoint.x, y = goalPoint.y, side = goalPoint.side,
+                        }
+                    end
+                else
+                    errors[#errors + 1] = "edge " .. edge.id .. " has no A* route"
+                end
             end
         else
             local connector = nil

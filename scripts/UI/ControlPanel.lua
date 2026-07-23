@@ -19,7 +19,7 @@ local C = {
 }
 
 local HINT_OVERVIEW =
-    "相机：WASD/方向键移动，Shift 加速 · 鼠标左键拖拽平移 · Ctrl+鼠标左键拖拽升降 · 鼠标右键拖拽（或 Shift+鼠标左键拖拽）旋转 · 滚轮缩放 · Home/F 复原居中\n编辑：直接点 2D 平面，E 进入 3D 编辑 · R 重新生成 · T 切换色调 · Shift+T 切换题材"
+    "相机：WASD/方向键移动，Shift 加速 · 右键自由旋转 · 中键平移 · Alt+左键绕焦点旋转 · 左+右键推进/后退 · 滚轮缩放 · Home/F 复原居中\n编辑：直接点 2D 平面，E 进入 3D 编辑 · R 重新生成 · T 切换色调 · Shift+T 切换题材"
 local HINT_EDIT_3D =
     "3D 编辑（正交顶视）：左键编辑房间与通路 · 空白处/Alt+左键 或 中键拖拽平移 · 滚轮缩放（对准光标）· WASD/方向键移动，Shift 加速 · F 焦点居中复原 · E 退出编辑 · Esc 完成"
 local HINT_EDIT_2D =
@@ -916,7 +916,7 @@ function ControlPanel.new(callbacks, initial)
                 self.fixedTopicPanel,
             }),
             Section({
-                Row({ Label("色调", 10.5, C.dim, { flexGrow = 1, letterSpacing = 0.5 }),
+                Row({ Label("色调 · 点击卡片应用", 10.5, C.dim, { flexGrow = 1, letterSpacing = 0.5 }),
                     self.paletteCustomButton, self.paletteToggleTooltip }),
                 Row({ Label("当前颜色", 9, C.dim, { width = 54 }), self.currentPaletteButton,
                     self.randomThemeTooltip },
@@ -1244,16 +1244,17 @@ function ControlPanel:ApplyCustomPalette()
     self.paletteModal:Close()
 end
 
-function ControlPanel:ConfirmDeleteCustomPalette()
-    local item = self:FindCustomPalette(self.editingPaletteId)
+function ControlPanel:ConfirmDeleteCustomPalette(target)
+    local item = target or self:FindCustomPalette(self.editingPaletteId)
     if not item then return end
+    self:CloseContextMenu()
     UI.Modal.Confirm {
         title = "删除自定义配色", message = string.format("确定删除配色“%s”吗？", item.label),
         confirmText = "删除", cancelText = "取消",
         onConfirm = function()
             local ok, reason = self.callbacks.onCustomPaletteDelete(item.id)
             if ok == false then self.paletteError:SetText(reason or "自定义配色删除失败。"); return end
-            self.paletteModal:Close()
+            if self.paletteModal:IsOpen() then self.paletteModal:Close() end
         end,
     }
 end
@@ -1431,40 +1432,38 @@ function ControlPanel:ApplyCustomSetting(mode)
     self.customSettingModal:Close()
 end
 
-function ControlPanel:CloseCustomSettingContextMenu()
+function ControlPanel:CloseContextMenu()
     if not self.customContextMenuLayer then return end
     self.customContextMenuLayer:ClearChildren()
     self.customContextMenuLayer:SetVisible(false)
     self.contextCustomId = nil
+    self.contextPaletteId = nil
+    self.contextRoomGroupId = nil
 end
 
-function ControlPanel:OpenCustomSettingContextMenu(item, event)
-    if not item or not self.customContextMenuLayer then return end
-    self:CloseCustomSettingContextMenu()
-    self.contextCustomId = item.id
+-- Keep the old name for callers that only know about custom topic menus.
+function ControlPanel:CloseCustomSettingContextMenu()
+    self:CloseContextMenu()
+end
+
+function ControlPanel:ContextMenuButton(text, action, danger)
+    return SmallButton(text, function()
+        self:CloseContextMenu()
+        action()
+    end, {
+        width = "100%", height = 30, fontSize = 10.5, borderWidth = 0, borderRadius = 4,
+        backgroundColor = { 0, 0, 0, 0 }, textColor = danger and C.danger or C.text,
+    })
+end
+
+function ControlPanel:ShowContextMenu(event, menuChildren, menuWidth, menuHeight)
+    if not self.customContextMenuLayer then return end
+    self:CloseContextMenu()
     local rootLayout = self.root:GetAbsoluteLayout()
-    local menuWidth, menuHeight = 150, 76
     local x = (event and event.x or rootLayout.x + 20) - rootLayout.x
     local y = (event and event.y or rootLayout.y + 20) - rootLayout.y
     x = math.max(8, math.min(x, rootLayout.w - menuWidth - 8))
     y = math.max(8, math.min(y, rootLayout.h - menuHeight - 8))
-
-    local function menuButton(text, action, danger)
-        return SmallButton(text, function()
-            self:CloseCustomSettingContextMenu()
-            action()
-        end, {
-            width = "100%", height = 30, fontSize = 10.5, borderWidth = 0, borderRadius = 4,
-            backgroundColor = { 0, 0, 0, 0 }, textColor = danger and C.danger or C.text,
-        })
-    end
-    local menuChildren = {
-        menuButton(item.packStatus == "draft" and "继续编辑" or "编辑题材", function()
-            self:OpenCustomSettingModal(item)
-        end),
-        UI.Panel { width = "100%", height = 1, backgroundColor = C.line },
-        menuButton("删除题材", function() self:ConfirmDeleteCustomSetting(item) end, true),
-    }
     local menu = UI.Panel {
         position = "absolute", left = x, top = y, width = menuWidth, padding = 5, gap = 2,
         backgroundColor = { 24, 28, 39, 250 }, borderColor = { 64, 71, 91, 255 },
@@ -1476,6 +1475,40 @@ function ControlPanel:OpenCustomSettingContextMenu(item, event)
     }
     self.customContextMenuLayer:AddChild(menu)
     self.customContextMenuLayer:SetVisible(true)
+end
+
+function ControlPanel:OpenCustomSettingContextMenu(item, event)
+    if not item or not self.customContextMenuLayer then return end
+    local menuChildren = {
+        self:ContextMenuButton(item.packStatus == "draft" and "继续编辑" or "编辑题材", function()
+            self:OpenCustomSettingModal(item)
+        end),
+        UI.Panel { width = "100%", height = 1, backgroundColor = C.line },
+        self:ContextMenuButton("删除题材", function() self:ConfirmDeleteCustomSetting(item) end, true),
+    }
+    self:ShowContextMenu(event, menuChildren, 150, 76)
+    self.contextCustomId = item.id
+end
+
+function ControlPanel:OpenPaletteContextMenu(paletteKey, custom, event)
+    if not self.customContextMenuLayer then return end
+    local menuChildren = {}
+    menuChildren[#menuChildren + 1] = self:ContextMenuButton("使用色调", function()
+        local ok, reason = self.callbacks.onTheme(paletteKey)
+        if ok == false then self:SetStatus(reason or "配色切换失败") end
+    end)
+    if custom then
+        menuChildren[#menuChildren + 1] = UI.Panel { width = "100%", height = 1, backgroundColor = C.line }
+        menuChildren[#menuChildren + 1] = self:ContextMenuButton("编辑配色", function()
+            self:OpenCustomPaletteModal(custom)
+        end)
+        menuChildren[#menuChildren + 1] = self:ContextMenuButton("删除配色", function()
+            self:ConfirmDeleteCustomPalette(custom)
+        end, true)
+    end
+    local menuHeight = custom and 122 or 42
+    self:ShowContextMenu(event, menuChildren, 150, menuHeight)
+    self.contextPaletteId = paletteKey
 end
 
 function ControlPanel:ConfirmDeleteCustomSetting(target)
@@ -1557,16 +1590,24 @@ function ControlPanel:ApplyRoomGroup()
     self.roomGroupModal:Close()
 end
 
-function ControlPanel:ConfirmDeleteRoomGroup()
-    local item = self:FindRoomGroup(self.editingRoomGroupId)
+function ControlPanel:ConfirmDeleteRoomGroup(target)
+    local item = target or self:FindRoomGroup(self.editingRoomGroupId)
     if not item then return end
+    self:CloseContextMenu()
     UI.Modal.Confirm {
         title = "删除房间", message = string.format("确定删除房间“%s”吗？", item.name),
         confirmText = "删除", cancelText = "取消",
         onConfirm = function()
             local ok, reason = self.callbacks.onRoomGroupDelete(item.id)
-            if ok == false then self.roomGroupError:SetText(reason or "房间删除失败。"); return end
-            self.roomGroupModal:Close()
+            if ok == false then
+                if self.roomGroupModal:IsOpen() then
+                    self.roomGroupError:SetText(reason or "房间删除失败。")
+                else
+                    self:SetStatus(reason or "房间删除失败。")
+                end
+                return
+            end
+            if self.roomGroupModal:IsOpen() then self.roomGroupModal:Close() end
         end,
     }
 end
@@ -1610,7 +1651,25 @@ function ControlPanel:RebuildCustomSettingList(items)
     end
 end
 
+function ControlPanel:OpenRoomGroupContextMenu(item, event)
+    if not item or not self.customContextMenuLayer then return end
+    local menuChildren = {}
+    menuChildren[#menuChildren + 1] = self:ContextMenuButton("编辑房间", function()
+        self:OpenRoomGroupModal(item)
+    end)
+    local deletable = tostring(item.id or ""):sub(1, 8) ~= "builtin-"
+    if deletable then
+        menuChildren[#menuChildren + 1] = UI.Panel { width = "100%", height = 1, backgroundColor = C.line }
+        menuChildren[#menuChildren + 1] = self:ContextMenuButton("删除房间", function()
+            self:ConfirmDeleteRoomGroup(item)
+        end, true)
+    end
+    self:ShowContextMenu(event, menuChildren, 150, deletable and 76 or 42)
+    self.contextRoomGroupId = item.id
+end
+
 function ControlPanel:RebuildRoomGroupList(items)
+    self:CloseContextMenu()
     self.roomGroupList:ClearChildren()
     local currentState = self.currentState or {}
     local activeTopicId = currentState.topicMode == "custom" and currentState.activeCustomSettingId or nil
@@ -1618,22 +1677,42 @@ function ControlPanel:RebuildRoomGroupList(items)
         items, activeTopicId)
     for _, item in ipairs(visibleRooms) do
         local saved = item
-        self.roomGroupList:AddChild(UI.Panel {
-            width = "100%", height = 44, padding = 5, flexDirection = "row", alignItems = "center", gap = 6,
-            backgroundColor = C.section, borderColor = { 41, 47, 64, 255 }, borderWidth = 1, borderRadius = 8,
+        local status = saved.defaultGroup and "默认"
+            or (saved.source == "manual" and "自定义" or "")
+        local statusColor = saved.defaultGroup and { 255, 215, 168, 255 }
+            or (saved.source == "manual" and C.teal or C.dim)
+        local card = UI.Panel {
+            width = "100%", height = 32, padding = { 4, 6 },
+            flexDirection = "row", alignItems = "center", gap = 5,
+            backgroundColor = C.section, borderColor = { 41, 47, 64, 255 },
+            borderWidth = 1, borderRadius = 6,
+            onPointerDown = function(event)
+                if event.button == MOUSEB_RIGHT then
+                    event:StopPropagation()
+                    event:PreventDefault()
+                    self:OpenRoomGroupContextMenu(saved, event)
+                end
+            end,
+            onClick = function(_, event)
+                if event and event.button == MOUSEB_RIGHT then return end
+                self:CloseContextMenu()
+                self:OpenRoomGroupModal(saved)
+            end,
             children = {
                 UI.Panel {
-                    width = 16, height = 16, flexShrink = 0,
+                    width = 13, height = 13, flexShrink = 0,
                     backgroundColor = RoomGroupColors.ToRGBA(saved.color),
                     borderColor = { 255, 255, 255, 64 }, borderWidth = 1, borderRadius = 4,
                 },
                 Label(saved.name, 10, C.text, {
                     flexGrow = 1, fontWeight = "bold", whiteSpace = "nowrap", overflow = "hidden",
                 }),
-                SmallButton("编辑", function() self:OpenRoomGroupModal(saved) end,
-                    { width = 38, height = 24, fontSize = 8.5 }),
+                Label(status, 8.5, statusColor, {
+                    flexShrink = 0, whiteSpace = "nowrap",
+                }),
             },
-        })
+        }
+        self.roomGroupList:AddChild(card)
     end
 end
 
@@ -1645,6 +1724,7 @@ function ControlPanel:SetPaletteExpanded(expanded)
 end
 
 function ControlPanel:RebuildPaletteExpandedList(state)
+    self:CloseContextMenu()
     self.paletteExpandedList:ClearChildren()
     for _, key in ipairs(Themes.GetSetting(state.settingKey).palettes) do
         local paletteKey = key
@@ -1652,33 +1732,39 @@ function ControlPanel:RebuildPaletteExpandedList(state)
         local custom = self:FindCustomPalette(paletteKey)
         local active = state.themeKey == paletteKey
         local swatches = Row({
-            PaletteSwatch(theme.floor), PaletteSwatch(theme.wall), PaletteSwatch(theme.pillar),
-            PaletteSwatch(theme.accentObject), PaletteSwatch(theme.flame),
-        }, { width = 90, gap = 3, alignItems = "center" })
-        local topChildren = {
-            Label(theme.label, 10.5, active and { 255, 215, 168, 255 } or C.text,
-                { flexGrow = 1, fontWeight = "bold", whiteSpace = "nowrap", overflow = "hidden" }),
-            SmallButton(active and "使用中" or "使用", function()
-                local ok, reason = self.callbacks.onTheme(paletteKey)
-                if ok == false then self:SetStatus(reason or "配色切换失败") end
-            end, { width = 46, height = 26, fontSize = 8.5,
-                backgroundColor = active and { 63, 45, 31, 255 } or C.input }),
-        }
-        if custom then
-            topChildren[#topChildren + 1] = SmallButton("编辑", function() self:OpenCustomPaletteModal(custom) end,
-                { width = 38, height = 26, fontSize = 8.5 })
-        end
-        self.paletteExpandedList:AddChild(UI.Panel {
-            width = "100%", height = 64, padding = { 6, 7 }, gap = 4,
+            PaletteSwatch(theme.floor, 12), PaletteSwatch(theme.wall, 12),
+            PaletteSwatch(theme.pillar, 12), PaletteSwatch(theme.accentObject, 12),
+            PaletteSwatch(theme.flame, 12),
+        }, { width = 68, gap = 2, alignItems = "center", flexShrink = 0 })
+        local topChildren = {}
+        topChildren[#topChildren + 1] = Label(theme.label, 10,
+            active and { 255, 215, 168, 255 } or C.text,
+            { flexGrow = 1, fontWeight = "bold", whiteSpace = "nowrap", overflow = "hidden" })
+        topChildren[#topChildren + 1] = swatches
+        topChildren[#topChildren + 1] = Label(custom and "自定义" or (active and "当前" or "选择"), 8.5,
+            custom and C.teal or (active and { 255, 215, 168, 255 } or C.dim),
+            { flexShrink = 0, whiteSpace = "nowrap" })
+        local paletteCard = UI.Panel {
+            width = "100%", height = 36, padding = { 4, 6 }, gap = 5,
+            flexDirection = "row", alignItems = "center",
             backgroundColor = active and { 34, 31, 31, 255 } or C.section,
             borderColor = active and { 139, 91, 52, 255 } or { 41, 47, 64, 255 },
-            borderWidth = 1, borderRadius = 8, children = {
-                Row(topChildren, { height = 27, alignItems = "center", gap = 6 }),
-                Row({ swatches, Label(custom and "自定义 · AI 数据" or "内置配色", 8.5,
-                    custom and C.teal or C.dim, { flexGrow = 1, textAlign = "right" }) },
-                    { height = 18, alignItems = "center" }),
-            },
-        })
+            borderWidth = 1, borderRadius = 6,
+            onPointerDown = function(event)
+                if event.button == MOUSEB_RIGHT then
+                    event:StopPropagation()
+                    event:PreventDefault()
+                    self:OpenPaletteContextMenu(paletteKey, custom, event)
+                end
+            end,
+            onClick = function(_, event)
+                if event and event.button == MOUSEB_RIGHT then return end
+                local ok, reason = self.callbacks.onTheme(paletteKey)
+                if ok == false then self:SetStatus(reason or "配色切换失败") end
+            end,
+            children = topChildren,
+        }
+        self.paletteExpandedList:AddChild(paletteCard)
     end
     self.paletteExpandedList:SetVisible(self.paletteExpanded)
 end

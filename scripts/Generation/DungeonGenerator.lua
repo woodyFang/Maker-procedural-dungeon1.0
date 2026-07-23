@@ -620,6 +620,19 @@ local function RebaseRooms(rooms, edges)
             minX, minY = math.min(minX, point.x - radius), math.min(minY, point.y - radius)
             maxX, maxY = math.max(maxX, point.x + radius), math.max(maxY, point.y + radius)
         end
+        local spec = edge.stairSpec
+        local anchor = spec and (spec.pending and spec.previewAnchor or spec.anchor)
+        if anchor then
+            -- A stair may be authored in empty space far from either endpoint
+            -- room. Reserve a direction-independent envelope here; MultiFloor
+            -- will resolve the exact legal contract and route both approaches.
+            local length = math.max(6, tonumber(spec.pending and spec.previewLength or spec.length) or 10)
+            local landing = math.max(1, tonumber(spec.pending and spec.previewLandingDepth or spec.landingDepth) or 2)
+            local stairWidth = math.max(1, tonumber(spec.pending and spec.previewWidth or spec.width) or 2)
+            local stairRadius = math.ceil(length + landing + stairWidth + 3)
+            minX, minY = math.min(minX, anchor.x - stairRadius), math.min(minY, anchor.y - stairRadius)
+            maxX, maxY = math.max(maxX, anchor.x + stairRadius), math.max(maxY, anchor.y + stairRadius)
+        end
     end
     local padding = 5
     local offsetX, offsetY = padding - minX, padding - minY
@@ -1149,15 +1162,23 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
         end
 
 
-        if settingKey == "dungeon" and theme.icicles then
-            for _, lakeCell in ipairs(layer.lakeCells) do
-                if rng:Chance(0.05) then
-                    layer.props[#layer.props+1] = {kind="shardIce",x=lakeCell.x,y=lakeCell.y,
-                        roomId=layer.roomId[MultiFloor.Index(lakeCell.x,lakeCell.y,dungeon.width)],
-                        rot=rng:Float(0,math.pi*2),scale=rng:Float(0.6,1.2)}
+        -- Generic region-feature decoration. The cells, enable flags, props and
+        -- patch parameters come from the environment profile; the pass only
+        -- executes the declared operations.
+        local terrainDecor = profile.terrainDecor or {}
+        local surfaceProps = terrainDecor.surfaceProps
+        if surfaceProps and theme[surfaceProps.themeFlag] then
+            for _, surfaceCell in ipairs(layer[surfaceProps.cells] or {}) do
+                if rng:Chance(surfaceProps.chance or 0) then
+                    layer.props[#layer.props+1] = {kind=surfaceProps.kind,x=surfaceCell.x,y=surfaceCell.y,
+                        roomId=layer.roomId[MultiFloor.Index(surfaceCell.x,surfaceCell.y,dungeon.width)],
+                        rot=rng:Float(0,math.pi*2),
+                        scale=rng:Float(surfaceProps.scaleMin or 0.6,surfaceProps.scaleMax or 1.2)}
                 end
             end
-        elseif settingKey == "dungeon" and theme.roots then
+        end
+        local breachSpec = terrainDecor.wallBreach
+        if breachSpec and theme[breachSpec.themeFlag] then
             local sites = {}
             for _, candidate in ipairs(candidates) do
                 if candidate.roomId > 0 then sites[#sites+1]=candidate end
@@ -1165,28 +1186,34 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
             rng:Shuffle(sites)
             local breaches = {}
             for _, site in ipairs(sites) do
-                if #breaches >= 5 then break end
+                if #breaches >= (breachSpec.maxSites or 5) then break end
                 local close=false
                 for _, other in ipairs(breaches) do
-                    if math.max(math.abs(other.x-site.x),math.abs(other.y-site.y))<7 then close=true break end
+                    if math.max(math.abs(other.x-site.x),math.abs(other.y-site.y))
+                        < (breachSpec.spacing or 7) then close=true break end
                 end
                 if not close then breaches[#breaches+1]=site end
             end
-            local mossMask={}
+            local secondary = breachSpec.secondary
+            local secondaryMask={}
             for _, breach in ipairs(breaches) do
-                layer.props[#layer.props+1]={kind="roots",x=breach.x,y=breach.y,dx=breach.dx,dy=breach.dy,
-                    roomId=breach.roomId,rot=0,scale=rng:Float(0.9,1.2)}
-                for oy=-2,2 do for ox=-2,2 do
-                    local x,y=breach.x+ox,breach.y+oy
-                    if x>=0 and y>=0 and x<dungeon.width and y<dungeon.height then
-                        local cell=MultiFloor.Index(x,y,dungeon.width)
-                        if layer.grid[cell]==MultiFloor.Tiles.FLOOR and not mossMask[cell] and rng:Chance(0.75) then
-                            mossMask[cell]=true
-                            layer.props[#layer.props+1]={kind="moss",x=x,y=y,roomId=layer.roomId[cell],
-                                rot=rng:Float(0,math.pi*2),scale=rng:Float(0.7,1.4)}
+                layer.props[#layer.props+1]={kind=breachSpec.kind,x=breach.x,y=breach.y,
+                    dx=breach.dx,dy=breach.dy,roomId=breach.roomId,rot=0,
+                    scale=rng:Float(breachSpec.scaleMin or 0.9,breachSpec.scaleMax or 1.2)}
+                if secondary then
+                    for oy=-secondary.radius,secondary.radius do for ox=-secondary.radius,secondary.radius do
+                        local x,y=breach.x+ox,breach.y+oy
+                        if x>=0 and y>=0 and x<dungeon.width and y<dungeon.height then
+                            local cell=MultiFloor.Index(x,y,dungeon.width)
+                            if layer.grid[cell]==MultiFloor.Tiles.FLOOR and not secondaryMask[cell]
+                                and rng:Chance(secondary.chance or 0) then
+                                secondaryMask[cell]=true
+                                layer.props[#layer.props+1]={kind=secondary.kind,x=x,y=y,roomId=layer.roomId[cell],
+                                    rot=rng:Float(0,math.pi*2),scale=rng:Float(secondary.scaleMin or 0.7,secondary.scaleMax or 1.4)}
+                            end
                         end
-                    end
-                end end
+                    end end
+                end
             end
         end
 
@@ -1212,21 +1239,21 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
             end
         end
 
-        if settingKey == "dungeon" then
-            if theme.pools and (theme.pools.mode==0 or theme.pools.mode==3) then
-                local probability=theme.pools.mode==0 and 0.8 or 0.45
-                local directions={{1,0},{-1,0},{0,1},{0,-1}}
-                for _,pool in ipairs(layer.pools) do for _,direction in ipairs(directions) do
-                    local x,y=pool.x+direction[1],pool.y+direction[2]
-                    if x>=0 and y>=0 and x<dungeon.width and y<dungeon.height then
-                        local cell=MultiFloor.Index(x,y,dungeon.width)
-                        if layer.grid[cell]==MultiFloor.Tiles.FLOOR and rng:Chance(probability) then
-                            layer.props[#layer.props+1]={kind="crack",x=x,y=y,dx=direction[1],dy=direction[2],
-                                roomId=layer.roomId[cell],rot=rng:Float(0,math.pi*2),scale=rng:Float(0.9,1.5)}
-                        end
+        local edgeSpec = terrainDecor.poolEdges
+        if edgeSpec and theme.pools and edgeSpec.poolModes[theme.pools.mode] then
+            local probability=edgeSpec.poolModes[theme.pools.mode]
+            local directions={{1,0},{-1,0},{0,1},{0,-1}}
+            for _,pool in ipairs(layer.pools) do for _,direction in ipairs(directions) do
+                local x,y=pool.x+direction[1],pool.y+direction[2]
+                if x>=0 and y>=0 and x<dungeon.width and y<dungeon.height then
+                    local cell=MultiFloor.Index(x,y,dungeon.width)
+                    if layer.grid[cell]==MultiFloor.Tiles.FLOOR and rng:Chance(probability) then
+                        layer.props[#layer.props+1]={kind=edgeSpec.kind,x=x,y=y,dx=direction[1],dy=direction[2],
+                            roomId=layer.roomId[cell],rot=rng:Float(0,math.pi*2),
+                            scale=rng:Float(edgeSpec.scaleMin or 0.9,edgeSpec.scaleMax or 1.5)}
                     end
-                end end
-            end
+                end
+            end end
         end
 
         -- Generic corridor scatter (floor markings along paths). The prop list
@@ -1375,6 +1402,9 @@ local function GenerateAttempt(seed, parameters)
                         length = tonumber(spec.length), previewLength = tonumber(spec.previewLength),
                         landingDepth = math.max(1, math.floor((tonumber(spec.landingDepth) or 2) + 0.5)),
                         previewLandingDepth = tonumber(spec.previewLandingDepth), manualPreview = spec.manualPreview == true,
+                        lateralCenterOffset = tonumber(spec.lateralCenterOffset),
+                        previewLateralCenterOffset = tonumber(spec.previewLateralCenterOffset),
+                        allowFallback = spec.allowFallback == true,
                         candidateIndex = math.max(0, math.floor(tonumber(spec.candidateIndex) or 0)),
                     }
                 end
@@ -1400,27 +1430,24 @@ local function GenerateAttempt(seed, parameters)
     end
     local roomGroupsById, roomGroupCounts = AssignRoomGroups(rooms, parameters.roomGroups)
     local theme = Themes.Get(parameters.theme or "ancient")
-    if (parameters.settingKey or "dungeon") == "dungeon" then
-        for floor = 0, floorCount - 1 do
-            local featureRng = FloorRandom(floorSeeds, floor, STREAM_FEATURES)
-            if theme.lakes then
+    local environment = EnvironmentProfiles.Resolve(parameters.settingKey or "dungeon")
+    -- Generic room-feature selector. The feature field, eligibility and theme
+    -- flag are profile data; this is no longer a dungeon-only lake/grave branch.
+    for floor = 0, floorCount - 1 do
+        local featureRng = FloorRandom(floorSeeds, floor, STREAM_FEATURES)
+        for _, feature in ipairs(environment.roomFeatures or {}) do
+            if theme[feature.themeFlag] then
                 local candidates = {}
                 for _, room in ipairs(rooms) do
-                    if room.floor == floor and (room.type == ROOM_TYPES.COMBAT or room.type == ROOM_TYPES.ELITE)
-                        and math.min(room.w, room.h) >= 9 then candidates[#candidates + 1] = room end
+                    local allowedShape = not feature.shapeNot or room.shape ~= feature.shapeNot
+                    if room.floor == floor and feature.roomTypes[room.type]
+                        and math.min(room.w, room.h) >= feature.minDim and allowedShape then
+                        candidates[#candidates + 1] = room
+                    end
                 end
-                for _ = 1, math.min(math.max(1, math.ceil(2 / floorCount)), #candidates) do
-                    table.remove(candidates, featureRng:Int(1, #candidates)).lake = true
-                end
-            end
-            if theme.graveyards then
-                local candidates = {}
-                for _, room in ipairs(rooms) do
-                    if room.floor == floor and room.type == ROOM_TYPES.COMBAT and room.shape ~= "ellipse"
-                        and math.min(room.w, room.h) >= 8 then candidates[#candidates + 1] = room end
-                end
-                for _ = 1, math.min(math.max(1, math.ceil(3 / floorCount)), #candidates) do
-                    table.remove(candidates, featureRng:Int(1, #candidates)).grave = true
+                for _ = 1, math.min(math.max(1, math.ceil(feature.count / floorCount)), #candidates) do
+                    local selected = table.remove(candidates, featureRng:Int(1, #candidates))
+                    if selected then selected[feature.roomField] = true end
                 end
             end
         end

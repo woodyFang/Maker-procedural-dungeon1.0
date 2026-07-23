@@ -47,6 +47,15 @@ local EnvironmentProfiles = {
 --                 { kind, requireThemeFlag, chanceBase, chanceDensity, minDepth, avoidCorridor, scaleMin, scaleMax }
 local PROFILES = {
     dungeon = {
+        -- Shared structure-tone algorithm parameters. The renderer owns the
+        -- algorithm; each setting only supplies data for the same pass.
+        structureTone = {
+            doorwayGain = 1.14, edgeDarkenStep = 0.11, edgeDarkenMaxWalls = 4,
+            checkerGain = 0.965, semanticTintAmount = 0.17, surfaceTintAmount = 0.32,
+            paletteAccentTintAmount = 0.00, paletteSaturation = 1.00, paletteContrast = 1.00,
+            floorVariation = { 0.94, 1.06 }, wallVariation = { 0.90, 1.08 },
+            capVariation = { 0.92, 1.10 }, surfaceTint = 0x4c7a42,
+        },
         floorScatter = {
             kind = "debris", baseChance = 0.045, corridorFactor = 0.45,
             difficultyBias = true, scaleMin = 0.6, scaleMax = 1.35, variants = 3,
@@ -65,6 +74,47 @@ local PROFILES = {
             chanceBase = 0.018, chanceDensity = 0.02, minDepth = 1, avoidCorridor = true,
             scaleMin = 0.8, scaleMax = 1.2,
         },
+        -- Region features use generic operations. These model types are data in
+        -- this profile; other themes can provide their own feature props without
+        -- changing the selector, carving or decoration code.
+        roomFeatures = {
+            { roomField = "lake", themeFlag = "lakes", roomTypes = { combat = true, elite = true },
+                minDim = 9, count = 2 },
+            { roomField = "grave", themeFlag = "graveyards", roomTypes = { combat = true },
+                minDim = 8, shapeNot = "ellipse", count = 3 },
+        },
+        terrainCarving = {
+            poolField = {
+                themeField = "pools", amountField = "amount", tile = "POOL",
+                output = "pools", candidate = "wall-edge", avoidDoorDistance = 2, spacing = 3,
+            },
+            pitField = {
+                themeField = "pools", countField = "pits", tile = "POOL", output = "pools",
+                roomTypes = { combat = true, elite = true },
+                excludeRoomFields = { "lake", "grave" }, candidate = "room-interior",
+                margin = 2, avoidCenter = true, neighborRadius = 1, poolSpacing = 4,
+                maxAttempts = 40,
+            },
+            roomSurface = {
+                roomField = "lake", mask = "lakeMask", cells = "lakeCells",
+                margin = 2, neighborRadius = 1, requireSolid = true,
+            },
+        },
+        terrainDecor = {
+            surfaceProps = {
+                cells = "lakeCells", kind = "shardIce", themeFlag = "icicles",
+                chance = 0.05, scaleMin = 0.6, scaleMax = 1.2,
+            },
+            wallBreach = {
+                kind = "roots", themeFlag = "roots", maxSites = 5, spacing = 7,
+                secondary = { kind = "moss", radius = 2, chance = 0.75,
+                    scaleMin = 0.7, scaleMax = 1.4 },
+            },
+            poolEdges = {
+                poolModes = { [0] = 0.8, [3] = 0.45 }, kind = "crack",
+                scaleMin = 0.9, scaleMax = 1.5,
+            },
+        },
     },
     -- hospital/school have no themed floor-clutter/emphasis blueprint yet, and the
     -- ruins props (debris/banner/bones) are forbidden in them by theme purity, so
@@ -74,6 +124,13 @@ local PROFILES = {
     -- assets, no ruins models. floorStripe/floorArrow decorate corridors,
     -- bioBin is depth-gated ward clutter, hospitalSign marks key rooms.
     hospital = {
+        structureTone = {
+            doorwayGain = 1.14, edgeDarkenStep = 0.11, edgeDarkenMaxWalls = 4,
+            checkerGain = 0.965, semanticTintAmount = 0.17, surfaceTintAmount = 0,
+            paletteAccentTintAmount = 0.14, paletteSaturation = 1.45, paletteContrast = 1.08,
+            floorVariation = { 0.94, 1.06 }, wallVariation = { 0.90, 1.08 },
+            capVariation = { 0.92, 1.10 },
+        },
         emphasis = { kind = "hospitalSign", minSpacing = 4, roleTargets = { elite = 1, boss = 2 } },
         wallFixtures = { mode = "spaced", channel = "prop", spacing = 4, proximity = 5 },
         wallDecor = {
@@ -95,6 +152,13 @@ local PROFILES = {
         },
     },
     school = {
+        structureTone = {
+            doorwayGain = 1.14, edgeDarkenStep = 0.11, edgeDarkenMaxWalls = 4,
+            checkerGain = 0.965, semanticTintAmount = 0.17, surfaceTintAmount = 0,
+            paletteAccentTintAmount = 0.10, paletteSaturation = 1.35, paletteContrast = 1.08,
+            floorVariation = { 0.94, 1.06 }, wallVariation = { 0.90, 1.08 },
+            capVariation = { 0.92, 1.10 },
+        },
         -- The school decor list (incl. its schoolWallLight) is authored in the
         -- ThemePack; the generic pass just consumes it at a denser spacing.
         wallFixtures = { mode = "spaced", channel = "pack", spacing = 4, proximity = 5 },

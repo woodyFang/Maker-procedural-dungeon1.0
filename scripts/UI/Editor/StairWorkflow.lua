@@ -4,9 +4,11 @@ local StairEditing = require("UI.Editor.StairEditing")
 
 local StairWorkflow = {}
 
-local function InsideRoom(room, x, y)
-    return room and x >= room.cx - room.w * 0.5 and x <= room.cx + room.w * 0.5
-        and y >= room.cy - room.h * 0.5 and y <= room.cy + room.h * 0.5
+local function PointRoomDistanceSquared(room, x, y)
+    if not room then return math.huge end
+    local dx = math.max(0, math.abs(x - room.cx) - room.w * 0.5)
+    local dy = math.max(0, math.abs(y - room.cy) - room.h * 0.5)
+    return dx * dx + dy * dy
 end
 
 local function CopyRoomShape(room)
@@ -81,7 +83,7 @@ function StairWorkflow.Install(Editor, helpers)
                 id = stairId, mode = "locked", pending = true,
                 style = placement.style, previewStyle = placement.style,
                 width = 2, previewWidth = 2, landingDepth = 2, previewLandingDepth = 2,
-                candidateIndex = 0, candidateCount = 0, manualPreview = true,
+                candidateIndex = 0, candidateCount = 0, manualPreview = true, allowFallback = true,
             },
         }
         self.links[#self.links + 1] = link
@@ -101,38 +103,62 @@ function StairWorkflow.Install(Editor, helpers)
         end
         self.stairPlacing, self.mode = true, "select"
         self.selected, self.selectedLink, self.linkStart = nil, nil, nil
-        if self.callbacks.onStatus then self.callbacks.onStatus("楼梯工具：在当前层任一区域内点击放置；右键或 Esc 取消。") end
+        if self.callbacks.onStatus then self.callbacks.onStatus("楼梯工具：在当前层任意位置点击放置；PCG 会自动接入相邻楼层，右键或 Esc 取消。") end
         self:NotifySelection()
         self:RefreshOverlay()
         return true
     end
 
     function Editor:PlaceStairAt(sourceIndex, x, y)
-        local source = self.rooms[sourceIndex]
-        if not source or source.floor ~= self.floor then return false end
-        local targetFloor = StairEditing.ChooseTargetFloor(source.floor or 0, self.floorCount, 1)
-        if targetFloor == nil then return false end
+        x, y = tonumber(x), tonumber(y)
+        if not x or not y or self.floorCount < 2 then return false end
         local snapshot = self:CaptureState()
-        local targetIndex, bestArea = nil, math.huge
-        for index, room in ipairs(self.rooms) do
-            local alreadyLinked = false
+        local function AlreadyLinked(a, b)
             for _, link in ipairs(self.links) do
-                if (link.a == sourceIndex and link.b == index) or (link.a == index and link.b == sourceIndex) then
-                    alreadyLinked = true; break
+                if (link.a == a and link.b == b) or (link.a == b and link.b == a) then return true end
+            end
+            return false
+        end
+        local function NearestRoom(floor, linkedFrom)
+            local bestIndex, bestDistance, bestStairRoom, bestArea = nil, math.huge, false, math.huge
+            for index, room in ipairs(self.rooms) do
+                if (room.floor or 0) == floor and (not linkedFrom or not AlreadyLinked(linkedFrom, index)) then
+                    local distance = PointRoomDistanceSquared(room, x, y)
+                    local stairRoom, area = room.stairRoom == true, room.w * room.h
+                    if distance < bestDistance
+                        or (distance == bestDistance and stairRoom and not bestStairRoom)
+                        or (distance == bestDistance and stairRoom == bestStairRoom and area < bestArea) then
+                        bestIndex, bestDistance, bestStairRoom, bestArea = index, distance, stairRoom, area
+                    end
                 end
             end
-            if not alreadyLinked and (room.floor or 0) == targetFloor and InsideRoom(room, x, y) then
-                local area = (room.stairRoom and 0 or 1000000) + room.w * room.h
-                if area < bestArea then targetIndex, bestArea = index, area end
-            end
+            return bestIndex
         end
-        if not targetIndex then
-            targetIndex = #self.rooms + 1
-            self.rooms[targetIndex] = {
-                id = targetIndex, cx = RouteEditing.Snap(x), cy = RouteEditing.Snap(y), w = 10, h = 10,
-                floor = targetFloor, locked = true, roomGroupId = source.roomGroupId,
-                stairRoom = true, stairRoomPairId = "direct-stair-" .. self.nextStairId,
+        local function AddSupportRoom(floor, pairId, roomGroupId)
+            local index = #self.rooms + 1
+            self.rooms[index] = {
+                id = index, cx = RouteEditing.Snap(x), cy = RouteEditing.Snap(y), w = 10, h = 10,
+                floor = floor, locked = true, roomGroupId = roomGroupId,
+                stairRoom = true, stairRoomPairId = pairId,
             }
+            return index
+        end
+
+        local source = self.rooms[sourceIndex]
+        if not source or (source.floor or 0) ~= self.floor then
+            sourceIndex = NearestRoom(self.floor)
+            source = self.rooms[sourceIndex]
+        end
+        local targetFloor = StairEditing.ChooseTargetFloor(self.floor, self.floorCount, 1)
+        if targetFloor == nil then return false end
+        local pairId = "direct-stair-" .. self.nextStairId
+        if not sourceIndex then
+            sourceIndex = AddSupportRoom(self.floor, pairId, nil)
+            source = self.rooms[sourceIndex]
+        end
+        local targetIndex = NearestRoom(targetFloor, sourceIndex)
+        if not targetIndex then
+            targetIndex = AddSupportRoom(targetFloor, pairId, source.roomGroupId)
         end
         local placement = StairEditing.DirectPlacement({ x = x, y = y }, self.stairPlacementStyle, 8)
         return self:CompleteAddStair(sourceIndex, targetIndex, snapshot, placement)
@@ -145,6 +171,7 @@ function StairWorkflow.Install(Editor, helpers)
         spec.anchor, spec.direction = CopyPoint(spec.previewAnchor), spec.previewDirection
         spec.length, spec.style = spec.previewLength or spec.length, spec.previewStyle or spec.style
         spec.width, spec.landingDepth = spec.previewWidth or spec.width, spec.previewLandingDepth or spec.landingDepth
+        spec.lateralCenterOffset = spec.previewLateralCenterOffset or spec.lateralCenterOffset
         spec.pending, spec.invalid, spec.error = false, false, nil
         self.stairSnapshot = nil
         self:RefreshOverlay()

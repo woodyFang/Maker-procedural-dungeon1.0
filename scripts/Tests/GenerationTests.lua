@@ -2,8 +2,11 @@ local Random = require("Generation.Random")
 local DungeonGenerator = require("Generation.DungeonGenerator")
 local MultiFloor = require("Generation.MultiFloor")
 local StairContract = require("Generation.StairContract")
+local DoorContract = require("Generation.DoorContract")
 local GeometryRules = require("Generation.GeometryRules")
 local MaterialRules = require("Rendering.ProceduralMaterialRules")
+local ThemeToneRules = require("Rendering.ThemeToneRules")
+local EnvironmentProfiles = require("Config.EnvironmentProfiles")
 local PropBlueprints = require("Rendering.PropBlueprints")
 local CustomizationStore = require("Config.CustomizationStore")
 local ThemePacks = require("Config.ThemePacks")
@@ -794,6 +797,64 @@ local function TestConfigurableFloorHeight()
     end
 end
 
+local function CreateDoorTestLayer(width, height, room)
+    local layer = {
+        grid = {}, roomId = {}, corridor = {}, doorway = {},
+        stairMask = {}, stairWallMask = {}, stairClearance = {}, stairLanding = {}, slabOpening = {},
+    }
+    for cell = 1, width * height do
+        layer.grid[cell], layer.roomId[cell] = MultiFloor.Tiles.VOID, 0
+    end
+    local x0 = math.ceil(room.cx - room.w * 0.5)
+    local x1 = math.floor(room.cx + room.w * 0.5)
+    local y0 = math.ceil(room.cy - room.h * 0.5)
+    local y1 = math.floor(room.cy + room.h * 0.5)
+    for y = y0, y1 do
+        for x = x0, x1 do
+            local cell = y * width + x + 1
+            layer.grid[cell], layer.roomId[cell] = MultiFloor.Tiles.FLOOR, room.id
+        end
+    end
+    return layer
+end
+
+local function TestDoorContract()
+    local width, height = 32, 24
+    local room = { id = 1, cx = 6, cy = 6, w = 5, h = 5, floor = 0 }
+    local other = { cx = 18, cy = 6 }
+    local layer = CreateDoorTestLayer(width, height, room)
+    local defaultPoint = DoorContract.RoomDoorPoint(room, other, 0)
+    local resolved = DoorContract.ResolveWallDoor(layer, width, height, room,
+        defaultPoint, defaultPoint, 3, true)
+    Check(resolved and resolved.side == "east" and resolved.x == 8 and resolved.y == 6,
+        "default door did not resolve to the real east wall")
+    local approach = DoorContract.DoorApproach(resolved)
+    Check(approach.x == 10 and approach.y == 6,
+        "door approach did not extend along the wall normal")
+
+    DoorContract.MarkDoor(layer, width, height, resolved, 3)
+    for _, y in ipairs({ 5, 6, 7 }) do
+        Check(layer.doorway[y * width + 8 + 1], "wide door did not mark its full tangent span")
+    end
+    local arch = DoorContract.BuildArch(layer, width, height, room, resolved, 3)
+    Check(arch and arch.x == 8 and arch.y == 6
+            and math.abs(arch.interfaceX - 8.5) < 0.000001
+            and math.abs(arch.interfaceY - 6) < 0.000001,
+        "door arch did not use the resolved wall interface")
+
+    local blocked = CreateDoorTestLayer(width, height, room)
+    for y = 4, 8 do
+        for x = 9, 10 do blocked.grid[y * width + x + 1] = MultiFloor.Tiles.WALL end
+    end
+    local rejected = DoorContract.ResolveWallDoor(blocked, width, height, room,
+        { x = 8, y = 6, side = "east" }, { x = 8, y = 6, side = "east" }, 2, false)
+    Check(not rejected, "blocked custom door silently changed or accepted its wall")
+    local fallback = DoorContract.ResolveWallDoor(blocked, width, height, room,
+        { x = 8, y = 6, side = "east" }, { x = 8, y = 6, side = "east" }, 2, true)
+    Check(fallback and fallback.side ~= "east",
+        "automatic door did not fall back to another legal wall")
+end
+
 local function TestThreeParityContracts()
     local expected = {
         molten = "pools", frost = "lakes", grim = "graves", verdant = "roots",
@@ -809,6 +870,11 @@ local function TestThreeParityContracts()
         for _, edge in ipairs(dungeon.edges) do if edge.kind == "corridor" then corridorEdges = corridorEdges + 1 end end
         for _, layer in ipairs(dungeon.layers) do
             archCount = archCount + #layer.arches
+            for _, arch in ipairs(layer.arches) do
+                Check(arch.interfaceX ~= nil and arch.interfaceY ~= nil
+                        and arch.anchorX ~= nil and arch.anchorY ~= nil,
+                    theme .. ": generated arch is missing the generic wall interface")
+            end
             if feature == "pools" then featureCount = featureCount + #layer.pools
             elseif feature == "lakes" then featureCount = featureCount + #layer.lakeCells
             else
@@ -892,6 +958,83 @@ local function TestMaterialSeparationContracts()
         "school floor and painted wall no longer have distinct PBR response")
     Check(profiles.schoolTrim.metalness >= 0.50 and profiles.schoolWood.metalness <= 0.05,
         "school metal lockers and wooden furniture no longer read as different materials")
+end
+
+local function ColorStrength(color)
+    return ((color >> 16) & 0xff) + ((color >> 8) & 0xff) + (color & 0xff)
+end
+
+local function ColorDistance(a, b)
+    return math.abs(((a >> 16) & 0xff) - ((b >> 16) & 0xff))
+        + math.abs(((a >> 8) & 0xff) - ((b >> 8) & 0xff))
+        + math.abs((a & 0xff) - (b & 0xff))
+end
+
+local function TestThemeToneContracts()
+    local valid, reason = ThemeToneRules.Validate()
+    Check(valid, reason)
+    local cases = {
+        { setting = "dungeon", theme = "ancient" },
+        { setting = "hospital", theme = "sterile" },
+        { setting = "school", theme = "schoolDay" },
+    }
+    for _, item in ipairs(cases) do
+        local theme = Themes.Get(item.theme)
+        local tone = EnvironmentProfiles.Resolve(item.setting).structureTone
+        local baseFloor = theme.floor
+        local plain = ThemeToneRules.ResolveFloorColor(theme, tone, {
+            walls8 = 0, checker = false,
+        })
+        local corridorBase = theme.corridor
+        local corridor = ThemeToneRules.ResolveFloorColor(theme, tone, {
+            corridor = true, walls8 = 0, checker = false,
+        })
+        local doorway = ThemeToneRules.ResolveFloorColor(theme, tone, {
+            walls8 = 0, checker = false, isDoorway = true,
+        })
+        local edge = ThemeToneRules.ResolveFloorColor(theme, tone, {
+            walls8 = tone.edgeDarkenMaxWalls, checker = false,
+        })
+        local role = ThemeToneRules.ResolveFloorColor(theme, tone, {
+            walls8 = 0, checker = false, room = { type = "boss" },
+        })
+        local visibilityDelta = ColorDistance(plain, baseFloor)
+        local corridorDelta = ColorDistance(corridor, corridorBase)
+        if item.setting == "dungeon" then
+            Check(visibilityDelta == 0 and corridorDelta == 0,
+                item.setting .. ": ruins palette changed unexpectedly before tone rules")
+        else
+            Check(visibilityDelta >= 4 and corridorDelta >= 4,
+                string.format("%s: palette visibility modulation is too weak floor=%d corridor=%d",
+                    item.setting, visibilityDelta, corridorDelta))
+        end
+        Check(ColorStrength(doorway) > ColorStrength(plain),
+            item.setting .. ": doorway tone did not brighten the floor")
+        Check(ColorStrength(edge) < ColorStrength(plain),
+            item.setting .. ": wall-edge tone did not darken the floor")
+        Check(role ~= plain, item.setting .. ": room semantic tint did not affect the floor")
+
+        local wall = ThemeToneRules.ResolveWallColor(theme, tone)
+        local cap = ThemeToneRules.ResolveCapColor(theme, tone)
+        if item.setting ~= "dungeon" then
+            Check(ColorDistance(wall, theme.wall) >= 4,
+                item.setting .. ": wall palette visibility modulation is too weak")
+            Check(ColorDistance(cap, theme.cap) >= 4,
+                item.setting .. ": cap palette visibility modulation is too weak")
+        end
+
+        local stableA = ThemeToneRules.ResolveFloorColor(theme, tone, {
+            walls8 = 1, checker = true, room = { type = "elite" }, rng = Random.new(9917),
+        })
+        local stableB = ThemeToneRules.ResolveFloorColor(theme, tone, {
+            walls8 = 1, checker = true, room = { type = "elite" }, rng = Random.new(9917),
+        })
+        Check(stableA == stableB, item.setting .. ": tone variation is not deterministic")
+        Check(ThemeToneRules.ResolveWallColor(theme, tone, Random.new(3)) ~= nil,
+            item.setting .. ": wall tone did not resolve")
+        Check(ThemeToneRules.ResolveCapColor(theme, tone, Random.new(3)) ~= nil,
+            item.setting .. ": cap tone did not resolve")
+    end
 end
 
 local function TestCustomizationNormalization()
@@ -1055,6 +1198,64 @@ local function TestPinnedEditorStairContract()
         "upper stair socket does not match the rendered second-flight endpoint")
 end
 
+local function TestAnywhereEditorStairFallback()
+    local far = DungeonGenerator.Generate({
+        seed = 7152028,
+        floorCount = 2,
+        editorEnabled = true,
+        editorRooms = {
+            { cx = 0, cy = 0, w = 10, h = 10, floor = 0, roleHint = "entrance" },
+            { cx = 0, cy = 0, w = 10, h = 10, floor = 1, roleHint = "boss" },
+        },
+        editorEdges = {
+            { a = 1, b = 2, kind = "stairs", isManual = true,
+                stairSpec = { id = "stair-anywhere", mode = "locked", pending = true,
+                    previewAnchor = { x = 80, y = 60 }, previewDirection = "east",
+                    previewStyle = "l-turn", previewWidth = 2, previewLength = 8,
+                    previewLandingDepth = 2, allowFallback = true } },
+        },
+        settingKey = "hospital",
+        theme = "sterile",
+    })
+    CheckValid(far, "far blank-space editor stair")
+    local farConnector = far.connectors[1]
+    Check(farConnector and far.editorOffset
+        and farConnector.lower.x - far.editorOffset.x == 80
+        and farConnector.lower.y - far.editorOffset.y == 60,
+        "editor map bounds clipped a stair authored far from every room")
+    Check(far.edges[1].stairSpec.allowFallback == true,
+        "blank-space stair lost its PCG fallback policy")
+
+    local blocked = DungeonGenerator.Generate({
+        seed = 7152029,
+        floorCount = 2,
+        editorEnabled = true,
+        editorRooms = {
+            { cx = 0, cy = 18, w = 10, h = 10, floor = 0, roleHint = "entrance" },
+            { cx = 0, cy = 18, w = 10, h = 10, floor = 1, roleHint = "boss" },
+            { cx = 18, cy = 18, w = 8, h = 8, floor = 0, roleHint = "secret" },
+        },
+        editorEdges = {
+            { a = 1, b = 3, isManual = true, width = 1 },
+            { a = 1, b = 2, kind = "stairs", isManual = true,
+                stairSpec = { id = "stair-fallback", mode = "locked", pending = true,
+                    previewAnchor = { x = 18, y = 18 }, previewDirection = "east",
+                    previewStyle = "l-turn", previewWidth = 2, previewLength = 8,
+                    previewLandingDepth = 2, allowFallback = true } },
+        },
+        settingKey = "hospital",
+        theme = "sterile",
+    })
+    CheckValid(blocked, "blocked blank-space stair fallback")
+    local connector = blocked.connectors[1]
+    Check(connector and connector.fallbackUsed == true,
+        "PCG did not activate fallback for a blocked authored stair point")
+    Check(connector.lower.x - blocked.editorOffset.x ~= 18
+        or connector.lower.y - blocked.editorOffset.y ~= 18
+        or connector.direction ~= "east",
+        "PCG fallback left the stair on the blocked contract")
+end
+
 local function TestPendingEditorStairPreview()
     local dungeon = DungeonGenerator.Generate({
         seed = 7152027,
@@ -1085,6 +1286,7 @@ function GenerationTests.Run()
         { "stair metre width", TestStairWidthMetreGrid },
         { "stair headroom contract", TestStairContractHeadroomAndProtection },
         { "route turn penalty", TestRouteTurnPenalty },
+        { "door contract", TestDoorContract },
         { "dungeon determinism", TestDungeonDeterminism },
         { "floor setting isolation", TestFloorSettingIsolation },
         { "single floor", TestSingleFloor },
@@ -1101,9 +1303,11 @@ function GenerationTests.Run()
         { "three parity contracts", TestThreeParityContracts },
         { "geometry seam contracts", TestGeometrySeamContracts },
         { "material separation", TestMaterialSeparationContracts },
+        { "theme tone contracts", TestThemeToneContracts },
         { "customization normalization", TestCustomizationNormalization },
         { "editor room groups", TestEditorRoomGroupPropagation },
         { "pinned editor stair", TestPinnedEditorStairContract },
+        { "anywhere stair fallback", TestAnywhereEditorStairFallback },
         { "pending stair preview", TestPendingEditorStairPreview },
     }
     local started = os.clock()

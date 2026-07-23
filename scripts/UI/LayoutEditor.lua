@@ -543,7 +543,10 @@ function LayoutEditor:AddRoomAt(gridX, gridY)
 end
 
 function LayoutEditor:ContextItems(kind, context)
-    if kind == "blank" then return { { action = "addRoom", label = "添加房间" } } end
+    if kind == "blank" then return {
+        { action = "addRoom", label = "添加房间" },
+        { action = "addStair", label = "在此添加楼梯" },
+    } end
     if kind == "room" then
         local room = self.rooms[context.room]
         return {
@@ -554,7 +557,7 @@ function LayoutEditor:ContextItems(kind, context)
             { action = "boss", label = "设置/取消终点" },
             { action = "secret", label = "设置/取消密室" },
             { action = "roomGroup", label = "分配房间组" },
-            { action = "addStair", label = "从此房间添加楼梯" },
+            { action = "addStair", label = "在此添加楼梯" },
             { action = "deleteRoom", label = "删除房间", danger = true },
         }
     end
@@ -575,6 +578,7 @@ function LayoutEditor:ContextItems(kind, context)
             { action = "resetLink", label = "重置路径形状" },
             { action = "narrow", label = "路径变窄" },
             { action = "widen", label = "路径变宽" },
+            { action = "addStair", label = "在此添加楼梯" },
             { action = "deleteLink", label = "删除路径", danger = true },
         }
     end
@@ -624,7 +628,14 @@ function LayoutEditor:HandleContextAction(item, context)
     elseif action == "roomGroup" then
         self.selected = context.room; self:NotifySelection()
         if self.callbacks.onRoomGroupMenu then self.callbacks.onRoomGroupMenu() end
-    elseif action == "addStair" then self.selected = context.room; self:BeginAddStair()
+    elseif action == "addStair" then
+        self.selected = context.room
+        local room = self.rooms[context.room]
+        local x = context.x or (room and room.cx)
+        local y = context.y or (room and room.cy)
+        if not self:PlaceStairAt(context.room, x, y) and self.callbacks.onStatus then
+            self.callbacks.onStatus("无法在此添加楼梯：至少需要两层，且 PCG 必须能找到合法的楼梯接入位置。")
+        end
     elseif action == "narrow" then self.selectedLink = context.link; self:AdjustPathWidth(-1)
     elseif action == "widen" then self.selectedLink = context.link; self:AdjustPathWidth(1)
     elseif action == "deleteLink" then self.selectedLink = context.link; self:DeleteSelected()
@@ -1087,7 +1098,9 @@ function LayoutEditor:Update(_)
         local gridX, gridY = self.editorViewport:ScreenToGrid(mx, my)
         local hit = self:HitRoom({ x = gridX, y = 0, z = gridY })
         if self.stairPlacing then
-            if hit then self:PlaceStairAt(hit, gridX, gridY) end
+            if not self:PlaceStairAt(hit, gridX, gridY) and self.callbacks.onStatus then
+                self.callbacks.onStatus("无法在此添加楼梯：至少需要两层，且 PCG 必须能找到合法的楼梯接入位置。")
+            end
             return
         end
         if self.mode == "select" then

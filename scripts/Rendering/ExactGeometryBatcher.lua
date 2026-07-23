@@ -4,25 +4,19 @@ local GeometryRules = require("Generation.GeometryRules")
 local Geometry = require("Rendering.DungeonGeometryLibrary")
 local Bridge = require("Rendering.GeometryBridge")
 local MaterialRules = require("Rendering.ProceduralMaterialRules")
+local ThemeToneRules = require("Rendering.ThemeToneRules")
 local ThemePacks = require("Config.ThemePacks")
 
 local materialRulesValid, materialRulesError = MaterialRules.Validate()
 assert(materialRulesValid, materialRulesError)
+local toneRulesValid, toneRulesError = ThemeToneRules.Validate()
+assert(toneRulesValid, toneRulesError)
 
 local ExactGeometryBatcher = {}
 ExactGeometryBatcher.__index = ExactGeometryBatcher
 
 local TILE_FLOOR = 1
 local TILE_WALL = 2
-
-local ROOM_TINT = {
-    entrance = 0x3fd0bb,
-    combat = 0x8f95a3,
-    elite = 0x9b6cf0,
-    treasure = 0xd9a441,
-    shrine = 0x5a8fe8,
-    boss = 0xd8433a,
-}
 
 local function ClampByte(value)
     return math.max(0, math.min(255, math.floor(value + 0.5)))
@@ -208,6 +202,7 @@ function ExactGeometryBatcher:QueueStructure(layer, floorSpacing)
     local width, height = self.dungeon.width, self.dungeon.height
     local structure = self.pack and self.pack.structure or nil
     local rng = Random.new((self.dungeon.seed ~ 0x9e3779b9) + layer.floor * 0x45d9f3b)
+    local tone = ThemeToneRules.Resolve(self.settingKey)
     local mossMask = {}
     for _, prop in ipairs(layer.props) do
         if prop.kind == "moss" then mossMask[Index(prop.x, prop.y, width)] = true end
@@ -251,27 +246,12 @@ function ExactGeometryBatcher:QueueStructure(layer, floorSpacing)
                 end
                 local rid = layer.roomId[c] or 0
                 local room = rid > 0 and self.dungeon.rooms[rid] or nil
-                local color
-                if self.hospital then
-                    color = layer.corridor[c] and 0x93aaa5 or 0xb4c1bb
-                    if room and room.type == "boss" then color = LerpColor(color, 0xcbd8d2, 0.12) end
-                    if room and room.type == "entrance" then color = LerpColor(color, 0xa8bbb4, 0.10) end
-                    if layer.doorway[c] then color = LerpColor(color, 0xc5d3cd, 0.12) end
-                    if rng:Chance(0.02) then color = LerpColor(color, 0x7b8783, 0.12) end
-                elseif self.school then
-                    color = layer.corridor[c] and self.theme.corridor or self.theme.floor
-                    if room and room.type == "entrance" then color = LerpColor(color, 0xc4d1c9, 0.10) end
-                    if room and room.type == "treasure" then color = LerpColor(color, 0xb09b78, 0.10) end
-                    if layer.doorway[c] then color = LerpColor(color, 0xd0d1c3, 0.08) end
-                else
-                    color = layer.corridor[c] and self.theme.corridor or self.theme.floor
-                    if room and room.type ~= "combat" then color = LerpColor(color, ROOM_TINT[room.type] or color, 0.17) end
-                    if layer.doorway[c] then color = MultiplyColor(color, 1.14) end
-                    if mossMask[c] then color = LerpColor(color, 0x4c7a42, 0.32) end
-                    color = MultiplyColor(color, 1 - 0.11 * math.min(walls8, 4))
-                end
-                if ((x + y) & 1) ~= 0 then color = MultiplyColor(color, 0.965) end
-                color = MultiplyColor(color, rng:Float(0.94, 1.06))
+                local color = ThemeToneRules.ResolveFloorColor(self.theme, tone, {
+                    corridor = layer.corridor[c], room = room, walls8 = walls8,
+                    isDoorway = layer.doorway[c], checker = ((x + y) & 1) ~= 0,
+                    surfaceTint = mossMask[c] and tone.surfaceTint,
+                    rng = rng,
+                })
                 local floorGeometry = structure and structure.floorGeometry
                     or (self.hospital and "hospitalFloor" or "floor")
                 local floorMaterial = structure and structure.floorMaterial
@@ -305,12 +285,8 @@ function ExactGeometryBatcher:QueueStructure(layer, floorSpacing)
                     or (GeometryRules.DUNGEON_WALL_HEIGHT
                         + rng:Float(-GeometryRules.DUNGEON_WALL_HEIGHT_VARIATION,
                             GeometryRules.DUNGEON_WALL_HEIGHT_VARIATION)))
-                local wallColor = self.hospital and MultiplyColor(0xaebdb8, rng:Float(0.99, 1.02))
-                    or (self.school and MultiplyColor(self.theme.wall, rng:Float(0.98, 1.02)))
-                    or MultiplyColor(self.theme.wall, rng:Float(0.90, 1.08))
-                local capColor = self.hospital and MultiplyColor(0xb8c4bf, rng:Float(0.995, 1.02))
-                    or (self.school and MultiplyColor(self.theme.cap, rng:Float(0.99, 1.02)))
-                    or MultiplyColor(self.theme.cap, rng:Float(0.92, 1.10))
+                local wallColor = ThemeToneRules.ResolveWallColor(self.theme, tone, rng)
+                local capColor = ThemeToneRules.ResolveCapColor(self.theme, tone, rng)
                 local wallMaterial = structure and structure.wallMaterial
                     or (self.hospital and "hospitalWall" or "wall")
                 local wallGeometry = structure and structure.wallGeometry
@@ -528,15 +504,19 @@ function ExactGeometryBatcher:QueueSpawn(layer, spawn, floorSpacing, rng)
 end
 
 function ExactGeometryBatcher:QueueArch(layer, arch, floorSpacing)
-    local x, baseY, z = self:WorldPosition(arch.x, arch.y, layer.floor, floorSpacing, 0)
-    self.activeBaseY = baseY
     local side = arch.side or "east"
     local horizontal = side == "north" or side == "south" or side == "n" or side == "s"
+    -- The arch centre follows the corridor tangent, while its wall-normal
+    -- coordinate follows the resolved room/corridor interface. Older saved
+    -- layouts have no interface fields and intentionally fall back to x/y.
+    local gridX = horizontal and arch.x or (arch.interfaceX or arch.x)
+    local gridY = horizontal and (arch.interfaceY or arch.y) or arch.y
+    local x, baseY, z = self:WorldPosition(gridX, gridY, layer.floor, floorSpacing, 0)
+    self.activeBaseY = baseY
     local half = (arch.len or 2) * 0.5 + 0.15
     local structure = self.pack and self.pack.structure or nil
-    local color = self.hospital and LerpColor(self.theme.wall, 0xe8f3ef, 0.35)
-        or (structure and LerpColor(self.theme.wall, 0xffffff, 0.08))
-        or LerpColor(self.theme.wall, 0xffffff, 0.12)
+    local tone = ThemeToneRules.Resolve(self.settingKey)
+    local color = ThemeToneRules.ResolveDoorColor(self.theme, tone)
     local post = structure and structure.doorPostGeometry
         or (self.hospital and "hospitalDoorPost" or "archPost")
     local lintel = structure and structure.doorLintelGeometry

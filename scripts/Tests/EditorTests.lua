@@ -9,6 +9,7 @@ local EditorGesture = require("UI.Editor.EditorGesture")
 local RoomEditing = require("UI.Editor.RoomEditing")
 local EditorSession = require("UI.Editor.EditorSession")
 local CanvasViewport = require("UI.Editor.CanvasViewport")
+local LayoutEditor = require("UI.LayoutEditor")
 local SceneLayoutEditor = require("UI.SceneLayoutEditor")
 local MultiFloor = require("Generation.MultiFloor")
 local ForgeCameraController = require("Input.ForgeCameraController")
@@ -759,6 +760,79 @@ local function TestDirectStairWorkflow()
         "stair action lifecycle did not refresh its live geometry")
 end
 
+local function TestAnywhereStairWorkflow()
+    local Editor = {}
+    StairWorkflow.Install(Editor, { CopyRooms = EditorData.CopyRooms, CopyLink = EditorData.CopyLink })
+    local function NewEditor(rooms, links)
+        return setmetatable({
+            rooms = EditorData.CopyRooms(rooms), links = links or {}, floor = 0, floorCount = 2,
+            nextStairId = 1, stairPlacementStyle = "l-turn", callbacks = {},
+            RefreshOverlay = function() end, NotifySelection = function() end,
+            MarkDisconnectedRoomsSecret = function() end,
+            Commit = function(self) for index, room in ipairs(self.rooms) do room.id = index end end,
+            GetRooms = function(self) return EditorData.CopyRooms(self.rooms) end,
+            GetLinks = function(self)
+                local result = {}
+                for index, link in ipairs(self.links) do result[index] = EditorData.CopyLink(link) end
+                return result
+            end,
+        }, { __index = Editor })
+    end
+
+    local anywhere = NewEditor({
+        { id = 1, cx = 0, cy = 0, w = 10, h = 10, floor = 0 },
+        { id = 2, cx = 0, cy = 0, w = 10, h = 10, floor = 1 },
+    })
+    Check(anywhere:PlaceStairAt(nil, 40, 30), "blank-space stair placement was rejected")
+    Check(#anywhere.rooms == 2 and anywhere.links[1].a == 1 and anywhere.links[1].b == 2,
+        "blank-space stair did not use the nearest rooms on both floors")
+    Check(anywhere.links[1].stairSpec.allowFallback == true
+        and SamePoint(anywhere.links[1].stairSpec.previewAnchor, 38, 28),
+        "blank-space stair did not preserve its requested point for PCG fallback")
+
+    local duplicate = NewEditor({
+        { id = 1, cx = 0, cy = 0, w = 10, h = 10, floor = 0 },
+        { id = 2, cx = 0, cy = 0, w = 10, h = 10, floor = 1 },
+    }, { { a = 1, b = 2, kind = "corridor", width = 2, bends = {}, autoRoute = {} } })
+    Check(duplicate:PlaceStairAt(nil, 25, 20) and #duplicate.rooms == 3,
+        "PCG support room was not created when the nearest room pair was already linked")
+    Check(duplicate.rooms[3].stairRoom and duplicate.links[2].b == 3,
+        "fallback support room was not connected by the authored stair")
+
+    local missingFloorRoom = NewEditor({
+        { id = 1, cx = 5, cy = 5, w = 10, h = 10, floor = 1 },
+    })
+    Check(missingFloorRoom:PlaceStairAt(nil, 18, 12) and #missingFloorRoom.rooms == 2,
+        "blank floor could not create a stair support room")
+    Check(missingFloorRoom.rooms[2].stairRoom and missingFloorRoom.links[1].a == 2,
+        "blank-floor stair support was not used as the current-floor endpoint")
+end
+
+local function TestRightClickStairPlacement()
+    local function Verify(Editor, label)
+        local placed, status = nil, nil
+        local fake = setmetatable({
+            rooms = { { id = 1, cx = 12, cy = 9, floor = 0 } },
+            links = {}, callbacks = { onStatus = function(text) status = text end },
+            PlaceStairAt = function(_, room, x, y)
+                placed = { room = room, x = x, y = y }
+                return true
+            end,
+        }, { __index = Editor })
+        local hasBlankStair = false
+        for _, item in ipairs(fake:ContextItems("blank", { x = 13, y = 10 })) do
+            if item.action == "addStair" then hasBlankStair = true; break end
+        end
+        Check(hasBlankStair, label .. " blank context menu omitted add stair")
+        fake:HandleContextAction({ action = "addStair" }, { x = 13, y = 10 })
+        Check(placed and placed.room == nil and placed.x == 13 and placed.y == 10,
+            label .. " right-click add stair did not accept a blank context point")
+        Check(status == nil, label .. " right-click add stair reported a false failure")
+    end
+    Verify(LayoutEditor, "2D")
+    Verify(SceneLayoutEditor, "3D")
+end
+
 local function TestCriticalStairDetection()
     local rooms = { { id = 1 }, { id = 2 }, { id = 3 } }
     local stair = { a = 1, b = 2, kind = "stairs" }
@@ -895,6 +969,8 @@ function EditorTests.Run()
         { "stair pairing and rotation", TestStairPairingAndRotation },
         { "stair style/width controls", TestStairStyleWidthAndPointerControls },
         { "direct stair workflow", TestDirectStairWorkflow },
+        { "anywhere stair workflow", TestAnywhereStairWorkflow },
+        { "right-click stair placement", TestRightClickStairPlacement },
         { "critical stair detection", TestCriticalStairDetection },
         { "paired stair room removal", TestPairedStairRoomRemoval },
         { "2D/3D session synchronization", Test2D3DSessionSynchronization },
@@ -918,6 +994,8 @@ function EditorTests.RunStairs()
         { "stair pairing and rotation", TestStairPairingAndRotation },
         { "stair style/width controls", TestStairStyleWidthAndPointerControls },
         { "direct stair workflow", TestDirectStairWorkflow },
+        { "anywhere stair workflow", TestAnywhereStairWorkflow },
+        { "right-click stair placement", TestRightClickStairPlacement },
         { "critical stair detection", TestCriticalStairDetection },
         { "paired stair room removal", TestPairedStairRoomRemoval },
     }

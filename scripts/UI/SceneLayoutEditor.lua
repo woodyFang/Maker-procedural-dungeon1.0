@@ -924,7 +924,10 @@ function SceneLayoutEditor:AddRoomAt(gridX, gridY)
 end
 
 function SceneLayoutEditor:ContextItems(kind, context)
-    if kind == "blank" then return { { action = "addRoom", label = "添加区域" } } end
+    if kind == "blank" then return {
+        { action = "addRoom", label = "添加区域" },
+        { action = "addStair", label = "在此添加楼梯" },
+    } end
     if kind == "room" then
         local room = self.rooms[context.room]
         local lockLabel = room and room.locked and "解锁区域" or "锁定区域"
@@ -938,7 +941,7 @@ function SceneLayoutEditor:ContextItems(kind, context)
             { action = "boss", label = "设为/取消终点" },
             { action = "secret", label = "设为/取消密室" },
             { action = "roomGroup", label = "赋予房间组…" },
-            { action = "addStair", label = "从此区域添加楼梯" },
+            { action = "addStair", label = "在此添加楼梯" },
         }
     end
     if kind == "link" then
@@ -958,11 +961,18 @@ function SceneLayoutEditor:ContextItems(kind, context)
             { action = "resetLink", label = "重置路径形状" },
             { action = "narrow", label = "路径变窄" },
             { action = "widen", label = "路径变宽" },
+            { action = "addStair", label = "在此添加楼梯" },
             { action = "deleteLink", label = "删除路径", danger = true },
         }
     end
-    if kind == "bend" then return { { action = "deleteBend", label = "删除转折点", danger = true } } end
-    if kind == "door" then return { { action = "resetDoor", label = "重置门槽点" } } end
+    if kind == "bend" then return {
+        { action = "addStair", label = "在此添加楼梯" },
+        { action = "deleteBend", label = "删除转折点", danger = true },
+    } end
+    if kind == "door" then return {
+        { action = "resetDoor", label = "重置门槽点" },
+        { action = "addStair", label = "在此添加楼梯" },
+    } end
     return {}
 end
 
@@ -1025,7 +1035,14 @@ function SceneLayoutEditor:HandleContextAction(item, context)
     elseif action == "roomGroup" then
         self.selected = context.room; self:NotifySelection()
         if self.callbacks.onRoomGroupMenu then self.callbacks.onRoomGroupMenu() end
-    elseif action == "addStair" then self:BeginAddStair()
+    elseif action == "addStair" then
+        self.selected = context.room
+        local room = self.rooms[context.room]
+        local x = context.x or (room and room.cx)
+        local y = context.y or (room and room.cy)
+        if not self:PlaceStairAt(context.room, x, y) and self.callbacks.onStatus then
+            self.callbacks.onStatus("无法在此添加楼梯：至少需要两层，且 PCG 必须能找到合法的楼梯接入位置。")
+        end
     elseif action == "narrow" then self.selectedLink = context.link; self:AdjustPathWidth(-1)
     elseif action == "widen" then self.selectedLink = context.link; self:AdjustPathWidth(1)
     elseif action == "deleteLink" then self:DeleteLinkAt(context.link)
@@ -1185,8 +1202,9 @@ function SceneLayoutEditor:Update(_)
         if not world then self.blankPanPressBlocked = true; return end
         local hit, gridX, gridY = self:HitRoom(world)
         if self.stairPlacing then
-            if hit then self:PlaceStairAt(hit, gridX, gridY)
-            elseif self.callbacks.onStatus then self.callbacks.onStatus("请在当前层的区域内部点击放置楼梯。") end
+            if not self:PlaceStairAt(hit, gridX, gridY) and self.callbacks.onStatus then
+                self.callbacks.onStatus("无法在此添加楼梯：至少需要两层，且 PCG 必须能找到合法的楼梯接入位置。")
+            end
             self.blankPanPressBlocked = true
             return
         end
