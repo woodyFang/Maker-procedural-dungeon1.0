@@ -92,6 +92,54 @@ local function TestAnchoredBlankPan()
         "stationary blank-space pan reported camera movement")
 end
 
+local function TestEditViewFrameRecenter()
+    local controller = ForgeCameraController.new({ LookAt = function() end }, { fov = 45 })
+    controller.editViewActive = true
+    controller.defaultTarget = Vector3(0, 5, 0)
+    controller.defaultDistance = 120
+    controller.editPlaneY = 3.2
+    controller.target = Vector3(40, 3.2, -25)
+    controller.camera.orthoSize = 8
+    Check(controller:FrameEditView(),
+        "F frame-all should report a change while the edit view is active")
+    Check(math.abs(controller.target.x) < 1e-6 and math.abs(controller.target.z) < 1e-6,
+        "F frame-all did not return the edit focus to the layout center")
+    Check(math.abs(controller.target.y - 3.2) < 1e-6,
+        "F frame-all left the edit plane height")
+    Check(controller.camera.orthoSize > 8,
+        "F frame-all did not refit the orthographic frustum to the floor span")
+    controller.editViewActive = false
+    Check(not controller:FrameEditView(),
+        "F frame-all should be inert when the edit view is not active")
+end
+
+local function TestEditZoomAnchorStability()
+    -- Model the top-down ortho cursor->world map as linear in orthoSize
+    -- (worldXZ = target.xz + k * size) and prove the analytic anchor holds the
+    -- same world point under the cursor across many notches with zero drift.
+    local kx, kz = 0.37, -0.21
+    local target = Vector3(12, 3, -8)
+    local size = 40
+    local function CursorWorld(t, s)
+        return Vector3(t.x + kx * s, t.y, t.z + kz * s)
+    end
+    local anchor = CursorWorld(target, size)
+    for step = 1, 48 do
+        local cursorWorld = CursorWorld(target, size)
+        local newSize = ForgeCameraController.ZoomValue(size, step % 8 == 0 and -1 or 1, 5)
+        target = ForgeCameraController.ZoomAnchorTarget(target, cursorWorld, size, newSize)
+        size = newSize
+    end
+    local final = CursorWorld(target, size)
+    Check(math.abs(final.x - anchor.x) < 1e-6 and math.abs(final.z - anchor.z) < 1e-6,
+        "analytic zoom anchor drifted the cursor world point across repeated zooms")
+    Check(math.abs(final.y - anchor.y) < 1e-6,
+        "zoom anchor should never move the edit plane height")
+    local unchanged = ForgeCameraController.ZoomAnchorTarget(target, nil, size, size)
+    Check(unchanged == target,
+        "zoom anchor should be a no-op when the cursor world point is unavailable")
+end
+
 local function TestUnboundedCameraZoomOut()
     Check(ForgeCameraController.ZoomValue(360, -1, 45) > 360,
         "overview camera still stopped at its former zoom-out limit")
@@ -820,6 +868,8 @@ function EditorTests.Run()
         { "path straightening", TestPathStraightening },
         { "control snapping", TestControlSnapping },
         { "anchored blank camera pan", TestAnchoredBlankPan },
+        { "edit view frame-all recenter", TestEditViewFrameRecenter },
+        { "edit zoom anchor stability", TestEditZoomAnchorStability },
         { "unbounded camera zoom out", TestUnboundedCameraZoomOut },
         { "left-button grab pan direction", TestGrabPanDirection },
         { "corridor center offset", TestCorridorCenterOffset },

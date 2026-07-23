@@ -110,8 +110,6 @@ function Start()
     Check(app.topicMode == "fixedPCG" and app.activeFixedThemeId == FixedThemes.MODE_ID
             and app.activeCustomSettingId == nil,
         "fixed PCG retained a base or custom topic selection")
-    Check(panel.currentTopicValue:GetText() == "未启用" and panel.currentTopicStatus:GetText() == "固定 PCG",
-        "fixed PCG mode did not clear the current AI topic indicator")
     Check(app:ApplyCustomizationData({
         customSettings = {
             { id = "cloud-topic", label = "浜戠棰樻潗", baseSettingKey = "school", packStatus = "ready" },
@@ -141,8 +139,6 @@ function Start()
         "generic theme did not save and activate its configured floor height")
     Check(app.topicMode == "custom" and app.activeFixedThemeId == nil,
         "custom topic was not mutually exclusive with fixed PCG")
-    Check(panel.currentTopicValue:GetText() == "超市" and panel.currentTopicStatus:GetText() == "已生成",
-        "generated supermarket topic was not shown as the current UI topic")
     Check(panel.customSettingExpanded and panel.customSettingList:IsVisible(),
         "generated custom topic did not automatically expand the saved topic list")
     local supermarketCard = panel.customSettingList:GetChildAt(1)

@@ -78,6 +78,22 @@ function ForgeCameraController.GrabPanDelta(yawDegrees, moveX, moveY, worldPerPi
     )
 end
 
+function ForgeCameraController.ZoomAnchorTarget(target, cursorWorld, oldSize, newSize)
+    -- Keep the world point under the cursor stationary while the orthographic
+    -- size changes. This is exact for a top-down ortho camera because the
+    -- screen->world mapping is linear in orthoSize: worldXZ = target.xz + k *
+    -- orthoSize, where k depends only on the (fixed) cursor position this frame.
+    -- Solving analytically from a single pre-zoom sample avoids the per-notch
+    -- drift that a second post-zoom GetScreenRay sample accumulates.
+    if not cursorWorld or not oldSize or oldSize <= 0 then return target end
+    local ratio = 1 - newSize / oldSize
+    return Vector3(
+        target.x + (cursorWorld.x - target.x) * ratio,
+        target.y,
+        target.z + (cursorWorld.z - target.z) * ratio
+    )
+end
+
 function ForgeCameraController:FrameDungeon(dungeon, currentFloor)
     local span = math.max(dungeon.width, dungeon.height)
     local floor = currentFloor or 0
@@ -103,6 +119,21 @@ function ForgeCameraController:Reset()
     self.pitch = math.deg(0.64)
     self.distance = self.defaultDistance
     self:Apply()
+end
+
+function ForgeCameraController:FrameEditView()
+    -- "Frame all" for the orthographic edit view, mirroring the F shortcut in
+    -- DCC 3D tools: recenter on the layout origin and refit the frustum so the
+    -- whole floor is visible again. Instant on purpose so the reset feels snappy.
+    if not self.editViewActive or self.transition or not self.camera then return false end
+    if IsTextInputFocused() then return false end
+    self.target = Vector3(self.defaultTarget.x, self.editPlaneY, self.defaultTarget.z)
+    self.camera.orthoSize = math.max(
+        MIN_EDIT_ORTHO_SIZE,
+        2 * self.defaultDistance * math.tan(math.rad(self.camera.fov or 45) * 0.5)
+    )
+    self:ApplyEditView()
+    return true
 end
 
 function ForgeCameraController:SetTargetFloor(dungeon, floor)
@@ -382,15 +413,18 @@ function ForgeCameraController:UpdateEditView(timeStep, allowLeftPan)
     local changed = false
     local wheel = input.mouseMoveWheel
     if wheel ~= 0 and not pointerOverUI then
-        local before = self:ScreenToEditPlane(mousePosition)
+        -- Sample the cursor's world point once, at the current zoom, then solve
+        -- for the target that keeps it fixed. Sampling the ray a second time
+        -- after the zoom let tiny projection differences accumulate into
+        -- per-notch drift, so the new target is computed directly instead.
+        local cursorWorld = self:ScreenToEditPlane(mousePosition)
         local wheelStep = wheel > 0 and 1 or -1
-        self.camera.orthoSize = ForgeCameraController.ZoomValue(
-            self.camera.orthoSize, wheelStep, MIN_EDIT_ORTHO_SIZE)
-        -- Apply the new projection/view before sampling the ray again. The
-        -- point under the cursor is then restored by translating the target.
+        local oldSize = self.camera.orthoSize
+        local newSize = ForgeCameraController.ZoomValue(oldSize, wheelStep, MIN_EDIT_ORTHO_SIZE)
+        self.camera.orthoSize = newSize
+        self.target = ForgeCameraController.ZoomAnchorTarget(
+            self.target, cursorWorld, oldSize, newSize)
         self:ApplyEditView()
-        local after = self:ScreenToEditPlane(mousePosition)
-        if self:ApplyPointerAnchor(before, after) then self:ApplyEditView() end
         changed = true
     end
 
@@ -423,7 +457,9 @@ function ForgeCameraController:Update(timeStep, allowLeftPan, pointerBlocked)
     if not self.enabled then return false end
     if allowLeftPan == nil then allowLeftPan = true end
     local pointerOverUI = pointerBlocked == true or UI.IsPointerOverUI()
-    if input:GetKeyPress(KEY_HOME) then self:Reset() end
+    if not IsTextInputFocused() and (input:GetKeyPress(KEY_HOME) or input:GetKeyPress(KEY_F)) then
+        self:Reset()
+    end
 
     local wheel = input.mouseMoveWheel
     if wheel ~= 0 and not pointerOverUI then

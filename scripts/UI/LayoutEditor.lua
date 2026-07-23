@@ -63,8 +63,11 @@ function LayoutEditor:SyncDungeon(dungeon, floor, roomGroups)
     local selected = self.selected
     local selectedKey = EditorData.LinkKey(self.links[self.selectedLink])
     self.roomGroupsById = {}
-    for _, group in ipairs(roomGroups or {}) do
-        if group and group.id then self.roomGroupsById[group.id] = group end
+    for index, group in ipairs(roomGroups or {}) do
+        if group and group.id then
+            group._colorIndex = index
+            self.roomGroupsById[group.id] = group
+        end
     end
     self.rooms = CopyRooms(dungeon and dungeon.rooms or {})
     self.links = {}
@@ -849,9 +852,10 @@ function LayoutEditor:LegacyRender()
         local selected = self.selected == i
         local group = self.roomGroupsById[room.roomGroupId]
         local groupColor = group and RoomGroupColors.ToRGBA(
-            RoomGroupColors.Parse(group.color, RoomGroupColors.Default(group, 1)), 245)
+            RoomGroupColors.Parse(group.color, RoomGroupColors.Default(group, group._colorIndex)), 245)
         local color = selected and { 231, 145, 58, 235 }
-            or (room.locked and { 77, 86, 105, 240 } or groupColor or { 46, 63, 78, 245 })
+            or (room.locked and { 77, 86, 105, 240 }
+                or groupColor or RoomGroupColors.ToRGBA(RoomGroupColors.ByIndex(i), 245))
         RoundedRect(self.vg, rect.x, rect.y, rect.w, rect.h, 3, color)
         nvgBeginPath(self.vg); nvgRoundedRect(self.vg, rect.x, rect.y, rect.w, rect.h, 3)
         Stroke(self.vg, selected and 255 or 114, selected and 215 or 132, selected and 157 or 151, 255, selected and 2 or 1); nvgStroke(self.vg)
@@ -971,11 +975,12 @@ function LayoutEditor:Render()
             local selected = self.selected == index
             local group = self.roomGroupsById[room.roomGroupId]
             local groupColor = group and RoomGroupColors.ToRGBA(
-                RoomGroupColors.Parse(group.color, RoomGroupColors.Default(group, 1)), 245)
+                RoomGroupColors.Parse(group.color, RoomGroupColors.Default(group, group._colorIndex)), 245)
             local color = selected and { 231, 145, 58, 235 }
                 or (room.locked and { 77, 86, 105, 240 }
                     or groupColor
-                    or (room.roleHint == "secret" and { 112, 65, 151, 238 } or { 46, 63, 78, 245 }))
+                    or (room.roleHint == "secret" and { 112, 65, 151, 238 }
+                        or RoomGroupColors.ToRGBA(RoomGroupColors.ByIndex(index), 245)))
             RoundedRect(self.vg, rect.x, rect.y, rect.w, rect.h, 3, color)
             nvgBeginPath(self.vg); nvgRoundedRect(self.vg, rect.x, rect.y, rect.w, rect.h, 3)
             Stroke(self.vg, selected and 255 or 114, selected and 215 or 132,

@@ -7,7 +7,6 @@ local Random = require("Generation.Random")
 local MultiFloor = require("Generation.MultiFloor")
 local EditorSelectionHighlight = require("Rendering.EditorSelectionHighlight")
 local RoomGroupColors = require("Config.RoomGroupColors")
-local CurrentFloorCue = require("Rendering.CurrentFloorCue")
 
 local NativeDungeonRenderer = {}
 NativeDungeonRenderer.__index = NativeDungeonRenderer
@@ -18,7 +17,6 @@ local TILE_WALL = 2
 local CELL_SIZE = 1.0
 local FLOOR_THICKNESS = 0.16
 local WALL_HEIGHT = 2.8
-local CURRENT_FLOOR_CUE_HEIGHT = 0.045
 
 local function HexColor(value, brightness, alpha)
     local factor = brightness or 1.0
@@ -249,22 +247,6 @@ function NativeDungeonRenderer:AddBatch(parent, transforms, material, name)
     return self:AddModelBatch(parent, transforms, self.modelCache:Get("box"), material, name, true)
 end
 
-function NativeDungeonRenderer:AddCurrentFloorCue(root, dungeon, currentFloor, viewMode, accent)
-    local bounds = CurrentFloorCue.Bounds(dungeon, currentFloor)
-    if not bounds then return nil end
-
-    local centerX, baseY, centerZ = self:WorldPosition(
-        dungeon, bounds.centerGridX, bounds.centerGridY, currentFloor, 0)
-    local material = CreateAlphaMaterial(accent, 0.24, accent, viewMode == "current" and 0.48 or 0.72)
-    local cue = root:CreateChild("CurrentFloorCue")
-    for index, marker in ipairs(CurrentFloorCue.CornerMarkers(bounds, viewMode)) do
-        self:AddPrimitive(cue, "CurrentFloorCorner-" .. index, "Models/Box.mdl",
-            Vector3(centerX + marker.x, baseY + CURRENT_FLOOR_CUE_HEIGHT + marker.y, centerZ + marker.z),
-            Vector3(marker.sx, marker.sy, marker.sz), material, nil, false)
-    end
-    return cue
-end
-
 function NativeDungeonRenderer:AddRoomGroupHighlights(root, dungeon, floorVisible, roomGroups)
     local groupsById = {}
     for index, group in ipairs(roomGroups or {}) do
@@ -314,6 +296,35 @@ function NativeDungeonRenderer:AddBeam(parent, name, a, b, material, thickness)
     node.position = (a + b) * 0.5
     node.rotation = Quaternion(math.deg(math.atan(delta.x, delta.z)), Vector3.UP)
     node.scale = Vector3(thickness or 0.10, thickness or 0.10, length)
+    local model = node:CreateComponent("StaticModel")
+    model:SetModel(cache:GetResource("Model", "Models/Box.mdl")); model:SetMaterial(material); model.castShadows = false
+    self.instanceCount = self.instanceCount + 1
+    return node
+end
+
+-- Beam that follows a full 3D direction (used by sloped stair handrails and
+-- wall-finish strips). Cross-section is crossW (local X) x crossH (local Y),
+-- length along local Z toward `b`.
+function NativeDungeonRenderer:AddSlopedBeam(parent, name, a, b, material, crossW, crossH)
+    local dx, dy, dz = b.x - a.x, b.y - a.y, b.z - a.z
+    local length = math.sqrt(dx * dx + dy * dy + dz * dz)
+    if length < 0.01 then return nil end
+    local node = parent:CreateChild(name)
+    node.position = (a + b) * 0.5
+    node:LookAt(b)
+    node.scale = Vector3(crossW or 0.06, crossH or 0.06, length)
+    local model = node:CreateComponent("StaticModel")
+    model:SetModel(cache:GetResource("Model", "Models/Box.mdl")); model:SetMaterial(material); model.castShadows = false
+    self.instanceCount = self.instanceCount + 1
+    return node
+end
+
+-- Vertical baluster/post box sitting on the walking surface.
+function NativeDungeonRenderer:AddPostBox(parent, name, base, height, thickness, material)
+    if height < 0.01 then return nil end
+    local node = parent:CreateChild(name)
+    node.position = Vector3(base.x, base.y + height * 0.5, base.z)
+    node.scale = Vector3(thickness, height, thickness)
     local model = node:CreateComponent("StaticModel")
     model:SetModel(cache:GetResource("Model", "Models/Box.mdl")); model:SetMaterial(material); model.castShadows = false
     self.instanceCount = self.instanceCount + 1
@@ -777,21 +788,18 @@ function NativeDungeonRenderer:Build(dungeon, themeKey, options)
     local exactInstances, exactBatches, stagedEntries = exact:Flush(root, stagingConfig)
     self.instanceCount = self.instanceCount + exactInstances
     self.batchCount = self.batchCount + exactBatches
-    self:AddCurrentFloorCue(root, dungeon, currentFloor, viewMode, theme.accentObject)
     self:AddRoomGroupHighlights(root, dungeon, FloorVisible, options.roomGroups)
 
     local stairs = {}
     local stairRailMaterial = CreateMaterial(theme.pillar, 0.38, 0.72)
     local stairFinishMaterial = CreateMaterial(theme.wall, 0.78, 0.08)
     local stairRailRoot = root:CreateChild("StairProtection")
-    local function AddHorizontalSegment(name, segment, connector, material, heightOffset, thickness)
-        local ax, ay, az = self:WorldPosition(dungeon, segment.a.x, segment.a.y,
-            connector.fromFloor, (segment.height or 0) + heightOffset)
-        local bx, by, bz = self:WorldPosition(dungeon, segment.b.x, segment.b.y,
-            connector.fromFloor, (segment.height or 0) + heightOffset)
-        local beam = self:AddBeam(stairRailRoot, name, Vector3(ax, ay, az), Vector3(bx, by, bz),
-            material, thickness)
-        if beam then Defer(beam:GetComponent("StaticModel"), timeline and timeline.rooms.start) end
+    -- Stair rail/finish/post elevations are already actual meters (derived from
+    -- connector.rise/stepRise), so add them onto the floor base directly instead
+    -- of routing through WorldPosition's localY scaling (matches tread placement).
+    local function StairWorld(connector, gridX, gridY, elevation)
+        local wx, baseY, wz = self:WorldPosition(dungeon, gridX, gridY, connector.fromFloor, 0)
+        return Vector3(wx, baseY + (elevation or 0), wz)
     end
     for _, connector in ipairs(dungeon.connectors) do
         if FloorVisible(connector.fromFloor) or FloorVisible(connector.toFloor) then
@@ -830,18 +838,25 @@ function NativeDungeonRenderer:Build(dungeon, themeKey, options)
                 connector.secondRun or 0, connector.secondFlightSteps or 0)
 
             local stairPlan = StairRenderPlan.Build(dungeon, connector)
-            local railHeight = 1.05
-            for index, segment in ipairs(stairPlan.rails) do
-                AddHorizontalSegment("StairRail-" .. connector.id .. "-" .. index,
-                    segment, connector, stairRailMaterial, railHeight, 0.055)
+            for index, beam in ipairs(stairPlan.beams) do
+                local a = StairWorld(connector, beam.a.x, beam.a.y, beam.aElev)
+                local b = StairWorld(connector, beam.b.x, beam.b.y, beam.bElev)
+                local node = self:AddSlopedBeam(stairRailRoot, "StairRail-" .. connector.id .. "-" .. index,
+                    a, b, stairRailMaterial, beam.crossW, beam.crossH)
+                if node then Defer(node:GetComponent("StaticModel"), timeline and timeline.rooms.start) end
             end
-            for index, segment in ipairs(stairPlan.openingGuards) do
-                AddHorizontalSegment("OpeningGuard-" .. connector.id .. "-" .. index,
-                    segment, connector, stairRailMaterial, railHeight, 0.060)
+            for index, post in ipairs(stairPlan.posts) do
+                local base = StairWorld(connector, post.x, post.y, post.baseElev)
+                local node = self:AddPostBox(stairRailRoot, "StairPost-" .. connector.id .. "-" .. index,
+                    base, post.height, post.thickness, stairRailMaterial)
+                if node then Defer(node:GetComponent("StaticModel"), timeline and timeline.rooms.start) end
             end
-            for index, segment in ipairs(stairPlan.wallFinishes) do
-                AddHorizontalSegment("StairFinish-" .. connector.id .. "-" .. index,
-                    segment, connector, stairFinishMaterial, 0.08, 0.035)
+            for index, finish in ipairs(stairPlan.wallFinishes) do
+                local a = StairWorld(connector, finish.a.x, finish.a.y, finish.aElev)
+                local b = StairWorld(connector, finish.b.x, finish.b.y, finish.bElev)
+                local node = self:AddSlopedBeam(stairRailRoot, "StairFinish-" .. connector.id .. "-" .. index,
+                    a, b, stairFinishMaterial, finish.crossW, finish.crossH)
+                if node then Defer(node:GetComponent("StaticModel"), timeline and timeline.rooms.start) end
             end
             local stairLightSpec = theme.torchLight or { theme.flameCore, 1.1, 7.0 }
             for index, anchor in ipairs(stairPlan.lightingAnchors) do

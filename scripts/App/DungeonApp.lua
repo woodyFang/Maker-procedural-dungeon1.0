@@ -17,12 +17,21 @@ local DungeonGeometryLibrary = require("Rendering.DungeonGeometryLibrary")
 local ProceduralMaterialRules = require("Rendering.ProceduralMaterialRules")
 local LocalRequirementPlanner = require("AI.LocalRequirementPlanner")
 local EditorData = require("UI.Editor.EditorData")
+local UI = require("urhox-libs/UI")
 
 local DungeonApp = {}
 DungeonApp.__index = DungeonApp
 
 local CUSTOMIZATION_LOCAL_SAVE = CustomizationStore.GetLocalPath("procedural-dungeon-customization.json")
 local CUSTOMIZATION_CLOUD_KEY = "procedural_dungeon_customizations_v1"
+
+local function IsTextInputFocused()
+    local focused = UI.GetFocus and UI.GetFocus() or nil
+    if not focused then return false end
+    local className = focused._className
+    return (className == "TextField" or className == "TextArea")
+        and focused.state and focused.state.focused == true
+end
 -- Match the Three editor's transaction model: pointer movement only updates
 -- lightweight editor visuals, while authoritative generation is coalesced
 -- after the gesture has finished.
@@ -1304,7 +1313,9 @@ end
 function DungeonApp:HandleUpdate(timeStep)
     self.dungeonRenderer:Update(timeStep)
     if self.preview and self.preview:IsActive() then self.preview:Update(timeStep); return end
-    if input:GetKeyPress(KEY_E) then self:ToggleEditorMode("3d") end
+    local textInputFocused = IsTextInputFocused()
+    if not textInputFocused and input:GetKeyPress(KEY_E) then self:ToggleEditorMode("3d") end
+    if textInputFocused then return end
     if self.editorTransition then
         self:UpdateEditorTransition(timeStep)
         return
@@ -1321,6 +1332,9 @@ function DungeonApp:HandleUpdate(timeStep)
         local allowLeftPan = self.editorMode == "2d" or allowBlankPan or altDown
         local cameraMoved
         if self.editorMode == "3d" and self.forgeCamera:IsEditViewActive() then
+            if input:GetKeyPress(KEY_F) and self.forgeCamera:FrameEditView() then
+                self.panel:SetStatus("已将编辑焦点复位到布局中心（F）")
+            end
             cameraMoved = self.forgeCamera:UpdateEditView(timeStep, allowBlankPan)
         else
             cameraMoved = self.forgeCamera:Update(timeStep, allowLeftPan, pointerBlocked)

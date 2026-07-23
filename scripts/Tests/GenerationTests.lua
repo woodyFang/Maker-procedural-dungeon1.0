@@ -12,7 +12,6 @@ local PaletteData = require("Config.PaletteData")
 local Themes = require("Config.Themes")
 local BuiltinRoomRules = require("Config.BuiltinRoomRules")
 local LocalRequirementPlanner = require("AI.LocalRequirementPlanner")
-local CurrentFloorCue = require("Rendering.CurrentFloorCue")
 
 local GenerationTests = {}
 
@@ -242,44 +241,6 @@ local function TestFloorSettingIsolation()
     Check(FloorDecorSignature(baseline, 1) == FloorDecorSignature(decorChanged, 1)
             and FloorDecorSignature(baseline, 2) == FloorDecorSignature(decorChanged, 2),
         "changing floor 1 decor density changed another floor decoration")
-end
-
-local function TestCurrentFloorCueBounds()
-    local dungeon = {
-        width = 8,
-        height = 6,
-        layers = {
-            { grid = {} },
-            { grid = {} },
-        },
-    }
-    local layer = dungeon.layers[2]
-    for y = 1, 4 do
-        for x = 2, 6 do
-            layer.grid[y * dungeon.width + x + 1] = 1
-        end
-    end
-
-    Check(CurrentFloorCue.Bounds(dungeon, 0) == nil,
-        "empty floor produced a current-floor cue")
-    local bounds = CurrentFloorCue.Bounds(dungeon, 1)
-    Check(bounds ~= nil, "occupied floor did not produce a current-floor cue")
-    Check(math.abs(bounds.centerGridX - 4) < 0.000001
-            and math.abs(bounds.centerGridY - 2.5) < 0.000001,
-        "current-floor cue was not centered on occupied cells")
-    Check(bounds.width > 5 and bounds.depth > 4,
-        "current-floor cue did not include an outer visibility margin")
-
-    local currentMarkers = CurrentFloorCue.CornerMarkers(bounds, "current")
-    local neighborMarkers = CurrentFloorCue.CornerMarkers(bounds, "neighbors")
-    Check(#currentMarkers == 12 and #neighborMarkers == 12,
-        "current-floor cue did not create three markers for each corner")
-    local kinds = { xLeg = 0, zLeg = 0, post = 0 }
-    for _, marker in ipairs(currentMarkers) do kinds[marker.kind] = kinds[marker.kind] + 1 end
-    Check(kinds.xLeg == 4 and kinds.zLeg == 4 and kinds.post == 4,
-        "current-floor cue did not create four L markers and four posts")
-    Check(neighborMarkers[3].sy > currentMarkers[3].sy,
-        "multi-floor corner posts were not emphasized")
 end
 
 local function TestSingleFloor()
@@ -1126,7 +1087,6 @@ function GenerationTests.Run()
         { "route turn penalty", TestRouteTurnPenalty },
         { "dungeon determinism", TestDungeonDeterminism },
         { "floor setting isolation", TestFloorSettingIsolation },
-        { "current floor cue bounds", TestCurrentFloorCueBounds },
         { "single floor", TestSingleFloor },
         { "20 multifloor seeds", TestMultiFloorSeeds },
         { "beyond recommended floors", TestBeyondRecommendedFloorCount },

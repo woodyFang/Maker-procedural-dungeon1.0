@@ -49,6 +49,21 @@ function RoomGroupColors.Default(group, index)
     return palette[((order - 1) % #palette) + 1]
 end
 
+-- A wider spread of muted tones used to give ungrouped rooms distinct color
+-- identities instead of a single flat fill. Deterministic by index so a room
+-- keeps its color across redraws.
+RoomGroupColors.INDEX_PALETTE = {
+    0x56b8d0, 0x43d7af, 0xe0b657, 0xe85d62, 0xa783e8,
+    0xff8f70, 0x6fa8e8, 0x8bd06a, 0xd58cff, 0xf0a03c,
+    0x4fc2a8, 0xd76a9b,
+}
+
+function RoomGroupColors.ByIndex(index)
+    local order = math.max(1, math.floor(tonumber(index) or 1))
+    local palette = RoomGroupColors.INDEX_PALETTE
+    return palette[((order - 1) % #palette) + 1]
+end
+
 function RoomGroupColors.ToHex(value)
     return string.format("#%06X", RoomGroupColors.Parse(value))
 end

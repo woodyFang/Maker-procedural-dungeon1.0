@@ -283,79 +283,69 @@ local function RectangularEnvelope(cells, width, height)
     return result
 end
 
-local function AddSweep(resultByCell, cell, elevation, upperFloorElevation, headroom, kind, order)
-    if not cell then return end
-    elevation = math.max(0, math.min(upperFloorElevation, elevation))
-    local existing = resultByCell[cell]
-    if not existing or elevation > existing.treadElevation then
-        local clearanceTop = elevation + headroom
-        resultByCell[cell] = {
-            cell = cell,
-            treadElevation = elevation,
-            clearanceTop = clearanceTop,
-            intersectsUpperSlab = elevation < upperFloorElevation - StairContract.EPSILON
-                and clearanceTop > upperFloorElevation + StairContract.EPSILON,
-            kind = kind,
-            order = order,
-        }
+-- Continuous per-cell swept clearance, ported from the reference
+-- stairSweptClearanceCells: each tread cell's walking-surface elevation is the
+-- projected distance along its flight axis, scaled by the flight's rise share.
+-- The slab opening is the slice whose 2.5m headroom column crosses the upper
+-- floor plane; treads that already reached the upper plane are arrival floor.
+local function BuildSweptClearance(params)
+    local width = params.mapWidth
+    local floorHeight = tonumber(params.floorHeight) or 5.0
+    local headroom = tonumber(params.headroom) or StairContract.REQUIRED_HEADROOM
+    local style = params.style
+    local lower = params.lower
+    local direction = params.direction
+    local secondDirection = params.secondDirection
+    local firstRun = math.max(1, params.firstRun or 1)
+    local secondRun = math.max(1, params.secondRun or 1)
+    local cap = style == "l-turn" and 0.5 or 1
+
+    local function Projected(cell, origin, axis)
+        local px, py = Coordinates(cell, width)
+        return (px - origin.x) * axis.x + (py - origin.y) * axis.y
     end
-end
+    local function FirstFraction(cell)
+        local frac = ((Projected(cell, lower, direction) + 0.5) / firstRun) * cap
+        return math.max(0, math.min(cap, frac))
+    end
+    local secondOrigin = style == "l-turn"
+        and { x = lower.x + direction.x * firstRun, y = lower.y + direction.y * firstRun } or nil
+    local function SecondFraction(cell)
+        local frac = 0.5 + ((Projected(cell, secondOrigin, secondDirection) + 0.5) / secondRun) * 0.5
+        return math.max(0.5, math.min(1, frac))
+    end
 
-local function BuildSweptClearance(contract, options)
-    local floorHeight = tonumber(options.floorHeight) or 5.0
-    local stepCount = math.max(1, Round(options.stepCount or floorHeight / 0.25))
-    local stepRise = floorHeight / stepCount
-    local headroom = tonumber(options.headroom) or StairContract.REQUIRED_HEADROOM
-    local resultByCell = {}
-    local width = options.mapWidth
-
-    local function AddFlight(cells, startStep, count, kind)
-        local direction = kind == "first" and contract.direction or contract.secondDirection
-        local start = kind == "first" and contract.firstVisualStart or contract.secondVisualStart
-        local runLength = kind == "first" and contract.firstRun or contract.secondRun
-        local perAlong = {}
-        local alongValues = {}
+    local elevations = {}
+    local function Record(cells, fractionFn, fixed)
         for _, cell in ipairs(cells or {}) do
-            local x, y = Coordinates(cell, width)
-            local along = math.floor((x - start.x) * direction.x + (y - start.y) * direction.y + 0.5)
-            along = math.max(0, math.min(math.max(0, runLength - 1), along))
-            perAlong[along] = perAlong[along] or {}
-            perAlong[along][#perAlong[along] + 1] = cell
-            alongValues[along] = true
-        end
-        local ordered = {}
-        for along in pairs(alongValues) do ordered[#ordered + 1] = along end
-        table.sort(ordered)
-        for position, along in ipairs(ordered) do
-            local localStep = math.max(1, math.min(count,
-                math.ceil(position * count / math.max(1, #ordered))))
-            for _, cell in ipairs(perAlong[along]) do
-                AddSweep(resultByCell, cell, (startStep + localStep) * stepRise,
-                    floorHeight, headroom, kind, startStep + localStep)
+            local elevation = (fixed or fractionFn(cell)) * floorHeight
+            if not elevations[cell] or elevation > elevations[cell] then
+                elevations[cell] = elevation
             end
         end
     end
-
-    AddFlight(contract.firstFlightCells, 0, contract.firstFlightSteps, "first")
-    if contract.style == "l-turn" then
-        local platformElevation = contract.firstFlightSteps * stepRise
-        for _, cell in ipairs(contract.turnPlatformCells or {}) do
-            AddSweep(resultByCell, cell, platformElevation, floorHeight, headroom,
-                "platform", contract.firstFlightSteps)
-        end
-        AddFlight(contract.secondFlightCells, contract.firstFlightSteps,
-            contract.secondFlightSteps, "second")
+    Record(params.firstFlightCells, FirstFraction)
+    if style == "l-turn" then
+        Record(params.turnCells, nil, 0.5)
+        Record(params.secondFlightCells, SecondFraction)
     end
 
+    local ordered = {}
+    for cell in pairs(elevations) do ordered[#ordered + 1] = cell end
+    table.sort(ordered)
     local swept, opening, headroomCells = {}, {}, {}
-    for _, item in pairs(resultByCell) do
-        swept[#swept + 1] = item
-        headroomCells[#headroomCells + 1] = item.cell
-        if item.intersectsUpperSlab then opening[#opening + 1] = item.cell end
+    for _, cell in ipairs(ordered) do
+        local treadElevation = elevations[cell]
+        local clearanceTop = treadElevation + headroom
+        local belowUpper = treadElevation < floorHeight - StairContract.EPSILON
+        local intersects = belowUpper and clearanceTop > floorHeight + StairContract.EPSILON
+        swept[#swept + 1] = {
+            cell = cell, treadElevation = treadElevation, clearanceTop = clearanceTop,
+            intersectsUpperSlab = intersects,
+        }
+        headroomCells[#headroomCells + 1] = cell
+        if intersects then opening[#opening + 1] = cell end
     end
-    table.sort(swept, function(a, b) return a.cell < b.cell end)
-    table.sort(opening)
-    table.sort(headroomCells)
     return swept, opening, headroomCells
 end
 
@@ -451,8 +441,11 @@ local function ClassifyStairwellEdges(contract)
     for _, edge in ipairs(contract.stairwellBoundaryEdges or {}) do
         local firstDot = edge.dx * contract.direction.x + edge.dy * contract.direction.y
         local secondDot = edge.dx * contract.secondDirection.x + edge.dy * contract.secondDirection.y
-        if (lowerLandingSet[edge.cell] and firstDot < 0)
-            or (upperLandingSet[edge.cell] and secondDot > 0) then
+        local isLower = lowerLandingSet[edge.cell] and firstDot < 0 or false
+        local isUpper = upperLandingSet[edge.cell] and secondDot > 0 or false
+        if isLower or isUpper then
+            edge.lowerAccess = isLower or nil
+            edge.upperAccess = isUpper or nil
             access[#access + 1] = edge
         else
             unresolved[#unresolved + 1] = edge
@@ -512,7 +505,46 @@ function StairContract.Build(options)
     end
 
     local shaft = UniqueCells(firstFlight, turnCells, secondFlight)
-    local interior = UniqueCells(shaft, lowerLanding, upperLanding)
+    local firstFlightCells = UniqueCells(firstFlight)
+    local secondFlightCells = UniqueCells(secondFlight)
+    local turnPlatformCells = UniqueCells(turnCells)
+
+    local floorHeight = tonumber(options.floorHeight) or 5.0
+    local stepCount = math.max(1, Round(options.stepCount or math.ceil(floorHeight / 0.25)))
+    local firstSteps = style == "straight" and stepCount or math.floor(stepCount * endpoints.firstRun / run + 0.5)
+    if style == "l-turn" then firstSteps = math.max(1, math.min(stepCount - 1, firstSteps)) end
+    local secondSteps = style == "straight" and 0 or stepCount - firstSteps
+
+    local swept, opening, headroomCells = BuildSweptClearance({
+        firstFlightCells = firstFlightCells,
+        turnCells = turnPlatformCells,
+        secondFlightCells = secondFlightCells,
+        lower = endpoints.lower,
+        direction = { x = direction.x, y = direction.y },
+        secondDirection = { x = endpoints.secondDirection.x, y = endpoints.secondDirection.y },
+        firstRun = endpoints.firstRun,
+        secondRun = endpoints.secondRun,
+        style = style,
+        mapWidth = width,
+        floorHeight = floorHeight,
+        headroom = options.headroom,
+    })
+    local openingSet = CellSet(opening)
+    -- Treads that already reached the upper plane are arrival floor, not shaft:
+    -- fold them into the upper landing and keep them out of the opening.
+    local upperArrival = {}
+    for _, record in ipairs(swept) do
+        if record.treadElevation >= floorHeight - StairContract.EPSILON then
+            upperArrival[#upperArrival + 1] = record.cell
+        end
+    end
+    local upperLandingCells = {}
+    for _, cell in ipairs(UniqueCells(upperLanding, upperArrival)) do
+        if not openingSet[cell] then upperLandingCells[#upperLandingCells + 1] = cell end
+    end
+    local lowerLandingCells = UniqueCells(lowerLanding)
+    local interior = UniqueCells(lowerLandingCells, shaft, upperLandingCells)
+
     local sideClearance = math.max(0, Round(options.sideClearance or 0))
     local offsets = StairContract.WidthOffsets(stairWidth, offset)
     local footprintOffsets = {}
@@ -527,15 +559,13 @@ function StairContract.Build(options)
         stairWidth + sideClearance * 2)
         or StripCellsWithOffsets(width, height, upper, endpoints.secondDirection,
             0, landingDepth, footprintOffsets)
-    local footprint = firstFootprint and secondFootprint
-        and RectangularEnvelope(UniqueCells(firstFootprint, secondFootprint), width, height) or nil
+    if not firstFootprint or not secondFootprint then return nil, "stair-footprint-out-of-bounds" end
+    -- Include the full stairwell interior so the reservation envelope covers L
+    -- platforms that extend beyond the raw strips (prevents a later stair from
+    -- overwriting an existing opening).
+    local footprint = RectangularEnvelope(UniqueCells(firstFootprint, secondFootprint, interior), width, height)
     if not footprint then return nil, "stair-footprint-out-of-bounds" end
 
-    local floorHeight = tonumber(options.floorHeight) or 5.0
-    local stepCount = math.max(1, Round(options.stepCount or math.ceil(floorHeight / 0.25)))
-    local firstSteps = style == "straight" and stepCount or math.floor(stepCount * endpoints.firstRun / run + 0.5)
-    if style == "l-turn" then firstSteps = math.max(1, math.min(stepCount - 1, firstSteps)) end
-    local secondSteps = style == "straight" and 0 or stepCount - firstSteps
     local contract = {
         schemaVersion = 1,
         style = style,
@@ -564,23 +594,20 @@ function StairContract.Build(options)
         secondFlightSteps = secondSteps,
         stepCount = stepCount,
         stepRise = floorHeight / stepCount,
-        firstFlightCells = UniqueCells(firstFlight),
-        secondFlightCells = UniqueCells(secondFlight),
-        turnPlatformCells = UniqueCells(turnCells),
+        firstFlightCells = firstFlightCells,
+        secondFlightCells = secondFlightCells,
+        turnPlatformCells = turnPlatformCells,
         shaftCells = shaft,
         stairFootprintCells = shaft,
-        lowerLandingCells = UniqueCells(lowerLanding),
-        upperLandingCells = UniqueCells(upperLanding),
+        lowerLandingCells = lowerLandingCells,
+        upperLandingCells = upperLandingCells,
         stairwellInteriorCells = interior,
         sharedFootprintCells = footprint,
+        sweptClearanceCells = swept,
+        openingCells = opening,
+        slabOpeningCells = opening,
+        headroomCells = headroomCells,
     }
-    contract.sweptClearanceCells, contract.openingCells, contract.headroomCells = BuildSweptClearance(contract, {
-        mapWidth = width,
-        floorHeight = floorHeight,
-        stepCount = stepCount,
-        headroom = options.headroom,
-    })
-    contract.slabOpeningCells = contract.openingCells
     contract.openingBoundaryEdges = BoundaryEdges(contract.openingCells, width, height)
     contract.stairwellBoundaryEdges = BoundaryEdges(contract.stairwellInteriorCells, width, height)
     contract.openingAccessEdges, contract.openingStairPassageEdges,
@@ -589,6 +616,16 @@ function StairContract.Build(options)
     contract.lowerNoWallCells = UniqueCells(contract.stairwellInteriorCells, contract.lowerLandingCells)
     contract.upperNoWallCells = UniqueCells(contract.stairwellInteriorCells,
         contract.upperLandingCells, contract.openingCells)
+    -- 2.7 validity gate: reject degenerate contracts the renderer/audit cannot use.
+    local hasLowerAccess, hasUpperAccess = false, false
+    for _, edge in ipairs(contract.stairwellAccessEdges) do
+        if edge.lowerAccess then hasLowerAccess = true end
+        if edge.upperAccess then hasUpperAccess = true end
+    end
+    if #contract.openingCells == 0 or #contract.openingBoundaryEdges == 0
+        or #contract.stairwellBoundaryEdges == 0 or not hasLowerAccess or not hasUpperAccess then
+        return nil, "degenerate-stair-contract"
+    end
     return contract
 end
 

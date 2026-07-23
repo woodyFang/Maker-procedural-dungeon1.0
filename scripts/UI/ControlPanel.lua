@@ -18,6 +18,13 @@ local C = {
     accent = { 232, 151, 63, 255 }, teal = { 63, 208, 187, 255 }, danger = { 216, 67, 58, 255 },
 }
 
+local HINT_OVERVIEW =
+    "相机：WASD/方向键移动，Shift 加速 · 鼠标左键拖拽平移 · Ctrl+鼠标左键拖拽升降 · 鼠标右键拖拽（或 Shift+鼠标左键拖拽）旋转 · 滚轮缩放 · Home/F 复原居中\n编辑：直接点 2D 平面，E 进入 3D 编辑 · R 重新生成 · T 切换色调 · Shift+T 切换题材"
+local HINT_EDIT_3D =
+    "3D 编辑（正交顶视）：左键编辑房间与通路 · 空白处/Alt+左键 或 中键拖拽平移 · 滚轮缩放（对准光标）· WASD/方向键移动，Shift 加速 · F 焦点居中复原 · E 退出编辑 · Esc 完成"
+local HINT_EDIT_2D =
+    "2D 平面编辑：拖动使用轻量预览，松手后同步三维 · 中键/空白处拖拽平移 · 滚轮缩放 · Tab 返回三维 · Esc 完成"
+
 local function Label(text, size, color, extra)
     local props = extra or {}
     props.text, props.fontSize, props.fontColor = text, size or 12, color or C.text
@@ -147,6 +154,13 @@ local function TooltipButton(button, content)
     }
 end
 
+local function TooltipLabel(text, size, color, content, extra)
+    return UI.Tooltip {
+        content = content, position = "top", delay = 0.18,
+        children = { Label(text, size, color, extra) },
+    }
+end
+
 local function SecondaryClickButton(button, onSecondaryClick)
     local originalPointerDown = button.OnPointerDown
     local originalClick = button.OnClick
@@ -242,11 +256,6 @@ local function Trim(value)
     return (tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
-local function FirstCharacter(value)
-    local nextByte = utf8.offset(value or "", 2)
-    return nextByte and string.sub(value, 1, nextByte - 1) or (value or "")
-end
-
 local function FieldLabel(text, suffix)
     return Row({
         Label(text, 11, C.text, { fontWeight = "bold", flexGrow = 1 }),
@@ -301,9 +310,7 @@ function ControlPanel.new(callbacks, initial)
         keyEventSubscribed = true
     end
 
-    self.title = Label("场景锻炉", 10, C.accent, { fontWeight = "bold", letterSpacing = 1.8 })
     self.name = Label("程序化房间生成器", 17, C.bright, { fontWeight = "normal", whiteSpace = "normal", lineHeight = 1.18 })
-    self.subtitle = Label("遗迹 · 暖灰 · 种子 1337 · 已连通 ✓", 10, C.dim, { whiteSpace = "normal" })
     self.collapseButton = SmallButton("−", function() self:SetCollapsed(true) end, {
         position = "absolute", right = 9, top = 8, width = 34, height = 30,
         backgroundColor = { 20, 25, 37, 245 },
@@ -322,11 +329,10 @@ function ControlPanel.new(callbacks, initial)
     self.randomSeedTooltip = TooltipButton(self.randomSeedButton, "随机种子")
 
     self.paletteExpanded = false
-    self.currentPaletteButton = PillButton("当前颜色", function()
+    self.currentPaletteButton = PillButton("当前", function()
         self:SetPaletteExpanded(not self.paletteExpanded)
     end, { flexGrow = 1, height = 28, fontSize = 10, textAlign = "left" })
     self.paletteExpandedList = UI.Panel { width = "100%", gap = 6 }
-    self.paletteExpandedList:SetVisible(false)
     self.paletteToggleButton = ExpandButton(function() self:SetPaletteExpanded(not self.paletteExpanded) end)
     self.paletteToggleTooltip = TooltipButton(self.paletteToggleButton, "展开色调")
     self.paletteCustomButton = AddButton("＋ 添加", function() self:OpenCustomPaletteModal() end)
@@ -346,6 +352,7 @@ function ControlPanel.new(callbacks, initial)
     end, { width = 72, paddingHorizontal = 2, fontSize = 9.5 })
 
     self.floorSummary = Label("共 2 层 · 42 区", 11, C.accent, { fontWeight = "bold" })
+    self.floorHeightValue = Label("层高 5.00 米", 9, C.dim, { fontWeight = "bold" })
     self.floorDropdown = UI.Dropdown {
         width = "100%", value = 0, maxVisibleItems = 6,
         options = { { value = 0, label = "第 1 层 · 21 个区域（当前）" }, { value = 1, label = "第 2 层 · 21 个区域" } },
@@ -386,7 +393,7 @@ function ControlPanel.new(callbacks, initial)
         flexDirection = "row", gap = 6, children = { self.edit2DButton, self.edit3DButton },
     }
     self.hints = Label(
-        "相机：WASD/方向键移动，Shift 加速 · 鼠标左键拖拽平移 · Ctrl+鼠标左键拖拽升降 · 鼠标右键拖拽（或 Shift+鼠标左键拖拽）旋转 · 滚轮缩放 · Home 复原\n编辑：直接点 2D 平面，E 进入 3D 编辑 · R 重新生成 · T 切换色调 · Shift+T 切换题材",
+        HINT_OVERVIEW,
         10, C.dim,
         { position = "absolute", bottom = 14, left = "24%", right = "18%", minHeight = 46,
             textAlign = "center", whiteSpace = "normal", lineHeight = 1.35,
@@ -614,28 +621,6 @@ function ControlPanel.new(callbacks, initial)
     }, { alignItems = "center", gap = 8 })
     self.customSettingModal:SetFooter(self.customSettingFooter)
 
-    self.customRenameField = UI.TextField {
-        width = "100%", height = 42, value = "", maxLength = 24, placeholder = "题材名称",
-        borderRadius = 8, borderColor = C.inputLine, focusedBorderColor = C.accent,
-        paddingHorizontal = 10, fontSize = 12,
-    }
-    self.customRenameError = Label("", 10, C.danger, { whiteSpace = "normal" })
-    self.customRenameModal = OriginalModal {
-        size = "sm", dialogWidth = 400, closeOnOverlay = true, closeOnEscape = true,
-        contentPadding = 18, contentGap = 10, showCloseButton = false,
-        children = {
-            Label("重命名题材", 18, C.text, { fontWeight = "bold" }),
-            FieldLabel("新名称", "必填"), self.customRenameField, self.customRenameError,
-        },
-    }
-    self.customRenameModal:SetFooter(Row({
-        SmallButton("取消", function() self.customRenameModal:Close() end, { flexGrow = 1 }),
-        SmallButton("保存名称", function() self:ApplyCustomSettingRename() end, {
-            width = 92, variant = "primary", backgroundColor = C.accent, borderColor = C.accent,
-            textColor = { 20, 16, 12, 255 }, fontWeight = "bold",
-        }),
-    }, { gap = 8 }))
-
     self.paletteModalTitle = Label("添加自定义配色", 20, C.text, { fontWeight = "bold" })
     self.paletteNameField = UI.TextField {
         width = "100%", height = 42, value = "", maxLength = 24, placeholder = "例如：月蚀紫",
@@ -833,50 +818,33 @@ function ControlPanel.new(callbacks, initial)
             },
         },
     }
-    self.customSettingList = UI.Panel { width = "100%", gap = 5 }
-    self.customSettingHint = Label("题材：单击切换 · 右键编辑", 8.5, C.dim)
-    self.customSettingHint:SetVisible(false)
+    self.customSettingList = UI.Panel {
+        width = "100%", flexDirection = "row", flexWrap = "wrap", gap = 5,
+    }
     self.customSettingList:SetVisible(false)
-    self.aiTopicLabel = Label("AI生成", 10.5, C.teal, { fontWeight = "bold" })
-    self.aiTopicHint = Label("可自定义", 8.5, C.dim, { flexGrow = 1 })
-    self.currentTopicValue = Label("遗迹", 10, C.text, {
-        flexGrow = 1, fontWeight = "bold", whiteSpace = "nowrap", overflow = "hidden",
-    })
-    self.currentTopicStatus = Label("已生成", 8.5, C.dim)
-    self.currentTopicRow = UI.Panel {
-        width = "100%", height = 29, padding = { 5, 7 }, flexDirection = "row", alignItems = "center", gap = 6,
-        backgroundColor = { 17, 25, 29, 255 }, borderColor = { 39, 63, 64, 255 },
+    self.aiTopicLabel = Label("AI生成", 9, C.teal, { flexGrow = 1, fontWeight = "bold" })
+    self.aiTopicPanel = UI.Panel {
+        width = "100%", padding = { 4, 6 }, gap = 3,
+        backgroundColor = { 20, 31, 34, 255 }, borderColor = { 47, 91, 86, 255 },
         borderWidth = 1, borderRadius = 6,
         children = {
-            Label("当前题材", 8.5, C.dim, { width = 48 }), self.currentTopicValue, self.currentTopicStatus,
-        },
-    }
-    self.aiTopicPanel = UI.Panel {
-        width = "100%", padding = { 7, 8 }, gap = 5,
-        backgroundColor = { 20, 31, 34, 255 }, borderColor = { 47, 91, 86, 255 },
-        borderWidth = 1, borderRadius = 8,
-        children = {
-            Row({ self.aiTopicLabel, self.aiTopicHint,
+            Row({ self.aiTopicLabel,
                 self.customSettingButton, self.customSettingToggleTooltip, self.randomSettingTooltip }, { gap = 4 }),
-            self.currentTopicRow,
-            self.customSettingHint, self.customSettingList,
+            self.customSettingList,
         },
     }
-    self.fixedTopicLabel = Label("固定规则", 10.5, C.text, { fontWeight = "bold" })
-    self.fixedTopicHint = Label("与 AI 生成互斥", 8.5, C.dim, { flexGrow = 1 })
+    self.fixedTopicLabel = Label("固定规则", 9, C.text, { flexGrow = 1, fontWeight = "bold" })
     self.fixedTopicPanel = UI.Panel {
-        width = "100%", padding = { 7, 8 },
+        width = "100%", padding = { 4, 6 },
         backgroundColor = { 24, 25, 31, 255 }, borderColor = C.inputLine,
-        borderWidth = 1, borderRadius = 8,
+        borderWidth = 1, borderRadius = 6,
         children = {
-            Row({ self.fixedTopicLabel, self.fixedTopicHint, self.fixedSettingModeButton }, { gap = 4 }),
+            Row({ self.fixedTopicLabel, self.fixedSettingModeButton }, { gap = 4 }),
         },
     }
     self.roomGroupExpanded = false
     self.roomGroupList = UI.Panel { width = "100%", gap = 5 }
     self.roomGroupList:SetVisible(false)
-    self.roomGroupHint = Label("房间：只属于当前题材；题材生成时自动加入，也可手动添加", 8.5, C.dim)
-    self.roomGroupHint:SetVisible(false)
     self.roomGroupAddButton = AddButton("＋ 添加", function() self:OpenRoomGroupModal() end)
     self.roomGroupToggleButton = ExpandButton(function()
         self:SetRoomGroupExpanded(not self.roomGroupExpanded)
@@ -903,8 +871,6 @@ function ControlPanel.new(callbacks, initial)
         children = {
             Row({ Label("当前房间", 9, C.teal, { fontWeight = "bold" }), self.roomSelectionLabel }),
             self.roomGroupAssignmentDropdown,
-            Label("选择区域后，可在这里指定题材生成或手动创建的房间语义。", 8.5, C.dim,
-                { whiteSpace = "normal", lineHeight = 1.35 }),
         },
     }
     self.roomAssignmentPanel:SetVisible(false)
@@ -915,8 +881,8 @@ function ControlPanel.new(callbacks, initial)
                 width = "100%", padding = { 11, 13, 10, 13 },
                 borderColor = C.line, borderBottomWidth = 1,
                 children = {
-                    UI.Panel { width = "100%", paddingRight = 36, gap = 4, children = { self.title, self.name } },
-                    self.subtitle, self.collapseButton,
+                    UI.Panel { width = "100%", paddingRight = 36, gap = 4, children = { self.name } },
+                    self.collapseButton,
                 },
             },
             Section({
@@ -944,18 +910,19 @@ function ControlPanel.new(callbacks, initial)
             Section({
                 Row({ Label("房间", 10.5, C.dim, { flexGrow = 1, letterSpacing = 0.5 }),
                     self.roomGroupAddButton, self.roomGroupToggleTooltip }),
-                self.roomGroupHint,
                 self.roomGroupList,
             }),
             Section({
-                Row({ UI.Panel { flexGrow = 1, gap = 2, children = { Label("楼层管理", 12, C.text, { fontWeight = "bold" }), Label("生成与编辑共用", 9, C.dim) } }, self.floorSummary }, { alignItems = "center" }),
-                Row({ Label("当前编辑层", 10, C.text, { fontWeight = "bold", flexGrow = 1 }),
-                    Label("逐层参数与二维编辑目标", 9, C.dim) }),
+                Row({ UI.Panel { flexGrow = 1, children = { Label("楼层管理", 12, C.text, { fontWeight = "bold" }) } },
+                    UI.Panel { flexDirection = "row", alignItems = "center", gap = 6, children = { self.floorHeightValue, self.floorSummary } } }, { alignItems = "center" }),
+                Row({ TooltipLabel("当前编辑层", 10, C.text,
+                        "选择一个楼层，下面的参数会作用于该层。", { fontWeight = "bold", flexGrow = 1 }) }),
                 self.floorDropdown,
                 FloorSetting("本层区域数量", self.roomValue, self.roomSlider),
                 FloorSetting("本层回环率", self.loopValue, self.loopSlider),
                 FloorSetting("本层装饰密度", self.decorValue, self.decorSlider),
-                Label(string.format("调整层数  · 建议不超过 %d 层，可继续添加", MultiFloor.RECOMMENDED_MAX_FLOORS), 9, C.dim),
+                TooltipLabel("楼层", 9, C.dim,
+                    "使用下方按钮添加或删除楼层。", { flexGrow = 1 }),
                 Row({
                     SmallButton("＋ 上一层", function() callbacks.onAddFloorBefore() end, { flexGrow = 1, fontSize = 9.5, textColor = { 182, 217, 207, 255 } }),
                     SmallButton("＋ 下一层", function() callbacks.onAddFloorAfter() end, { flexGrow = 1, fontSize = 9.5, textColor = { 182, 217, 207, 255 } }),
@@ -990,7 +957,7 @@ function ControlPanel.new(callbacks, initial)
         children = {
             self.panelShell, self.roomAssignmentPanel, self.expandButton, self.hints, self.previewBarAnchor,
             UI.Panel { position = "absolute", right = 18, bottom = 18, children = { self.editorButtons } },
-            self.previewHud, self.customSettingModal, self.customRenameModal, self.paletteModal, self.roomGroupModal,
+            self.previewHud, self.customSettingModal, self.paletteModal, self.roomGroupModal,
             self.imageHistoryModal, self.customContextMenuLayer,
         }
     }
@@ -1436,31 +1403,6 @@ function ControlPanel:ApplyCustomSetting(mode)
     self.customSettingModal:Close()
 end
 
-function ControlPanel:OpenCustomSettingRename(item)
-    self:CloseCustomSettingContextMenu()
-    if not item then return end
-    self.renamingCustomId = item.id
-    self.customRenameField:SetValue(item.label or "")
-    self.customRenameError:SetText("")
-    self.customRenameModal:Open()
-end
-
-function ControlPanel:ApplyCustomSettingRename()
-    local item = self:FindCustomSetting(self.renamingCustomId)
-    local label = Trim(self.customRenameField:GetValue())
-    if not item then self.customRenameError:SetText("题材不存在或已被删除。"); return end
-    if label == "" then self.customRenameError:SetText("请填写题材名称。"); return end
-    for _, existing in ipairs((self.currentState or {}).customSettings or {}) do
-        if existing.id ~= item.id and string.lower(Trim(existing.label)) == string.lower(label) then
-            self.customRenameError:SetText("已经存在同名题材，请换一个名称。")
-            return
-        end
-    end
-    local ok, reason = self.callbacks.onCustomSettingRename(item.id, label)
-    if ok == false then self.customRenameError:SetText(reason or "重命名失败。"); return end
-    self.customRenameModal:Close()
-end
-
 function ControlPanel:CloseCustomSettingContextMenu()
     if not self.customContextMenuLayer then return end
     self.customContextMenuLayer:ClearChildren()
@@ -1473,7 +1415,7 @@ function ControlPanel:OpenCustomSettingContextMenu(item, event)
     self:CloseCustomSettingContextMenu()
     self.contextCustomId = item.id
     local rootLayout = self.root:GetAbsoluteLayout()
-    local menuWidth, menuHeight = 150, 108
+    local menuWidth, menuHeight = 150, 76
     local x = (event and event.x or rootLayout.x + 20) - rootLayout.x
     local y = (event and event.y or rootLayout.y + 20) - rootLayout.y
     x = math.max(8, math.min(x, rootLayout.w - menuWidth - 8))
@@ -1492,7 +1434,6 @@ function ControlPanel:OpenCustomSettingContextMenu(item, event)
         menuButton(item.packStatus == "draft" and "继续编辑" or "编辑题材", function()
             self:OpenCustomSettingModal(item)
         end),
-        menuButton("重命名", function() self:OpenCustomSettingRename(item) end),
         UI.Panel { width = "100%", height = 1, backgroundColor = C.line },
         menuButton("删除题材", function() self:ConfirmDeleteCustomSetting(item) end, true),
     }
@@ -1598,26 +1539,17 @@ end
 function ControlPanel:RebuildCustomSettingList(items)
     self:CloseCustomSettingContextMenu()
     self.customSettingList:ClearChildren()
-    self.customSettingHint:SetVisible(self.customSettingExpanded and #(items or {}) > 0)
     for _, item in ipairs(items or {}) do
         local saved = item
         local active = (self.currentState or {}).topicMode == "custom"
             and (self.currentState or {}).activeCustomSettingId == saved.id
         local isDraft = saved.packStatus == "draft"
-        local visual = UI.Panel {
-            width = 38, height = 38, backgroundColor = { 44, 34, 27, 255 },
-            backgroundImage = saved.imagePath, backgroundFit = "cover", overflow = "hidden",
-            borderColor = active and C.accent or { 94, 67, 42, 255 }, borderWidth = active and 2 or 1, borderRadius = 7,
-            children = saved.imagePath and {} or {
-                Label(FirstCharacter(saved.label), 12, C.accent, {
-                    width = "100%", height = "100%", textAlign = "center", verticalAlign = "middle",
-                }),
-            },
-        }
         local card = UI.Panel {
-            width = "100%", height = 54, padding = 7, flexDirection = "row", alignItems = "center", gap = 8,
-            backgroundColor = active and { 34, 31, 31, 255 } or C.section,
-            borderColor = active and { 139, 91, 52, 255 } or { 41, 47, 64, 255 }, borderWidth = 1, borderRadius = 8,
+            height = 26, paddingHorizontal = 9, flexDirection = "row", alignItems = "center",
+            backgroundColor = active and { 48, 36, 29, 255 }
+                or (isDraft and { 30, 26, 20, 255 } or C.input),
+            borderColor = active and C.accent or (isDraft and { 94, 67, 42, 255 } or C.inputLine),
+            borderWidth = active and 2 or 1, borderRadius = 7,
             pointerEvents = "box-only",
             onPointerDown = function(event)
                 if event.button == MOUSEB_RIGHT then
@@ -1634,12 +1566,9 @@ function ControlPanel:RebuildCustomSettingList(items)
                 if ok == false then self:SetStatus(reason or "题材切换失败") end
             end,
             children = {
-                visual,
-                UI.Panel { flexGrow = 1, gap = 3, children = {
-                    Label(saved.label, 11, { 232, 235, 242, 255 }, { fontWeight = "bold" }),
-                    Label(isDraft and "草稿 · 单击继续编辑" or "已生成 · 单击切换", 8.5,
-                        isDraft and { 199, 158, 103, 255 } or { 122, 185, 171, 255 }),
-                } },
+                Label(saved.label .. (isDraft and " · 草稿" or ""), 10,
+                    active and { 255, 224, 187, 255 } or { 210, 214, 224, 255 },
+                    { fontWeight = active and "bold" or "normal", whiteSpace = "nowrap" }),
             },
         }
         self.customSettingList:AddChild(card)
@@ -1663,12 +1592,9 @@ function ControlPanel:RebuildRoomGroupList(items)
                     backgroundColor = RoomGroupColors.ToRGBA(saved.color),
                     borderColor = { 255, 255, 255, 64 }, borderWidth = 1, borderRadius = 4,
                 },
-                UI.Panel { flexGrow = 1, gap = 2, children = {
-                    Label(saved.name, 10, C.text, {
-                        fontWeight = "bold", whiteSpace = "nowrap", overflow = "hidden",
-                    }),
-                    Label("仅用于当前题材", 8.5, C.dim),
-                } },
+                Label(saved.name, 10, C.text, {
+                    flexGrow = 1, fontWeight = "bold", whiteSpace = "nowrap", overflow = "hidden",
+                }),
                 SmallButton("编辑", function() self:OpenRoomGroupModal(saved) end,
                     { width = 38, height = 24, fontSize = 8.5 }),
             },
@@ -1730,7 +1656,6 @@ end
 
 function ControlPanel:SetCustomSettingExpanded(expanded)
     self.customSettingExpanded = expanded == true
-    self.customSettingHint:SetVisible(self.customSettingExpanded)
     self.customSettingList:SetVisible(self.customSettingExpanded)
     self.customSettingToggleButton:SetExpanded(self.customSettingExpanded)
     self.customSettingToggleTooltip:SetContent(self.customSettingExpanded and "收起题材" or "展开题材")
@@ -1738,7 +1663,6 @@ end
 
 function ControlPanel:SetRoomGroupExpanded(expanded)
     self.roomGroupExpanded = expanded == true
-    self.roomGroupHint:SetVisible(self.roomGroupExpanded)
     self.roomGroupList:SetVisible(self.roomGroupExpanded)
     self.roomGroupToggleButton:SetExpanded(self.roomGroupExpanded)
     self.roomGroupToggleTooltip:SetContent(self.roomGroupExpanded and "收起房间" or "展开房间")
@@ -1775,21 +1699,6 @@ function ControlPanel:SetState(state)
         self:SetCustomSettingExpanded(true)
         self.customSettingsHaveBeenShown = true
     end
-    local currentTopicName = fixedActive and "未启用"
-        or (customActive and state.customSettingName)
-        or setting.label
-    self.currentTopicValue:SetText(currentTopicName or setting.label)
-    self.currentTopicStatus:SetText(fixedActive and "固定 PCG" or "已生成")
-    self.currentTopicValue:SetStyle({
-        fontColor = customActive and { 205, 239, 229, 255 } or (fixedActive and C.dim or C.text),
-    })
-    self.currentTopicStatus:SetStyle({
-        fontColor = customActive and C.teal or C.dim,
-    })
-    self.currentTopicRow:SetStyle({
-        backgroundColor = customActive and { 18, 38, 37, 255 } or { 17, 25, 29, 255 },
-        borderColor = customActive and { 49, 105, 96, 255 } or { 39, 63, 64, 255 },
-    })
     if customActive and self.lastActiveCustomSettingId ~= state.activeCustomSettingId then
         self:SetCustomSettingExpanded(true)
     end
@@ -1800,11 +1709,6 @@ function ControlPanel:SetState(state)
         borderColor = { 139, 91, 52, 255 },
         textColor = { 255, 209, 157, 255 },
     })
-    self.subtitle:SetText(string.format("%s · %s · 种子 %u · %s", state.customSettingName or setting.label, theme.label,
-        self.seed & 0xffffffff, state.valid == false and "生成失败" or "已连通 ✓"))
-    if fixedActive then
-        self.subtitle:SetText("固定 · 空场景 · " .. theme.label)
-    end
     self:RebuildPaletteExpandedList(state)
     local options, total = {}, 0
     for floor = 1, state.floorCount do
@@ -1815,6 +1719,7 @@ function ControlPanel:SetState(state)
     self.floorDropdown:SetOptions(options)
     self.floorDropdown:SetValue(state.currentFloor)
     self.floorSummary:SetText(string.format("共 %d 层 · %d 区", state.floorCount, total))
+    self.floorHeightValue:SetText(string.format("层高 %.2f 米", state.floorHeight or MultiFloor.FLOOR_HEIGHT))
     local idx = state.currentFloor + 1
     local rooms = state.roomCounts[idx] or 21
     local loops = state.loopRates[idx] or 15
@@ -1877,6 +1782,13 @@ function ControlPanel:SetEditorActive(active, mode)
         backgroundColor = activeMode == "3d" and { 48, 36, 29, 250 } or { 18, 23, 35, 245 },
         borderColor = activeMode == "3d" and C.accent or C.line,
     })
+    if activeMode == "3d" then
+        self.hints:SetText(HINT_EDIT_3D)
+    elseif activeMode == "2d" then
+        self.hints:SetText(HINT_EDIT_2D)
+    else
+        self.hints:SetText(HINT_OVERVIEW)
+    end
 end
 function ControlPanel:OpenRoomGroupAssignment()
     if not self.roomGroupAssignmentDropdown or not self.roomAssignmentPanel:IsVisible() then return false end

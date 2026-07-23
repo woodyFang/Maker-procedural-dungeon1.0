@@ -4,6 +4,7 @@ local MultiFloor = require("Generation.MultiFloor")
 local GeometryRules = require("Generation.GeometryRules")
 local Themes = require("Config.Themes")
 local ThemePacks = require("Config.ThemePacks")
+local EnvironmentProfiles = require("Config.EnvironmentProfiles")
 
 local DungeonGenerator = {}
 
@@ -709,6 +710,8 @@ local function IsInterior(layer, x, y, width, height, roomId)
 end
 
 local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, roomGroupsById)
+    local profile = EnvironmentProfiles.Resolve(settingKey)
+    local theme = Themes.Get(themeKey)
     for _, layer in ipairs(dungeon.layers) do
         local rng = FloorRandom(floorSeeds, layer.floor, STREAM_DECOR)
         local occupied = {}
@@ -995,19 +998,28 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
             end
         end
 
-        if settingKey == "dungeon" then
+        -- Generic floor-scatter richness (extracted from the ruins-only path).
+        -- Every setting fills negative space with theme-coloured clutter; only
+        -- the prop, density and scale come from its EnvironmentProfile.
+        local scatter = profile.floorScatter
+        if scatter then
             for cell, tile in ipairs(layer.grid) do
                 if tile == MultiFloor.Tiles.FLOOR and not occupied[cell]
                     and not layer.doorway[cell] and not layer.lakeMask[cell] then
                     local roomId = layer.roomId[cell] or 0
                     local room = roomId > 0 and dungeon.rooms[roomId] or nil
-                    local chance = density * 0.045 * (1.25 - 0.6 * (room and room.difficulty or 0.5))
-                    if layer.corridor[cell] then chance = chance * 0.45 end
+                    local chance = density * scatter.baseChance
+                    if scatter.difficultyBias then
+                        chance = chance * (1.25 - 0.6 * (room and room.difficulty or 0.5))
+                    end
+                    if layer.corridor[cell] then chance = chance * scatter.corridorFactor end
                     if rng:Chance(chance) then
                         local x, y = MultiFloor.Coordinates(cell, dungeon.width)
                         layer.props[#layer.props + 1] = {
-                            kind="debris", x=x, y=y, roomId=roomId,
-                            rot=rng:Float(0,math.pi*2), scale=rng:Float(0.6,1.35), v=rng:Int(0,2),
+                            kind = scatter.kind, x = x, y = y, roomId = roomId,
+                            rot = rng:Float(0, math.pi * 2),
+                            scale = rng:Float(scatter.scaleMin or 0.6, scatter.scaleMax or 1.35),
+                            v = rng:Int(0, (scatter.variants or 3) - 1),
                         }
                     end
                 end
@@ -1034,31 +1046,35 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
                 end
             end
         end
-        local bannerCells = {}
-        if settingKey == "dungeon" then
+        -- Generic emphasis markers in high-tier rooms. The prop kind and the
+        -- per-role counts are theme DATA; the pass hardcodes no ruins model.
+        local reservedWall = {}
+        local emphasis = profile.emphasis
+        if emphasis then
             for _, room in ipairs(dungeon.rooms) do
-                if room.floor == layer.floor and (room.type == ROOM_TYPES.ELITE or room.type == ROOM_TYPES.BOSS) then
+                local target = room.floor == layer.floor and emphasis.roleTargets[room.type]
+                if target then
                     local roomCandidates = {}
                     for _, candidate in ipairs(candidates) do
                         if candidate.roomId == room.id then roomCandidates[#roomCandidates + 1] = candidate end
                     end
                     rng:Shuffle(roomCandidates)
                     local placed = {}
-                    local target = room.type == ROOM_TYPES.BOSS and 4 or 2
                     for _, candidate in ipairs(roomCandidates) do
                         if #placed >= target then break end
                         local close = false
                         for _, other in ipairs(placed) do
-                            if math.max(math.abs(other.x - candidate.x), math.abs(other.y - candidate.y)) < 4 then
+                            if math.max(math.abs(other.x - candidate.x), math.abs(other.y - candidate.y))
+                                < (emphasis.minSpacing or 4) then
                                 close = true
                                 break
                             end
                         end
                         if not close then
                             placed[#placed + 1] = candidate
-                            bannerCells[MultiFloor.Index(candidate.x, candidate.y, dungeon.width)] = true
+                            reservedWall[MultiFloor.Index(candidate.x, candidate.y, dungeon.width)] = true
                             layer.props[#layer.props + 1] = {
-                                kind = "banner", x = candidate.x, y = candidate.y,
+                                kind = emphasis.kind, x = candidate.x, y = candidate.y,
                                 dx = candidate.dx, dy = candidate.dy, roomId = room.id,
                                 rot = 0, scale = 1,
                             }
@@ -1066,84 +1082,80 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
                     end
                 end
             end
-            rng:Shuffle(candidates)
+        end
+
+        -- Generic wall-fixture richness. "dense" spams a fixture on every clear
+        -- candidate (feeding the torch light channel); "spaced" lays fixtures on
+        -- a spacing grid from a priority decor list. No prop kind is hardcoded --
+        -- the fixtures, accents and decor list all come from theme DATA.
+        local fixtures = profile.wallFixtures
+        if fixtures and fixtures.mode == "dense" then rng:Shuffle(candidates) end
+        local decorList = profile.wallDecor
+        if fixtures and fixtures.channel == "pack" then
+            local pack = ThemePacks.Get(settingKey)
+            decorList = pack and pack.wallRules or {}
         end
         local wallDecor = {}
-        for candidateIndex, candidate in ipairs(candidates) do
-            local clear = not bannerCells[MultiFloor.Index(candidate.x, candidate.y, dungeon.width)]
-            for _, torch in ipairs(layer.torches) do
-                if math.max(math.abs(torch.x - candidate.x), math.abs(torch.y - candidate.y)) < 5 then
-                    clear = false
-                    break
+        for _, candidate in ipairs(candidates) do
+            local clear = not reservedWall[MultiFloor.Index(candidate.x, candidate.y, dungeon.width)]
+            if clear and fixtures and fixtures.channel == "torch" then
+                for _, torch in ipairs(layer.torches) do
+                    if math.max(math.abs(torch.x - candidate.x), math.abs(torch.y - candidate.y))
+                        < (fixtures.proximity or 5) then
+                        clear = false
+                        break
+                    end
                 end
             end
-            if clear then
-                if settingKey == "hospital" then
-                    local close = false
-                    for _, placed in ipairs(wallDecor) do
-                        if math.max(math.abs(placed.x - candidate.x), math.abs(placed.y - candidate.y)) < 6 then
-                            close = true
+            if clear and fixtures then
+                if fixtures.mode == "dense" then
+                    if fixtures.channel == "torch" then
+                        layer.torches[#layer.torches + 1] = candidate
+                    end
+                    for _, accent in ipairs(profile.wallAccents or {}) do
+                        if (not accent.requireThemeFlag or theme[accent.requireThemeFlag])
+                            and rng:Chance((accent.chanceBase or 0) + (accent.chanceDensity or 0) * density) then
+                            layer.props[#layer.props + 1] = {
+                                kind = accent.kind, x = candidate.x, y = candidate.y,
+                                dx = candidate.dx, dy = candidate.dy, rot = 0,
+                                scale = rng:Float(accent.scaleMin or 0.9, accent.scaleMax or 1.1),
+                            }
                             break
                         end
                     end
-                    local kind = nil
-                    if not close and rng:Chance(0.18 + 0.14 * density) then kind = "wallLight"
-                    elseif not close and rng:Chance(0.16 + 0.16 * density) then kind = "wallChart"
-                    elseif not close and rng:Chance(0.12 + 0.12 * density) then kind = "noticeBoard"
-                    elseif not close and rng:Chance(0.08 + 0.08 * density) then kind = "clock"
-                    elseif not close and rng:Chance(0.10 + 0.10 * density) then kind = "hospitalSign" end
-                    if kind then
-                        local prop = {
-                            kind = kind, x = candidate.x, y = candidate.y,
-                            dx = candidate.dx, dy = candidate.dy, rot = 0, scale = rng:Float(0.88, 1.08),
-                        }
-                        local neighbor = MultiFloor.Index(candidate.x + candidate.dx, candidate.y + candidate.dy, dungeon.width)
-                        prop.roomId = layer.roomId[neighbor]
-                        layer.props[#layer.props + 1] = prop
-                        wallDecor[#wallDecor + 1] = candidate
-                    end
-                elseif settingKey == "school" then
+                else
                     local close = false
                     for _, placed in ipairs(wallDecor) do
-                        if math.max(math.abs(placed.x - candidate.x), math.abs(placed.y - candidate.y)) < 5 then
+                        if math.max(math.abs(placed.x - candidate.x), math.abs(placed.y - candidate.y))
+                            < (fixtures.spacing or 5) then
                             close = true
                             break
                         end
                     end
                     if not close then
-                        local pack = ThemePacks.Get(settingKey)
-                        for _, rule in ipairs(pack.wallRules or {}) do
-                            if rng:Chance(rule.chance or 0) then
-                                local prop = {
-                                    kind = rule.kind, x = candidate.x, y = candidate.y,
-                                    dx = candidate.dx, dy = candidate.dy, rot = 0,
-                                    scale = rng:Float(rule.scaleMin or 0.92, rule.scaleMax or 1.0),
-                                }
+                        for _, entry in ipairs(decorList or {}) do
+                            local chance = (entry.chanceBase or entry.chance or 0)
+                                + (entry.chanceDensity or 0) * density
+                            if rng:Chance(chance) then
                                 local neighbor = MultiFloor.Index(candidate.x + candidate.dx,
                                     candidate.y + candidate.dy, dungeon.width)
-                                prop.roomId = layer.roomId[neighbor]
-                                layer.props[#layer.props + 1] = prop
+                                layer.props[#layer.props + 1] = {
+                                    kind = entry.kind, x = candidate.x, y = candidate.y,
+                                    dx = candidate.dx, dy = candidate.dy, rot = 0,
+                                    roomId = layer.roomId[neighbor],
+                                    scale = rng:Float(entry.scaleMin or 0.92, entry.scaleMax or 1.0),
+                                }
                                 wallDecor[#wallDecor + 1] = candidate
                                 break
                             end
                         end
-                    end
-                else
-                    layer.torches[#layer.torches + 1] = candidate
-                    local wallKind = themeKey == "frost" and "icicle" or nil
-                    if wallKind and rng:Chance(0.06 + 0.08 * density) then
-                        layer.props[#layer.props + 1] = {
-                            kind = wallKind, x = candidate.x, y = candidate.y,
-                            dx = candidate.dx, dy = candidate.dy, rot = 0,
-                            scale = rng:Float(0.70, 1.30),
-                        }
                     end
                 end
             end
         end
 
 
-        if settingKey == "dungeon" and themeKey == "frost" then
+        if settingKey == "dungeon" and theme.icicles then
             for _, lakeCell in ipairs(layer.lakeCells) do
                 if rng:Chance(0.05) then
                     layer.props[#layer.props+1] = {kind="shardIce",x=lakeCell.x,y=lakeCell.y,
@@ -1151,7 +1163,7 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
                         rot=rng:Float(0,math.pi*2),scale=rng:Float(0.6,1.2)}
                 end
             end
-        elseif settingKey == "dungeon" and themeKey == "verdant" then
+        elseif settingKey == "dungeon" and theme.roots then
             local sites = {}
             for _, candidate in ipairs(candidates) do
                 if candidate.roomId > 0 then sites[#sites+1]=candidate end
@@ -1184,21 +1196,29 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
             end
         end
 
-        if settingKey == "dungeon" then
-            local theme = Themes.Get(themeKey)
-            if theme.bones then
-                for cell,tile in ipairs(layer.grid) do
-                    local roomId=layer.roomId[cell] or 0
-                    local room=roomId>0 and dungeon.rooms[roomId] or nil
-                    if tile==MultiFloor.Tiles.FLOOR and not occupied[cell] and not layer.doorway[cell]
-                        and not layer.corridor[cell] and room and room.depth>1
-                        and rng:Chance(0.018+0.02*density) then
-                        local x,y=MultiFloor.Coordinates(cell,dungeon.width)
-                        layer.props[#layer.props+1]={kind="bones",x=x,y=y,roomId=roomId,
-                            rot=rng:Float(0,math.pi*2),scale=rng:Float(0.8,1.2)}
-                    end
+        -- Generic depth-gated ambient clutter (dungeon supplies "bones"). The
+        -- prop kind, the theme flag that enables it, and the depth gate are all
+        -- data -- the pass itself names no ruins model.
+        local clutter = profile.ambientClutter
+        if clutter and (not clutter.requireThemeFlag or theme[clutter.requireThemeFlag]) then
+            for cell, tile in ipairs(layer.grid) do
+                local roomId = layer.roomId[cell] or 0
+                local room = roomId > 0 and dungeon.rooms[roomId] or nil
+                if tile == MultiFloor.Tiles.FLOOR and not occupied[cell] and not layer.doorway[cell]
+                    and (not clutter.avoidCorridor or not layer.corridor[cell])
+                    and room and room.depth > (clutter.minDepth or 0)
+                    and rng:Chance((clutter.chanceBase or 0) + (clutter.chanceDensity or 0) * density) then
+                    local x, y = MultiFloor.Coordinates(cell, dungeon.width)
+                    layer.props[#layer.props + 1] = {
+                        kind = clutter.kind, x = x, y = y, roomId = roomId,
+                        rot = rng:Float(0, math.pi * 2),
+                        scale = rng:Float(clutter.scaleMin or 0.8, clutter.scaleMax or 1.2),
+                    }
                 end
             end
+        end
+
+        if settingKey == "dungeon" then
             if theme.pools and (theme.pools.mode==0 or theme.pools.mode==3) then
                 local probability=theme.pools.mode==0 and 0.8 or 0.45
                 local directions={{1,0},{-1,0},{0,1},{0,-1}}
@@ -1215,22 +1235,25 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
             end
         end
 
-        if settingKey == "hospital" then
+        -- Generic corridor scatter (floor markings along paths). The prop list
+        -- and rotation style are theme DATA; hospital supplies floorStripe /
+        -- floorArrow, but any theme can decorate its corridors the same way.
+        local corridorScatter = profile.corridorScatter
+        if corridorScatter then
             for cell, tile in ipairs(layer.grid) do
                 if layer.corridor[cell] and tile == MultiFloor.Tiles.FLOOR then
                     local x, y = MultiFloor.Coordinates(cell, dungeon.width)
-                    if rng:Chance(0.025 + 0.035 * density) then
-                        layer.props[#layer.props + 1] = {
-                            kind = "floorStripe", x = x, y = y,
-                            rot = rng:Chance(0.5) and 0 or math.pi * 0.5,
-                            scale = rng:Float(0.85, 1.08),
-                        }
-                    elseif rng:Chance(0.008 + 0.018 * density) then
-                        layer.props[#layer.props + 1] = {
-                            kind = "floorArrow", x = x, y = y,
-                            rot = rng:Int(0, 3) * math.pi * 0.5,
-                            scale = rng:Float(0.85, 1.05),
-                        }
+                    for _, entry in ipairs(corridorScatter) do
+                        if rng:Chance((entry.chanceBase or 0) + (entry.chanceDensity or 0) * density) then
+                            local rot
+                            if entry.rotMode == "quarter" then rot = rng:Int(0, 3) * math.pi * 0.5
+                            else rot = rng:Chance(0.5) and 0 or math.pi * 0.5 end
+                            layer.props[#layer.props + 1] = {
+                                kind = entry.kind, x = x, y = y, rot = rot,
+                                scale = rng:Float(entry.scaleMin or 0.85, entry.scaleMax or 1.08),
+                            }
+                            break
+                        end
                     end
                 end
             end

@@ -1027,6 +1027,45 @@ local function BuildWalls(layer, width, height)
     end
 end
 
+-- Robust representative floor cell for a room: its center if walkable, else the
+-- nearest same-room floor cell, else any floor cell in its bounding box. Rooms
+-- whose center is consumed by a slab opening must not be treated as unreachable.
+local function RoomAccessCell(room, layer, width, height)
+    if not room or not layer then return nil end
+    local cx = math.max(0, math.min(width - 1, math.floor((room.cx or 0) + 0.5)))
+    local cy = math.max(0, math.min(height - 1, math.floor((room.cy or 0) + 0.5)))
+    local center = Index(cx, cy, width)
+    if layer.grid[center] == MultiFloor.Tiles.FLOOR and not layer.slabOpening[center] then
+        return center
+    end
+    local best, bestDistance = nil, math.huge
+    for cell = 1, width * height do
+        if layer.grid[cell] == MultiFloor.Tiles.FLOOR and not layer.slabOpening[cell]
+            and layer.roomId[cell] == room.id then
+            local x, y = Coordinates(cell, width)
+            local d = math.abs(x - cx) + math.abs(y - cy)
+            if d < bestDistance then best, bestDistance = cell, d end
+        end
+    end
+    if best then return best end
+    if room.w and room.h then
+        local x0 = math.max(0, math.floor(room.cx - room.w / 2))
+        local x1 = math.min(width - 1, math.ceil(room.cx + room.w / 2))
+        local y0 = math.max(0, math.floor(room.cy - room.h / 2))
+        local y1 = math.min(height - 1, math.ceil(room.cy + room.h / 2))
+        for y = y0, y1 do
+            for x = x0, x1 do
+                local cell = Index(x, y, width)
+                if layer.grid[cell] == MultiFloor.Tiles.FLOOR and not layer.slabOpening[cell] then
+                    local d = math.abs(x - cx) + math.abs(y - cy)
+                    if d < bestDistance then best, bestDistance = cell, d end
+                end
+            end
+        end
+    end
+    return best
+end
+
 function MultiFloor.Validate(layers, rooms, connectors, entranceId, width, height)
     local floorSize = width * height
     local distance = FilledArray(floorSize * #layers, -1)
@@ -1087,7 +1126,8 @@ function MultiFloor.Validate(layers, rooms, connectors, entranceId, width, heigh
             stairAudits = {}, passedStairs = 0, totalStairs = #connectors,
         }
     end
-    local startCell = Index(entranceRoom.cx, entranceRoom.cy, width)
+    local startCell = RoomAccessCell(entranceRoom, layers[entranceRoom.floor + 1], width, height)
+        or Index(entranceRoom.cx, entranceRoom.cy, width)
     local start = GlobalIndex(entranceRoom.floor, startCell)
     local queue, head = { start }, 1
     distance[start] = 0
@@ -1122,7 +1162,8 @@ function MultiFloor.Validate(layers, rooms, connectors, entranceId, width, heigh
     local unreachableRooms = {}
     for _, room in ipairs(rooms) do
         if room.roleHint ~= "secret" then
-            local cell = Index(room.cx, room.cy, width)
+            local cell = RoomAccessCell(room, layers[room.floor + 1], width, height)
+                or Index(room.cx, room.cy, width)
             if distance[GlobalIndex(room.floor, cell)] < 0 then unreachableRooms[#unreachableRooms + 1] = room.id end
         end
     end
@@ -1292,6 +1333,10 @@ function MultiFloor.Build(options)
         connector.doubleHeightWallCells = connector.contract.doubleHeightWallCells
         connector.lowerSingleHeightWallCells = connector.contract.lowerSingleHeightWallCells
         connector.upperSingleHeightWallCells = connector.contract.upperSingleHeightWallCells
+        -- Fixed policy tags (parity with reference; walls come from the contract,
+        -- height class is decided by the upper-slab opening span).
+        connector.wallGeneration = "stair-contract"
+        connector.wallHeightPolicy = "opening-span-classified"
     end
     local validation = MultiFloor.Validate(layers, rooms, connectors, options.entrance, width, height)
     for _, id in ipairs(validation.unreachableRooms) do errors[#errors + 1] = "room " .. id .. " is unreachable" end

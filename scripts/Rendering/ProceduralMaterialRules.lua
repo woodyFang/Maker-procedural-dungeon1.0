@@ -11,17 +11,26 @@ local ProceduralMaterialRules = {
     -- Structural surfaces use restrained dielectric highlights: walls and
     -- wall caps stay matte, while floors are only slightly smoother so they
     -- catch a broad, weak reflection instead of reading as polished plastic.
+    --
+    -- NEUTRAL STRUCTURAL RULE (distilled from the dungeon/遗迹 surfaces):
+    -- floor / wall / cap materials keep an ACHROMATIC (R≈G≈B) base color, so
+    -- they act as a pure brightness multiplier and let the per-tile vertex
+    -- tint (ExactGeometryBatcher:QueueStructure) own the surface hue. This
+    -- forbids "colored material × colored vertex tint", the double green cast
+    -- that made hospital and school floors read as an extra layer of color.
+    -- Enforced for the NEUTRAL_STRUCTURAL set in Validate(). Prop/identity
+    -- materials (wood, board, accent, gold metalTrim, cloth…) may stay colored.
     PROFILES = {
-        dungeonFloor = { color = 0xe4e8eb, roughness = 0.70, metalness = 0.00, specular = 0.36 },
-        dungeonWall = { color = 0xd2cdc5, roughness = 0.88, metalness = 0.00, specular = 0.18 },
-        dungeonCap = { color = 0xe2ddd5, roughness = 0.82, metalness = 0.01, specular = 0.24 },
-        stone = { color = 0xe2ded7, roughness = 0.86, metalness = 0.00, specular = 0.26 },
-        hospitalFloor = { color = 0xaab5b1, roughness = 0.56, metalness = 0.01, specular = 0.52 },
-        hospitalWall = { color = 0x98a39e, roughness = 0.82, metalness = 0.00, specular = 0.22 },
-        hospitalTrim = { color = 0xbac5c1, roughness = 0.12, metalness = 0.90, specular = 0.94 },
-        schoolFloor = { color = 0xb0bcb5, roughness = 0.48, metalness = 0.00, specular = 0.50 },
-        schoolWall = { color = 0xa5afa8, roughness = 0.86, metalness = 0.00, specular = 0.20 },
-        schoolTrim = { color = 0xaebbb4, roughness = 0.38, metalness = 0.62, specular = 0.66 },
+        dungeonFloor = { color = 0xe8e8e8, roughness = 0.70, metalness = 0.00, specular = 0.36 },
+        dungeonWall = { color = 0xcccccc, roughness = 0.88, metalness = 0.00, specular = 0.18 },
+        dungeonCap = { color = 0xdcdcdc, roughness = 0.82, metalness = 0.01, specular = 0.24 },
+        stone = { color = 0xdddddd, roughness = 0.86, metalness = 0.00, specular = 0.26 },
+        hospitalFloor = { color = 0xb0b0b0, roughness = 0.56, metalness = 0.01, specular = 0.52 },
+        hospitalWall = { color = 0x9e9e9e, roughness = 0.82, metalness = 0.00, specular = 0.22 },
+        hospitalTrim = { color = 0xc0c0c0, roughness = 0.12, metalness = 0.90, specular = 0.94 },
+        schoolFloor = { color = 0xb6b6b6, roughness = 0.48, metalness = 0.00, specular = 0.50 },
+        schoolWall = { color = 0xa9a9a9, roughness = 0.86, metalness = 0.00, specular = 0.20 },
+        schoolTrim = { color = 0xb4b4b4, roughness = 0.38, metalness = 0.62, specular = 0.66 },
         schoolWood = { color = 0xa97e53, roughness = 0.58, metalness = 0.00, specular = 0.36 },
         schoolBoard = { color = 0x315b50, roughness = 0.74, metalness = 0.00, specular = 0.18 },
         schoolCounter = { color = 0xaab7b2, roughness = 0.42, metalness = 0.04, specular = 0.46 },
@@ -75,6 +84,27 @@ function ProceduralMaterialRules.Validate()
     for name, limit in pairs(restrainedColors) do
         if MaxColorChannel(profiles[name].color) > limit then
             return false, name .. " structural color is too bright"
+        end
+    end
+
+    -- Neutral structural rule: floor / wall / cap material colors must stay
+    -- achromatic so the surface hue is carried by the per-tile vertex tint,
+    -- never by "colored material × colored tint". See PROFILES comment.
+    local NEUTRAL_STRUCTURAL = {
+        "dungeonFloor", "dungeonWall", "dungeonCap", "stone",
+        "hospitalFloor", "hospitalWall", "hospitalTrim",
+        "schoolFloor", "schoolWall", "schoolTrim",
+    }
+    local NEUTRAL_TOLERANCE = 6
+    for _, name in ipairs(NEUTRAL_STRUCTURAL) do
+        local color = profiles[name].color
+        local red = (color >> 16) & 0xff
+        local green = (color >> 8) & 0xff
+        local blue = color & 0xff
+        local spread = math.max(red, green, blue) - math.min(red, green, blue)
+        if spread > NEUTRAL_TOLERANCE then
+            return false, name .. " structural material must stay neutral"
+                .. " (surface hue belongs to the vertex tint, not the material color)"
         end
     end
     local dungeonRoughnessGap = profiles.dungeonWall.roughness - profiles.dungeonFloor.roughness

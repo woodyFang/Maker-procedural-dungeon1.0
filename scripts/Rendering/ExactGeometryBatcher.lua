@@ -286,6 +286,15 @@ function ExactGeometryBatcher:QueueStructure(layer, floorSpacing)
                         z = worldZ, color = color,
                     })
             elseif tile == TILE_WALL and not IsDoorWallCut(layer, x, y, width, height) then
+                -- Double-height stair walls span two storeys as one seamless wall.
+                -- The tall wall is drawn from the lower floor; the upper floor's
+                -- matching cell is skipped so it does not duplicate/overlap.
+                local doubleMask = layer.stairWallMask and layer.stairWallMask[c] == "double-height"
+                local belowLayer = doubleMask and self.dungeon.layers[layer.floor] or nil
+                local skipDoubleUpper = (doubleMask and belowLayer and belowLayer.stairWallMask
+                    and belowLayer.stairWallMask[c] == "double-height") and true or false
+                local doubleExtra = (doubleMask and not skipDoubleUpper)
+                    and (MultiFloor.SOURCE_FLOOR_HEIGHT * floorSpacing) or 0
                 local wallHeight = structure
                     and (structure.wallHeight
                         + rng:Float(-structure.wallHeightVariation, structure.wallHeightVariation))
@@ -310,19 +319,21 @@ function ExactGeometryBatcher:QueueStructure(layer, floorSpacing)
                     or (self.hospital and "hospitalWallCap" or "wallCap")
                 local capMaterial = structure and structure.capMaterial
                     or (self.hospital and "hospitalTrim" or "cap")
-                self:Add("wallFootSeal", wallMaterial, {
-                    x = worldX, y = baseY, z = worldZ, color = wallColor,
-                })
-                self:Add(wallGeometry, wallMaterial, {
-                        x = worldX,
-                        y = baseY - GeometryRules.WALL_FLOOR_VERTICAL_OVERLAP,
-                        z = worldZ,
-                        sy = wallHeight + GeometryRules.WALL_FLOOR_VERTICAL_OVERLAP,
-                        color = wallColor,
+                if not skipDoubleUpper then
+                    self:Add("wallFootSeal", wallMaterial, {
+                        x = worldX, y = baseY, z = worldZ, color = wallColor,
                     })
-                self:Add(capGeometry, capMaterial, {
-                        x = worldX, y = baseY + wallHeight, z = worldZ, color = capColor,
-                    })
+                    self:Add(wallGeometry, wallMaterial, {
+                            x = worldX,
+                            y = baseY - GeometryRules.WALL_FLOOR_VERTICAL_OVERLAP,
+                            z = worldZ,
+                            sy = wallHeight + doubleExtra + GeometryRules.WALL_FLOOR_VERTICAL_OVERLAP,
+                            color = wallColor,
+                        })
+                    self:Add(capGeometry, capMaterial, {
+                            x = worldX, y = baseY + wallHeight + doubleExtra, z = worldZ, color = capColor,
+                        })
+                end
             end
         end
     end
