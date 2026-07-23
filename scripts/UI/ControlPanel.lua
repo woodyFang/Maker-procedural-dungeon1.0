@@ -339,7 +339,9 @@ function ControlPanel.new(callbacks, initial)
     self.currentPaletteButton = PillButton("当前", function()
         self:SetPaletteExpanded(not self.paletteExpanded)
     end, { flexGrow = 1, height = 28, fontSize = 10, textAlign = "left" })
-    self.paletteExpandedList = UI.Panel { width = "100%", gap = 6 }
+    self.paletteExpandedList = UI.Panel {
+        width = "100%", flexDirection = "row", flexWrap = "wrap", gap = 5,
+    }
     self.paletteToggleButton = ExpandButton(function() self:SetPaletteExpanded(not self.paletteExpanded) end)
     self.paletteToggleTooltip = TooltipButton(self.paletteToggleButton, "展开色调")
     self.paletteCustomButton = AddButton("＋ 添加", function() self:OpenCustomPaletteModal() end)
@@ -859,7 +861,9 @@ function ControlPanel.new(callbacks, initial)
         },
     }
     self.roomGroupExpanded = false
-    self.roomGroupList = UI.Panel { width = "100%", gap = 5 }
+    self.roomGroupList = UI.Panel {
+        width = "100%", flexDirection = "row", flexWrap = "wrap", gap = 5,
+    }
     self.roomGroupList:SetVisible(false)
     self.roomGroupAddButton = AddButton("＋ 添加", function() self:OpenRoomGroupModal() end)
     self.roomGroupToggleButton = ExpandButton(function()
@@ -1499,7 +1503,7 @@ function ControlPanel:OpenPaletteContextMenu(paletteKey, custom, event)
     end)
     if custom then
         menuChildren[#menuChildren + 1] = UI.Panel { width = "100%", height = 1, backgroundColor = C.line }
-        menuChildren[#menuChildren + 1] = self:ContextMenuButton("编辑配色", function()
+        menuChildren[#menuChildren + 1] = self:ContextMenuButton("编辑颜色", function()
             self:OpenCustomPaletteModal(custom)
         end)
         menuChildren[#menuChildren + 1] = self:ContextMenuButton("删除配色", function()
@@ -1682,10 +1686,10 @@ function ControlPanel:RebuildRoomGroupList(items)
         local statusColor = saved.defaultGroup and { 255, 215, 168, 255 }
             or (saved.source == "manual" and C.teal or C.dim)
         local card = UI.Panel {
-            width = "100%", height = 32, padding = { 4, 6 },
-            flexDirection = "row", alignItems = "center", gap = 5,
+            height = 26, paddingHorizontal = 9,
+            flexDirection = "row", alignItems = "center", gap = 4,
             backgroundColor = C.section, borderColor = { 41, 47, 64, 255 },
-            borderWidth = 1, borderRadius = 6,
+            borderWidth = 1, borderRadius = 7,
             onPointerDown = function(event)
                 if event.button == MOUSEB_RIGHT then
                     event:StopPropagation()
@@ -1700,15 +1704,15 @@ function ControlPanel:RebuildRoomGroupList(items)
             end,
             children = {
                 UI.Panel {
-                    width = 13, height = 13, flexShrink = 0,
+                    width = 12, height = 12, flexShrink = 0,
                     backgroundColor = RoomGroupColors.ToRGBA(saved.color),
                     borderColor = { 255, 255, 255, 64 }, borderWidth = 1, borderRadius = 4,
                 },
                 Label(saved.name, 10, C.text, {
-                    flexGrow = 1, fontWeight = "bold", whiteSpace = "nowrap", overflow = "hidden",
+                    fontWeight = "bold", whiteSpace = "nowrap", flexShrink = 0,
                 }),
-                Label(status, 8.5, statusColor, {
-                    flexShrink = 0, whiteSpace = "nowrap",
+                Label(status, 8, statusColor, {
+                    whiteSpace = "nowrap", flexShrink = 0,
                 }),
             },
         }
@@ -1732,24 +1736,26 @@ function ControlPanel:RebuildPaletteExpandedList(state)
         local custom = self:FindCustomPalette(paletteKey)
         local active = state.themeKey == paletteKey
         local swatches = Row({
-            PaletteSwatch(theme.floor, 12), PaletteSwatch(theme.wall, 12),
-            PaletteSwatch(theme.pillar, 12), PaletteSwatch(theme.accentObject, 12),
-            PaletteSwatch(theme.flame, 12),
-        }, { width = 68, gap = 2, alignItems = "center", flexShrink = 0 })
+            PaletteSwatch(theme.floor, 10), PaletteSwatch(theme.wall, 10),
+            PaletteSwatch(theme.pillar, 10), PaletteSwatch(theme.accentObject, 10),
+            PaletteSwatch(theme.flame, 10),
+        }, { width = 58, gap = 2, alignItems = "center", flexShrink = 0 })
         local topChildren = {}
         topChildren[#topChildren + 1] = Label(theme.label, 10,
             active and { 255, 215, 168, 255 } or C.text,
-            { flexGrow = 1, fontWeight = "bold", whiteSpace = "nowrap", overflow = "hidden" })
+            { fontWeight = "bold", whiteSpace = "nowrap", flexShrink = 0 })
         topChildren[#topChildren + 1] = swatches
-        topChildren[#topChildren + 1] = Label(custom and "自定义" or (active and "当前" or "选择"), 8.5,
-            custom and C.teal or (active and { 255, 215, 168, 255 } or C.dim),
-            { flexShrink = 0, whiteSpace = "nowrap" })
+        if custom or active then
+            topChildren[#topChildren + 1] = Label(custom and "自定义" or "当前", 8,
+                custom and C.teal or { 255, 215, 168, 255 },
+                { flexShrink = 0, whiteSpace = "nowrap" })
+        end
         local paletteCard = UI.Panel {
-            width = "100%", height = 36, padding = { 4, 6 }, gap = 5,
+            height = 26, paddingHorizontal = 9, gap = 4,
             flexDirection = "row", alignItems = "center",
             backgroundColor = active and { 34, 31, 31, 255 } or C.section,
             borderColor = active and { 139, 91, 52, 255 } or { 41, 47, 64, 255 },
-            borderWidth = 1, borderRadius = 6,
+            borderWidth = 1, borderRadius = 7,
             onPointerDown = function(event)
                 if event.button == MOUSEB_RIGHT then
                     event:StopPropagation()
