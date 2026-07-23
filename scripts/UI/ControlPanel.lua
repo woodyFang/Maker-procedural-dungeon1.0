@@ -256,6 +256,13 @@ local function Trim(value)
     return (tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
+-- Highlight a required TextField/TextArea when the user tries to save/generate
+-- with it empty. Both widgets honor the `error` prop for a red border.
+local function HighlightField(field, invalid)
+    if not field then return end
+    field:SetStyle({ error = invalid == true, errorBorderColor = C.danger, errorBorderWidth = 2 })
+end
+
 local function FieldLabel(text, suffix)
     return Row({
         Label(text, 11, C.text, { fontWeight = "bold", flexGrow = 1 }),
@@ -461,7 +468,10 @@ function ControlPanel.new(callbacks, initial)
         width = "100%", height = 46, value = "", maxLength = 24, placeholder = "例如：深海研究站",
         borderRadius = 8, borderColor = { 52, 58, 77, 255 }, focusedBorderColor = C.accent,
         paddingHorizontal = 11, fontSize = 13,
-        onChange = function() if not self.updatingCustomForm then self:RefreshCustomSettingPlan() end end,
+        onChange = function()
+            HighlightField(self.customNameField, false)
+            if not self.updatingCustomForm then self:RefreshCustomSettingPlan() end
+        end,
     }
     self.customFloorHeightHint = Label("美术基准 5.00 米 · 运行比例 1.00", 9, C.dim, {
         whiteSpace = "normal",
@@ -472,6 +482,7 @@ function ControlPanel.new(callbacks, initial)
         borderRadius = 7, borderColor = { 52, 58, 77, 255 }, focusedBorderColor = C.accent,
         paddingHorizontal = 9, fontSize = 12, textAlign = "right",
         onChange = function()
+            HighlightField(self.customFloorHeightField, false)
             if not self.updatingCustomForm then
                 self:RefreshCustomFloorHeightHint()
                 self:RefreshCustomSettingPlan()
@@ -497,7 +508,10 @@ function ControlPanel.new(callbacks, initial)
         backgroundColor = { 22, 26, 38, 255 }, borderRadius = 8,
         borderColor = { 52, 58, 77, 255 }, focusedBorderColor = C.accent, fontSize = 13,
         placeholder = "描述环境、建筑、材质、道具和氛围，例如：位于海沟中的废弃研究站，厚重金属舱门，观景窗外有微光水母…",
-        onChange = function() if not self.updatingCustomForm then self:RefreshCustomSettingPlan() end end,
+        onChange = function()
+            HighlightField(self.customPromptField, false)
+            if not self.updatingCustomForm then self:RefreshCustomSettingPlan() end
+        end,
     }
     self.customImageName = Label("", 10, C.text, { flexGrow = 1, whiteSpace = "normal" })
     self.customImageThumb = UI.Panel {
@@ -702,6 +716,7 @@ function ControlPanel.new(callbacks, initial)
         width = "100%", height = 46, value = "", maxLength = 40, placeholder = "例如：医院病房",
         borderRadius = 8, borderColor = { 52, 58, 77, 255 }, focusedBorderColor = C.accent,
         paddingHorizontal = 11, fontSize = 13,
+        onChange = function() HighlightField(self.roomGroupNameField, false) end,
     }
     self.roomGroupColorHex = RoomGroupColors.ToHex(RoomGroupColors.FALLBACK)
     self.roomGroupColorPicker = UI.ColorPicker {
@@ -715,6 +730,7 @@ function ControlPanel.new(callbacks, initial)
         backgroundColor = { 22, 26, 38, 255 }, borderRadius = 8,
         borderColor = { 52, 58, 77, 255 }, focusedBorderColor = C.accent, fontSize = 13,
         placeholder = "描述空间用途、布局、物件、材质和氛围，例如：四床位住院病房，床头医疗设备，浅蓝色隔帘…",
+        onChange = function() HighlightField(self.roomGroupPromptField, false) end,
     }
     self.roomGroupImageName = Label("未选择文件", 10, C.dim, { flexGrow = 1, whiteSpace = "normal" })
     self.roomGroupImageThumb = UI.Panel {
@@ -1272,26 +1288,33 @@ function ControlPanel:ValidateCustomSetting(requireContent)
         imagePath = self.customImagePath,
         imageName = self.customImageFileName,
     }
+    HighlightField(self.customNameField, false)
+    HighlightField(self.customFloorHeightField, false)
+    HighlightField(self.customPromptField, false)
     if payload.label == "" then
         self.customSettingError:SetText("请先填写题材名称。")
+        HighlightField(self.customNameField, true)
         return nil
     end
     if not payload.floorHeight or payload.floorHeight < MultiFloor.MIN_FLOOR_HEIGHT
         or payload.floorHeight > MultiFloor.MAX_FLOOR_HEIGHT then
         self.customSettingError:SetText(string.format("层高请输入 %.1f 到 %.1f 米之间的数值。",
             MultiFloor.MIN_FLOOR_HEIGHT, MultiFloor.MAX_FLOOR_HEIGHT))
+        HighlightField(self.customFloorHeightField, true)
         return nil
     end
     for _, item in ipairs((self.currentState or {}).customSettings or {}) do
         if item.id ~= self.editingCustomId
             and string.lower(Trim(item.label)) == string.lower(payload.label) then
             self.customSettingError:SetText("已经存在同名题材，请换一个名称。")
+            HighlightField(self.customNameField, true)
             self:SetCustomSettingExpanded(true)
             return nil
         end
     end
     if requireContent and payload.prompt == "" and not payload.imagePath then
-        self.customSettingError:SetText("进入生成方案前，请填写题材描述或添加参考图。")
+        self.customSettingError:SetText("请填写题材描述或添加参考图后再保存。")
+        HighlightField(self.customPromptField, true)
         return nil
     end
     self.customSettingError:SetText("")
@@ -1381,6 +1404,9 @@ function ControlPanel:OpenCustomSettingModal(item)
     self.customPromptField:SetValue(item and item.prompt or "")
     self:SetReferenceImage("custom", item and item.imagePath or nil, item and item.imageName or nil)
     self.updatingCustomForm = false
+    HighlightField(self.customNameField, false)
+    HighlightField(self.customFloorHeightField, false)
+    HighlightField(self.customPromptField, false)
     self:RefreshCustomFloorHeightHint()
     self.customSettingError:SetText("")
     self:RefreshCustomSettingPlan()
@@ -1390,7 +1416,9 @@ end
 
 function ControlPanel:ApplyCustomSetting(mode)
     mode = mode == "draft" and "draft" or "generate"
-    local payload = self:ValidateCustomSetting(mode == "generate")
+    -- Require full content (name + description/reference image) for both save
+    -- and generate, so incomplete topics cannot be saved.
+    local payload = self:ValidateCustomSetting(true)
     if not payload then return end
     if mode == "generate" and not self:UpdateCustomSettingPlan(payload) then return end
     self.customDraftButton:SetDisabled(true)
@@ -1484,6 +1512,8 @@ function ControlPanel:OpenRoomGroupModal(item)
     self:SetReferenceImage("room", item and item.imagePath or nil, item and item.imageName or nil)
     self.roomGroupDeleteButton:SetVisible(item ~= nil
         and tostring(item.id or ""):sub(1, 8) ~= "builtin-")
+    HighlightField(self.roomGroupNameField, false)
+    HighlightField(self.roomGroupPromptField, false)
     self.roomGroupError:SetText("")
     print("[ControlPanel] open room group modal mode=" .. (item and "edit" or "new"))
     self.roomGroupModal:Open()
@@ -1496,12 +1526,16 @@ function ControlPanel:ApplyRoomGroup()
     local topicId = editing and editing.topicId or (self.currentState or {}).activeCustomSettingId
     local settingKey = editing and editing.settingKey
         or (not topicId and (self.currentState or {}).settingKey)
+    HighlightField(self.roomGroupNameField, false)
+    HighlightField(self.roomGroupPromptField, false)
     if name == "" then
         self.roomGroupError:SetText("请填写房间名称。")
+        HighlightField(self.roomGroupNameField, true)
         return
     end
     if prompt == "" and not self.roomGroupImagePath then
         self.roomGroupError:SetText("请至少填写提示词或添加一张参考图。")
+        HighlightField(self.roomGroupPromptField, true)
         return
     end
     for _, item in ipairs((self.currentState or {}).roomGroups or {}) do
@@ -1509,6 +1543,7 @@ function ControlPanel:ApplyRoomGroup()
             and item.topicId == topicId and item.settingKey == settingKey
             and string.lower(Trim(item.name)) == string.lower(name) then
             self.roomGroupError:SetText("已有同名房间，请换一个名称。")
+            HighlightField(self.roomGroupNameField, true)
             return
         end
     end

@@ -711,11 +711,10 @@ local function StairContractClear(lowerLayer, upperLayer, contract, lowerRoomId,
     for _, cell in ipairs(contract.shaftCells) do
         local lowerOwner = lowerLayer.roomId[cell] or 0
         local upperOwner = upperLayer.roomId[cell] or 0
-        local roomConflict = lowerOwner > 0 or upperOwner > 0
-        if allowRoomAdaptation then
-            roomConflict = (lowerOwner > 0 and lowerOwner ~= lowerRoomId)
-                or (upperOwner > 0 and upperOwner ~= upperRoomId)
-        end
+        -- Stacked rooms: the stair may live inside the two rooms it connects.
+        -- Only foreign-room ownership is a conflict (matches reference).
+        local roomConflict = (lowerOwner > 0 and lowerOwner ~= lowerRoomId)
+            or (upperOwner > 0 and upperOwner ~= upperRoomId)
         if Blocked(lowerLayer, cell) or Blocked(upperLayer, cell)
             or lowerLayer.corridor[cell] or upperLayer.corridor[cell] or roomConflict then
             return false
@@ -852,6 +851,41 @@ local function ConnectorCandidates(aDoor, bDoor, width, height, run, style)
     return result
 end
 
+-- Stacked/overlapping rooms prefer an in-footprint stairwell. Search the plan
+-- overlap of the two rooms for anchors whose full reservation fits inside it.
+local function OverlappingRoomCandidates(lowerRoom, upperRoom, width, height, run, stairWidth,
+    landingDepth, style, lateralCenterOffset, floorHeight, stepCount)
+    local result = {}
+    local x0 = math.ceil(math.max(lowerRoom.cx - lowerRoom.w / 2, upperRoom.cx - upperRoom.w / 2))
+    local x1 = math.floor(math.min(lowerRoom.cx + lowerRoom.w / 2, upperRoom.cx + upperRoom.w / 2))
+    local y0 = math.ceil(math.max(lowerRoom.cy - lowerRoom.h / 2, upperRoom.cy - upperRoom.h / 2))
+    local y1 = math.floor(math.min(lowerRoom.cy + lowerRoom.h / 2, upperRoom.cy + upperRoom.h / 2))
+    if x1 < x0 or y1 < y0 then return result end
+    local directions = {
+        { x = 1, y = 0, name = "east" }, { x = -1, y = 0, name = "west" },
+        { x = 0, y = 1, name = "south" }, { x = 0, y = -1, name = "north" },
+    }
+    for _, direction in ipairs(directions) do
+        for y = y0, y1 do
+            for x = x0, x1 do
+                local contract = BuildStairContract(width, height, { x = x, y = y }, direction, run,
+                    stairWidth, landingDepth, 0, style, lateralCenterOffset, floorHeight, stepCount)
+                if contract then
+                    local fits = true
+                    for _, cell in ipairs(contract.sharedFootprintCells) do
+                        local cx, cy = Coordinates(cell, width)
+                        if cx < x0 or cx > x1 or cy < y0 or cy > y1 then fits = false; break end
+                    end
+                    if fits then
+                        result[#result + 1] = { lower = { x = x, y = y }, direction = direction, sharedRoomOverlap = true }
+                    end
+                end
+            end
+        end
+    end
+    return result
+end
+
 local function PlaceConnector(edge, rooms, layers, width, height, connectorId, floorHeight)
     local roomA, roomB = rooms[edge.a], rooms[edge.b]
     local lowerRoom, upperRoom
@@ -885,7 +919,32 @@ local function PlaceConnector(edge, rooms, layers, width, height, connectorId, f
             direction = direction,
         }}
     else
-        candidates = ConnectorCandidates(lowerDoor, upperDoor, width, height, run, style)
+        candidates = {}
+        for _, candidate in ipairs(OverlappingRoomCandidates(lowerRoom, upperRoom, width, height, run,
+            stairWidth, landingDepth, style, spec.lateralCenterOffset, floorHeight, stepCount)) do
+            candidates[#candidates + 1] = candidate
+        end
+        for _, candidate in ipairs(ConnectorCandidates(lowerDoor, upperDoor, width, height, run, style)) do
+            candidates[#candidates + 1] = candidate
+        end
+        -- Prefer in-footprint overlap anchors, then door proximity, and cap the
+        -- list (like the reference's 48) so the A* legality loop stays bounded
+        -- even when a large room overlap yields thousands of raw anchors.
+        local function Proximity(candidate)
+            local _, upper = StairEndpoints(candidate.lower, candidate.direction, run, style)
+            return math.abs(lowerDoor.x - candidate.lower.x) + math.abs(lowerDoor.y - candidate.lower.y)
+                + math.abs(upperDoor.x - upper.x) + math.abs(upperDoor.y - upper.y)
+        end
+        table.sort(candidates, function(a, b)
+            local ao, bo = a.sharedRoomOverlap and 1 or 0, b.sharedRoomOverlap and 1 or 0
+            if ao ~= bo then return ao > bo end
+            local pa, pb = Proximity(a), Proximity(b)
+            if pa ~= pb then return pa < pb end
+            if a.lower.x ~= b.lower.x then return a.lower.x < b.lower.x end
+            if a.lower.y ~= b.lower.y then return a.lower.y < b.lower.y end
+            return a.direction.name < b.direction.name
+        end)
+        while #candidates > 48 do table.remove(candidates) end
     end
     local legal = {}
 
@@ -894,14 +953,7 @@ local function PlaceConnector(edge, rooms, layers, width, height, connectorId, f
         local contract = BuildStairContract(width, height, candidate.lower, candidate.direction, run,
             stairWidth, landingDepth, sideClearance, style, spec.lateralCenterOffset,
             floorHeight, stepCount)
-        local upperCenter = Index(upperRoom.cx, upperRoom.cy, width)
-        local cutsUpperCenter = false
-        if contract then
-            for _, cell in ipairs(contract.shaftCells) do
-                if cell == upperCenter then cutsUpperCenter = true; break end
-            end
-        end
-        if contract and not cutsUpperCenter
+        if contract
             and StairContractClear(lowerLayer, upperLayer, contract, lowerRoom.id, upperRoom.id, allowRoomAdaptation) then
             -- The upper approach sits beyond the future slab opening. Without
             -- reserving the proposed shaft during A*, a shortest path can cross
@@ -917,9 +969,20 @@ local function PlaceConnector(edge, rooms, layers, width, height, connectorId, f
                 blockedCells = proposedShaft,
             })
             if lowerRoute and upperRoute then
+                -- Prefer an in-footprint stairwell when the two rooms overlap.
+                local sharedRoomOverlap = true
+                for _, cell in ipairs(contract.sharedFootprintCells) do
+                    if (lowerLayer.roomId[cell] or 0) ~= lowerRoom.id
+                        or (upperLayer.roomId[cell] or 0) ~= upperRoom.id then
+                        sharedRoomOverlap = false
+                        break
+                    end
+                end
                 local score = lowerRoute.cost + upperRoute.cost + run + landingDepth * 2
+                    - (sharedRoomOverlap and 1000 or 0)
                 legal[#legal + 1] = {
-                    contract = contract, lowerRoute = lowerRoute, upperRoute = upperRoute, score = score,
+                    contract = contract, lowerRoute = lowerRoute, upperRoute = upperRoute,
+                    score = score, sharedRoomOverlap = sharedRoomOverlap,
                 }
             end
         end

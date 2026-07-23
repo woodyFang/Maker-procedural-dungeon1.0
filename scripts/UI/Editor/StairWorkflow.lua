@@ -39,10 +39,13 @@ function StairWorkflow.Install(Editor, helpers)
         self:Commit()
     end
 
-    function Editor:ApplyStairPlacement(link, placement, requestedWidth)
+    function Editor:ApplyStairPlacement(link, placement, requestedWidth, requestedOffset)
         local spec = link and link.stairSpec
         if not spec or not placement then return false end
         if requestedWidth then spec.previewWidth = StairEditing.SnapWidth(requestedWidth) end
+        -- One-side-fixed width resize supplies a compensating center offset so
+        -- the opposite edge stays fixed; other edits leave the offset untouched.
+        if requestedOffset ~= nil then spec.previewLateralCenterOffset = requestedOffset end
         spec.previewAnchor, spec.previewDirection = CopyPoint(placement.anchor), placement.direction
         spec.previewLength, spec.previewStyle = placement.length, StairEditing.NormalizeStyle(placement.style)
         spec.mode, spec.invalid, spec.error, spec.manualPreview = "locked", false, nil, true
@@ -53,6 +56,7 @@ function StairWorkflow.Install(Editor, helpers)
         if not spec.pending then
             spec.anchor, spec.direction, spec.length = CopyPoint(placement.anchor), placement.direction, placement.length
             spec.style, spec.width = spec.previewStyle, spec.previewWidth or spec.width
+            spec.lateralCenterOffset = spec.previewLateralCenterOffset or spec.lateralCenterOffset
         end
         return true
     end
@@ -235,14 +239,14 @@ function StairWorkflow.Install(Editor, helpers)
         end
     end
 
-    function Editor:UpdateStairDrag(drag, placement, width)
+    function Editor:UpdateStairDrag(drag, placement, width, lateralCenterOffset)
         local link = drag and self.links[drag.link]
         if not link then return false end
         RestoreRoomShape(self.rooms[link.a], drag.roomA)
         RestoreRoomShape(self.rooms[link.b], drag.roomB)
         link.stairSpec = CopyLink({ stairSpec = drag.spec, a = link.a, b = link.b }).stairSpec
         link.connector = drag.connector
-        return self:ApplyStairPlacement(link, placement, width)
+        return self:ApplyStairPlacement(link, placement, width, lateralCenterOffset)
     end
 
     function Editor:ToggleSelectedStairLock()

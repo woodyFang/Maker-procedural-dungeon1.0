@@ -277,6 +277,38 @@ function StairEditing.WidthFromPointer(spec, visual, pointer, minimum, maximum, 
     return StairEditing.SnapWidth(width, minimum, maximum, step)
 end
 
+-- One-side-fixed width resize (spec §8.2): the far edge stays put while the
+-- dragged edge moves. Returns both the snapped width and the compensating
+-- lateralCenterOffset so the opposite boundary keeps landing on a tile edge.
+function StairEditing.WidthResizeFromPointer(spec, visual, pointer, minimum, maximum, step, handleGap)
+    local segments = StairEditing.VisualSegments(visual)
+    local start, finish = segments[1] and segments[1].start, segments[1] and segments[1].finish
+    if not start or not finish or not pointer then return nil end
+    local dx, dy = finish.x - start.x, finish.y - start.y
+    local length = math.sqrt(dx * dx + dy * dy)
+    if length < 0.001 then return nil end
+    local perpendicular = { x = -dy / length, y = dx / length }
+    local startWidth = StairEditing.SnapWidth(
+        (visual and visual.width) or spec.previewWidth or spec.width or 2, minimum, maximum, step)
+    local rawStartOffset = tonumber((visual and visual.lateralCenterOffset)
+        or spec.previewLateralCenterOffset or spec.lateralCenterOffset) or 0
+    local startOffset = StairContract.LateralCenterOffset(startWidth, rawStartOffset)
+    local center = { x = (start.x + finish.x) * 0.5, y = (start.y + finish.y) * 0.5 }
+    local fixedEdge = {
+        x = center.x + perpendicular.x * (startOffset - startWidth * 0.5),
+        y = center.y + perpendicular.y * (startOffset - startWidth * 0.5),
+    }
+    local pointerDistance = (pointer.x - fixedEdge.x) * perpendicular.x
+        + (pointer.y - fixedEdge.y) * perpendicular.y
+    local rawWidth = math.max(0, pointerDistance - (handleGap or 1))
+    local width = StairEditing.SnapWidth(rawWidth, minimum, maximum, step)
+    return {
+        width = width,
+        lateralCenterOffset = StairContract.LateralCenterOffset(width,
+            startOffset + (width - startWidth) * 0.5),
+    }
+end
+
 function StairEditing.RotationHandle(visual, distance)
     local segments = StairEditing.VisualSegments(visual)
     local segment = segments[#segments]

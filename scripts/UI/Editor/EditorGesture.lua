@@ -89,18 +89,19 @@ function EditorGesture.Apply(editor, gridX, gridY)
             editor:UpdateStairDrag(drag.stair, placement)
         end
     elseif drag.kind == "stairWidth" then
-        local width = StairEditing.WidthFromPointer(
+        -- One-side-fixed resize: keep the far edge fixed, compensate with offset.
+        local resize = StairEditing.WidthResizeFromPointer(
             drag.stair.spec, drag.stair.connector, { x = gridX, y = gridY })
         local spec = drag.stair.spec
-        changed = width and math.abs(width - (drag.lastWidth or 0)) > 0.0001
+        changed = resize and math.abs(resize.width - (drag.lastWidth or 0)) > 0.0001
         if changed then
-            drag.lastWidth = width
+            drag.lastWidth = resize.width
             editor:UpdateStairDrag(drag.stair, {
                 anchor = CopyPoint(spec.previewAnchor or spec.anchor or drag.stair.connector.lower),
                 direction = spec.previewDirection or spec.direction,
                 length = spec.previewLength or spec.length,
                 style = spec.previewStyle or spec.style,
-            }, width)
+            }, resize.width, resize.lateralCenterOffset)
         end
     end
     if changed and (drag.kind == "roomMove" or drag.kind == "roomResize") then
