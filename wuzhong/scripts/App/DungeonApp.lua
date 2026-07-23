@@ -1242,10 +1242,6 @@ function DungeonApp:Start()
             self.panel:SetPreviewActive(active, mode)
             if not active then self:RestoreOverview() end
         end,
-        onInteract = function(position, forward)
-            if not self:IsPCGDungeonThemeActive() then return false end
-            return self.pcgDungeonRenderer:InteractNearestDoor(position, forward)
-        end,
     })
     self.eventObject:SubscribeToEvent("Update", function(_, _, eventData) self:HandleUpdate(eventData:GetFloat("TimeStep")) end)
     self:Generate(false, true)

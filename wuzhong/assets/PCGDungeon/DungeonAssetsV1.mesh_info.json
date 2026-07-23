@@ -1,0 +1,144 @@
+{
+  "version": 7,
+  "units": "centimeters",
+  "offset_space": "mesh_local",
+  "rotation_order": "pitch_yaw_roll",
+  "transform_order": "mesh_offset * marker_instance_transform",
+  "usage_modes": {
+    "inherit": "Use transforms emitted by the PCG Dungeon Marker flow for this mesh.",
+    "attach": "Create this mesh from the raw marker transforms supplied by source_mesh."
+  },
+  "asset_source": {
+    "id": "DungeonAssetsV1",
+    "root": "E:/DungeonAssets/FBX",
+    "catalog": "E:/DungeonAssets/FBX/_Catalog/asset_catalog.json",
+    "format": "FBX",
+    "read_only": true,
+    "approval": "user_approved_2026-07-23"
+  },
+  "asset_bindings": {
+    "/Game/Configured/DungeonAssetsV1/Env_Tiles_03.Env_Tiles_03": {
+      "model_resource": "Models/DungeonAssetsV1/Env_Tiles_03.mdl",
+      "material_resource": "Materials/DungeonAssetsV1.xml",
+      "source_fbx": "E:/DungeonAssets/FBX/Wall/Env_Tiles_03.fbx",
+      "source_asset_id": "Env_Tiles_03",
+      "source_bbox_m": [5.001122, 0.101416, 5.00123]
+    },
+    "/Game/Configured/DungeonAssetsV1/Env_Wall_01.Env_Wall_01": {
+      "model_resource": "Models/DungeonAssetsV1/Env_Wall_01.mdl",
+      "material_resource": "Materials/DungeonAssetsV1.xml",
+      "source_fbx": "E:/DungeonAssets/FBX/Wall/Env_Wall_01.fbx",
+      "source_asset_id": "Env_Wall_01",
+      "source_bbox_m": [0.430034, 5.244594, 5.242591]
+    },
+    "/Game/Configured/DungeonAssetsV1/Env_Ceiling_Stone_Flat_01.Env_Ceiling_Stone_Flat_01": {
+      "model_resource": "Models/DungeonAssetsV1/Env_Ceiling_Stone_Flat_01.mdl",
+      "material_resource": "Materials/DungeonAssetsV1.xml",
+      "source_fbx": "E:/DungeonAssets/FBX/Ceil/Env_Ceiling_Stone_Flat_01.fbx",
+      "source_asset_id": "Env_Ceiling_Stone_Flat_01",
+      "source_bbox_m": [5.0, 0.14982, 5.0]
+    },
+    "/Game/Configured/DungeonAssetsV1/Env_Wall_DoorFrame_Round_01.Env_Wall_DoorFrame_Round_01": {
+      "model_resource": "Models/DungeonAssetsV1/Env_Wall_DoorFrame_Round_01.mdl",
+      "material_resource": "Materials/DungeonAssetsV1.xml",
+      "source_fbx": "E:/DungeonAssets/FBX/Door/Env_Wall_DoorFrame_Round_01.fbx",
+      "source_asset_id": "Env_Wall_DoorFrame_Round_01",
+      "source_bbox_m": [0.429493, 5.070028, 5.149353]
+    }
+  },
+  "diagnostic_meshes": {
+    "light_volume": "Models/Sphere.mdl",
+    "cell_volume": "Models/Box.mdl"
+  },
+  "meshes": [
+    {
+      "id": "dungeon_assets_v1_ground_room",
+      "marker": "Ground",
+      "marker_group": "marker_Ground_Room",
+      "usage": "inherit",
+      "mesh": "/Game/Configured/DungeonAssetsV1/Env_Tiles_03.Env_Tiles_03",
+      "offset_cm": [0, 0, 0],
+      "rotation_deg": [0, 0, 0],
+      "scale": [1, 1, 1],
+      "can_affect_navigation": true,
+      "collision_profile": "BlockAll",
+      "cast_shadow": true,
+      "visible": true,
+      "mobility": "Static",
+      "material_overrides": []
+    },
+    {
+      "id": "dungeon_assets_v1_ground_corridor",
+      "marker": "Ground",
+      "marker_group": "marker_Ground_Corridor",
+      "usage": "inherit",
+      "mesh": "/Game/Configured/DungeonAssetsV1/Env_Tiles_03.Env_Tiles_03",
+      "offset_cm": [0, 0, 0],
+      "rotation_deg": [0, 0, 0],
+      "scale": [1, 1, 1],
+      "can_affect_navigation": true,
+      "collision_profile": "BlockAll",
+      "cast_shadow": true,
+      "visible": true,
+      "mobility": "Static",
+      "material_overrides": []
+    },
+    {
+      "id": "dungeon_assets_v1_wall",
+      "marker": "Wall",
+      "usage": "inherit",
+      "mesh": "/Game/Configured/DungeonAssetsV1/Env_Wall_01.Env_Wall_01",
+      "offset_cm": [0, 0, 0],
+      "rotation_deg": [0, 0, 0],
+      "scale": [1, 1, 1],
+      "can_affect_navigation": true,
+      "collision_profile": "BlockAll",
+      "cast_shadow": true,
+      "visible": true,
+      "mobility": "Static",
+      "material_overrides": []
+    },
+    {
+      "id": "dungeon_assets_v1_door_opening",
+      "marker": "Door",
+      "usage": "inherit",
+      "mesh": "/Game/Configured/DungeonAssetsV1/Env_Wall_DoorFrame_Round_01.Env_Wall_DoorFrame_Round_01",
+      "offset_cm": [0, 0, 0],
+      "rotation_deg": [0, 0, 0],
+      "scale": [1, 1, 1],
+      "can_affect_navigation": true,
+      "collision_profile": "BlockAll",
+      "cast_shadow": true,
+      "visible": true,
+      "mobility": "Static",
+      "material_overrides": []
+    },
+    {
+      "id": "dungeon_assets_v1_ceiling",
+      "marker": "Ceil",
+      "usage": "inherit",
+      "mesh": "/Game/Configured/DungeonAssetsV1/Env_Ceiling_Stone_Flat_01.Env_Ceiling_Stone_Flat_01",
+      "offset_cm": [0, 0, 0],
+      "rotation_deg": [0, 0, 0],
+      "scale": [1, 1, 1],
+      "can_affect_navigation": false,
+      "collision_profile": "BlockAll",
+      "cast_shadow": true,
+      "visible": true,
+      "mobility": "Static",
+      "material_overrides": []
+    }
+  ],
+  "scatter_rules": [],
+  "scene": {
+    "schema_version": 1,
+    "runtime_source": "PCGDungeonMarkerPipeline",
+    "source_sha256": "",
+    "instance_group_count": 0,
+    "instance_count": 0,
+    "surface_count": 0,
+    "surface_triangle_count": 0,
+    "instances": [],
+    "surfaces": []
+  }
+}

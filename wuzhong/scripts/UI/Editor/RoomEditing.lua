@@ -50,10 +50,12 @@ function RoomEditing.Resize(start, pointer, mode, minimumWidth, minimumHeight)
 end
 
 -- Use the immutable room and pointer starts, matching Three's room drag.
--- This keeps every frame independent of the previously applied frame.
+-- Snap only the pointer delta: PCG rooms can legitimately have half-cell
+-- centers (for example 2.5 for a one-cell room), and snapping the absolute
+-- center would move such a room on the first frame of a plain click.
 function RoomEditing.Move(start, pointerStart, pointer)
-    return Snap(start.cx + pointer.x - pointerStart.x),
-        Snap(start.cy + pointer.y - pointerStart.y)
+    return start.cx + Snap(pointer.x - pointerStart.x),
+        start.cy + Snap(pointer.y - pointerStart.y)
 end
 
 return RoomEditing

@@ -140,7 +140,7 @@ function Start()
                     mesh = "/Game/FantasyDungeon/meshes/Door/DoorArch01.DoorArch01",
                     marker_yaw_offset_deg = 90,
                     offset_cm = { 0, 0, 0 }, rotation_deg = { 0, 0, 0 }, scale = { 1, 1, 1 } },
-                { id = "door_leaf02", usage = "attach", marker = "Door", interactive_door = true,
+                { id = "door_leaf02", usage = "attach", marker = "Door",
                     source_mesh = "/Game/FantasyDungeon/meshes/Door/DoorArch01.DoorArch01",
                     mesh = "/Game/FantasyDungeon/meshes/Door/Door02.Door02",
                     offset_cm = { -61.669051, 3.98934, -0.322654 },
@@ -351,7 +351,6 @@ function Start()
         Check(stats.source:find("pcg%-runtime") ~= nil, "fixed PCG Dungeon instances were still used")
         Check(stats.markerCount == #markerResult.markers, "Marker count was not carried into renderer stats")
         Check(stats.faceCount == #markerResult.faces, "face count was not carried into renderer stats")
-        Check(stats.doors == markerResult.counts.Door, "Door markers did not become interactive door leaves")
         Check(stats.lights > 0 and not pcgDungeonRenderer.referenceLightsEnabled,
             "dynamic Marker lights did not replace fixed reference lights")
         Check(stats.markerLights > 0 and stats.referenceLights == 0,

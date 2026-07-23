@@ -44,7 +44,7 @@
 | `door_wall_arch` | `Door` | `inherit` | `Models/wall01Arch1.mdl` | `Materials/brick2.xml` | 门洞正面 |
 | `door_wall_arch_backface` | `Door` | `attach` | `Models/wall01Arch1.mdl` | `Materials/brick2.xml` | 门洞背面 |
 | `door_arch01` | `Door` | `inherit` | `Models/DoorArch01.mdl` | `Materials/DoorArch.xml` | 门框 |
-| `door_leaf02` | `Door` | `attach` | `Models/Door02.mdl` | `Materials/Door1.xml` | `interactive_door = true` |
+| `door_leaf02` | `Door` | `attach` | `Models/Door02.mdl` | `Materials/Door1.xml` | 固定关闭门扇 |
 | `wall_separator_column03` | `WallSeparator` | `inherit` | `Models/Column03.mdl` | `Materials/column.xml` | 墙端点和拐角柱 |
 | `pillar_placement_transport` | `PillarPlacement` | `inherit` | 不可见传输节点 | 无 | `visible = false`，给 attach 规则提供变换 |
 | `wall_separator_roaster02` | `PillarPlacement` | `attach` | `Models/roaster02.mdl` | `Materials/Chandelier.xml` | `density = 0.35`，点光 brightness 0.3、range 4.8m、投射阴影 |

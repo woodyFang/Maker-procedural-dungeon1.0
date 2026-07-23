@@ -36,6 +36,15 @@ local function GridDimensions(roomCounts, floorCount)
     return math.max(3, slotsPerSide * 5), floorCount, math.max(3, slotsPerSide * 5)
 end
 
+-- PCG cells are integer-aligned. A room's authored center therefore depends
+-- on its span: odd-width rooms use half-cell centers, even-width rooms use
+-- integer centers. The generic editor snap rounds every center to an integer,
+-- so normalize the phase at the PCG generation boundary before rasterizing.
+local function SnapEditorCenter(value, span)
+    local minimum = math.floor((value - span * 0.5) + 0.5)
+    return minimum + span * 0.5
+end
+
 local function EditorLayout(options, seed, cellSize)
     local sourceRooms = options.editorRooms or {}
     local floorCount = math.max(1, math.floor((tonumber(options.floorCount) or 1) + 0.5))
@@ -66,6 +75,7 @@ local function EditorLayout(options, seed, cellSize)
             errors[#errors + 1] = "Editor room " .. index .. " has invalid coordinates"
             cx, cy = 0, 0
         end
+        cx, cy = SnapEditorCenter(cx, width), SnapEditorCenter(cy, depth)
         if floor < 0 or floor >= floorCount then
             errors[#errors + 1] = "Editor room " .. index .. " is outside the configured floors"
             floor = math.max(0, math.min(floorCount - 1, floor))

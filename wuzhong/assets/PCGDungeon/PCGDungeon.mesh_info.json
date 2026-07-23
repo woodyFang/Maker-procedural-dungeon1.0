@@ -432,10 +432,6 @@
       "id": "door_leaf02",
       "marker": "Door",
       "usage": "attach",
-      "interactive_door": true,
-      "door_open_angle": 100,
-      "door_open_duration": 0.45,
-      "door_interaction_distance": 300,
       "source_mesh": "/Game/FantasyDungeon/meshes/Door/DoorArch01.DoorArch01",
       "mesh": "/Game/FantasyDungeon/meshes/Door/Door02.Door02",
       "offset_cm": [
@@ -457,7 +453,7 @@
       "collision_profile": "BlockAll",
       "cast_shadow": true,
       "visible": true,
-      "mobility": "Movable",
+      "mobility": "Static",
       "material_overrides": []
     },
     {

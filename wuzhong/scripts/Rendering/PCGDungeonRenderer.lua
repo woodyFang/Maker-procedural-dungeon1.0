@@ -1,7 +1,6 @@
 local PCGDungeonRenderer = {}
 PCGDungeonRenderer.__index = PCGDungeonRenderer
 
-local FirstPersonDoorSystem = require("Gameplay.FirstPersonDoorSystem")
 local PCGDungeonCoordinateSystem = require("Generation.PCGDungeonCoordinateSystem")
 local PCGDungeonMeshInfoAdapter = require("Generation.PCGDungeonMeshInfoAdapter")
 
@@ -21,6 +20,10 @@ local LIGHT_UNIT_VALUE = {
     Lumens = 2,
 }
 local CELL_DEBUG_INSET = 0.96
+-- Keep the selection plane on the same surface as SceneLayoutEditor room boxes.
+-- Cell positions are cell centers, so subtract half a cell before applying the
+-- small editor overlay lift.
+local EDITOR_SELECTION_HEIGHT = 0.22
 local CELL_DEBUG_STYLE = {
     room = { nodeName = "RoomVolumes", color = { 1.0, 0.5, 0.0, 1.0 } },
     corridor = { nodeName = "CorridorCells", color = { 0.0, 0.5, 1.0, 1.0 } },
@@ -397,13 +400,13 @@ function PCGDungeonRenderer.new(scene)
     return setmetatable({
         scene = scene, root = nil, groups = {}, lights = {}, stats = nil, previewStart = nil,
         resolvedMaterials = {},
-        doorSystem = FirstPersonDoorSystem.new(),
         lightDebugVisible = false, lightDebugRoot = nil,
         lightDebugMaterial = nil, lightDebugMarkerMaterial = nil, elapsed = 0,
         cellDebugVisible = false, cellDebugRoot = nil, cellDebugMaterials = {},
         cellDebugData = nil, cellDebugStats = nil, cachedBuild = nil,
         selectionRoot = nil, selectionMaterial = nil, selectionDungeon = nil,
         selectionRoomIndex = nil, selectionRoomId = nil, selectionCellCount = 0,
+        selectionSurfaceY = nil,
         groupInstanceNodes = {}, assetBindings = nil, diagnosticMeshes = nil, lightDefaults = nil,
         referenceLightsEnabled = false,
         lightingEnabled = true,
@@ -494,10 +497,9 @@ end
 
 function PCGDungeonRenderer:DestroyDungeonGeometry()
     self:ClearLightDebugGeometry()
-    self.doorSystem:Clear()
     if self.root then self.root:Dispose(); self.root = nil end
     self.selectionRoot = nil
-    self.selectionCellCount = 0
+    self.selectionCellCount, self.selectionSurfaceY = 0, nil
     self.groups = {}
     self.groupInstanceNodes = {}
     self.resolvedMaterials = {}
@@ -558,10 +560,9 @@ function PCGDungeonRenderer:Clear()
     self.diagnosticMeshes = nil
     self.lightDefaults = nil
     self.lights = {}
-    self.doorSystem:Clear()
     if self.root then self.root:Dispose(); self.root = nil end
     self.selectionRoot = nil
-    self.selectionCellCount = 0
+    self.selectionCellCount, self.selectionSurfaceY = 0, nil
     self.stats = nil
     self.previewStart = nil
     self.cellDebugData = nil
@@ -932,7 +933,7 @@ end
 
 function PCGDungeonRenderer:RefreshEditorSelection()
     if self.selectionRoot then self.selectionRoot:Dispose(); self.selectionRoot = nil end
-    self.selectionCellCount = 0
+    self.selectionCellCount, self.selectionSurfaceY = 0, nil
     if not self.root or self.cellDebugVisible or self.selectionRoomId == nil then return end
     local data = self.cellDebugData
     if not data or type(data.cells) ~= "table" then return end
@@ -948,8 +949,10 @@ function PCGDungeonRenderer:RefreshEditorSelection()
     local root = self.root:CreateChild("EditorSelectionHighlight")
     for _, cell in ipairs(data.cells) do
         if tonumber(cell.cell_type) == 1 and tonumber(cell.room_id) == self.selectionRoomId then
+            local surfaceY = cell.position[2] - cellSize * 0.5 + EDITOR_SELECTION_HEIGHT
+            if self.selectionSurfaceY == nil then self.selectionSurfaceY = surfaceY end
             AddCellDebugInstance(root, cube, self.selectionMaterial, cube.boundingBox,
-                DungeonPosition(cell.position) + Vector3(0, cellSize * 0.48, 0),
+                DungeonPosition(cell.position) + Vector3(0, EDITOR_SELECTION_HEIGHT - cellSize * 0.5, 0),
                 Vector3(cellSize, 0.12, cellSize), "SelectedRoomCell-" .. tostring(cell.id))
             self.selectionCellCount = self.selectionCellCount + 1
         end
@@ -969,7 +972,7 @@ function PCGDungeonRenderer:ClearEditorSelection()
     self.selectionDungeon = nil
     self.selectionRoomIndex = nil
     self.selectionRoomId = nil
-    self.selectionCellCount = 0
+    self.selectionCellCount, self.selectionSurfaceY = 0, nil
 end
 
 function PCGDungeonRenderer:SetCellDebugVisible(visible)
@@ -1151,10 +1154,6 @@ function PCGDungeonRenderer:BuildAttachments(data, transformsByMesh, floorsByMes
                     local instance = self:AddRuleInstance(
                         group, node, transforms[candidate.index], rule, candidate.index - 1, nil,
                         floorsByMesh[rule.source_mesh][candidate.index], viewOptions)
-                    if rule.interactive_door == true then
-                        self.doorSystem:Register(instance, rule,
-                            string.format("%s-%d", rule.id or "door", candidate.index - 1))
-                    end
                     if rule.point_light_enabled and self.lightingEnabled and not self.referenceLightsEnabled then
                         self:AddPointLight(instance, rule, candidate.hash)
                         lightCount = lightCount + 1
@@ -1391,7 +1390,6 @@ function PCGDungeonRenderer:BuildManifest(data, source, lightData, lightSource, 
         markerLights = markerLights,
         lightSource = self.lightingEnabled
             and (lightData and lightSource or "deterministic fallback") or "disabled",
-        doors = self.doorSystem:GetDoorCount(),
         groups = #self.groups,
         markerCount = pipelineStats and pipelineStats.markerCount or nil,
         faceCount = pipelineStats and pipelineStats.faceCount or nil,
@@ -1400,9 +1398,9 @@ function PCGDungeonRenderer:BuildManifest(data, source, lightData, lightSource, 
     self:RefreshLightDebugGeometry()
     self:RefreshEditorSelection()
     print(string.format(
-        "[PCGDungeon] refreshed source=%d base=%d attached=%d scatter=%d lights=%d doors=%d groups=%d buildMs=%.1f",
+        "[PCGDungeon] refreshed source=%d base=%d attached=%d scatter=%d lights=%d groups=%d buildMs=%.1f",
         self.stats.sourceInstances, baseCount, attachCount, scatterCount, self.stats.lights,
-        self.stats.doors, self.stats.groups, self.stats.buildMs))
+        self.stats.groups, self.stats.buildMs))
     return true, self.stats
 end
 
@@ -1451,10 +1449,6 @@ function PCGDungeonRenderer:RebuildFromMarkers(markerResult, cellDebugData, view
     return true, result
 end
 
-function PCGDungeonRenderer:InteractNearestDoor(position, forward)
-    return self.doorSystem:InteractNearestDoor(position, forward)
-end
-
 function PCGDungeonRenderer:Update(timeStep)
     self.elapsed = self.elapsed + math.max(0, timeStep or 0)
     for _, entry in ipairs(self.lights) do
@@ -1468,7 +1462,6 @@ function PCGDungeonRenderer:Update(timeStep)
             entry.light.brightness = entry.baseBrightness * multiplier
         end
     end
-    self.doorSystem:Update(timeStep)
 end
 
 function PCGDungeonRenderer:Dispose()

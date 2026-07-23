@@ -2,6 +2,8 @@ local DungeonApp = require("App.DungeonApp")
 local FixedThemes = require("Config.FixedThemes")
 local PCGDungeonGenerator = require("Generation.PCGDungeonGenerator")
 local EditorData = require("UI.Editor.EditorData")
+local EditorGesture = require("UI.Editor.EditorGesture")
+local EditorInteraction = require("UI.Editor.EditorInteraction")
 
 local RESULT_PATH = ".tmp/pcg-dungeon-editor-sync.result.txt"
 local CELL_SIZE = 5.0
@@ -59,6 +61,36 @@ local function SelectRoom(editor, roomIndex)
     editor:NotifySelection()
 end
 
+local function TestFractionalRoomClick()
+    local editor = {
+        rooms = { { cx = 2.5, cy = 3.5, w = 1, h = 1, floor = 0 } },
+        links = {}, callbacks = {}, editorInteraction = EditorInteraction.new(),
+        UpdateRoomStairEdit = function() end, ApplyAdaptiveRoutes = function() end,
+        UpdateRoomVisual = function() end, RefreshOverlay = function() end,
+        Commit = function(self) self.commits = (self.commits or 0) + 1 end,
+    }
+    local room = editor.rooms[1]
+    editor.drag = { kind = "roomMove", index = 1, startX = room.cx, startY = room.cy,
+        start = { cx = room.cx, cy = room.cy }, adaptive = {} }
+    editor.editorInteraction:Capture()
+    Check(not EditorGesture.Apply(editor, room.cx, room.cy),
+        "a plain click on a fractional-center PCG room was treated as a move")
+    Check(room.cx == 2.5 and room.cy == 3.5,
+        "a plain click changed the fractional-center PCG room position")
+    Check(EditorGesture.Finish(editor) and editor.commits == nil,
+        "a plain click committed a PCG room move")
+end
+
+local function RuntimeRoomCenter(dungeon, roomId)
+    local x, z, count = 0, 0, 0
+    for _, cell in ipairs(dungeon and dungeon.topology and dungeon.topology.cells or {}) do
+        if cell.cell_type == 1 and cell.room_id == roomId then
+            x, z, count = x + cell.position[3], z + cell.position[1], count + 1
+        end
+    end
+    return count > 0 and { x = x / count, z = z / count } or nil
+end
+
 function Start()
     local ok, errorMessage = xpcall(function()
         local base = PCGDungeonGenerator.Generate({
@@ -73,8 +105,25 @@ function Start()
         Check(base.editorWorldScale == CELL_SIZE and base.editorSwapAxes == true
                 and base.editorCenterOffset == 0,
             "PCG dungeon does not expose its runtime-to-editor coordinate transform")
+        local parity = PCGDungeonGenerator.Generate({
+            seed = 7, floorCount = 1, cellSize = CELL_SIZE, editorEnabled = true,
+            editorRooms = {
+                { cx = 2, cy = 2, w = 1, h = 1, floor = 0 },
+                { cx = 10, cy = 2, w = 1, h = 1, floor = 0 },
+            },
+            editorEdges = { { a = 1, b = 2, width = 1 } },
+            editorGridCells = { 25, 1, 25 },
+        })
+        local parityRoom = parity.rooms and parity.rooms[1]
+        local parityCenter = RuntimeRoomCenter(parity, 0)
+        Check(parity.valid and parityRoom and parityRoom.cx == 2.5 and parityRoom.cy == 2.5
+                and parityCenter
+                and math.abs((parityRoom.cy - parity.height * 0.5) * CELL_SIZE - parityCenter.x) < 0.000001
+                and math.abs((parityRoom.cx - parity.width * 0.5) * CELL_SIZE - parityCenter.z) < 0.000001,
+            "PCG odd-sized editor rooms did not preserve their half-cell center phase")
         Check(base.editorRoomMinimumWidth == 1 and base.editorRoomMinimumHeight == 1,
             "PCG dungeon does not expose its 1x1 editor room minimum")
+        TestFractionalRoomClick()
         for index, room in ipairs(base.rooms) do
             Check(room.id == index - 1, "PCG internal room numbering is not zero based")
         end
@@ -179,6 +228,10 @@ function Start()
         Check(app.pcgDungeonRenderer.selectionRoomId == appRoomIndex - 1
                 and app.pcgDungeonRenderer.selectionCellCount > 0,
             "3D selection did not highlight the matching PCG room")
+        local selectedFloor = app.editor3D.rooms[appRoomIndex].floor
+        Check(math.abs(app.pcgDungeonRenderer.selectionSurfaceY
+                - (selectedFloor * CELL_SIZE + 0.22)) < 0.000001,
+            "3D PCG selection highlight was placed at the cell ceiling instead of the room surface")
         app.editorMode, app.editor = "2d", app.editor2D
         local firstRoot = app.pcgDungeonRenderer.root
         local firstSerial = app.generationSerial

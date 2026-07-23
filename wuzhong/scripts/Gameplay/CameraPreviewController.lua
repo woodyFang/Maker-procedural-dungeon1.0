@@ -322,15 +322,6 @@ function CameraPreviewController:Update(timeStep)
     if input:GetKeyPress(KEY_1) and not self.cameraOnly then self:Activate("third"); return end
     if input:GetKeyPress(KEY_2) and not self.cameraOnly then self:Activate("first"); return end
 
-    if self.mode == "first" and input:GetKeyPress(KEY_E) and self.callbacks.onInteract then
-        local cp = math.cos(self.lookPitch)
-        local lookDirection = Vector3(
-            -math.sin(self.yaw) * cp,
-            math.sin(self.lookPitch),
-            -math.cos(self.yaw) * cp)
-        self.callbacks.onInteract(self.cameraNode.position, lookDirection)
-    end
-
     if input:GetMouseButtonDown(MOUSEB_RIGHT) and not UI.IsPointerOverUI() then
         local move = input.mouseMove
         self.yaw = self.yaw + move.x * 0.006
