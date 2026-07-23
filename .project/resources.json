@@ -1,7 +1,11 @@
 {
-  "$schema": "../../schemas/resources.schema.json",
-  "preload_groups": ["default"],
+  "$schema": "../schemas/resources.schema.json",
+  "preload_groups": [
+    "default"
+  ],
   "groups": {
-    "default": ["**", "engine-res://**"]
+    "default": [
+      "**"
+    ]
   }
 }

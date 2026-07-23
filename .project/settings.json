@@ -1,13 +1,23 @@
 {
-  "$schema": "../../schemas/settings.schema.json",
+  "$schema": "../schemas/settings.schema.json",
   "sources": {
-    "engine": { "tag": "stable" },
-    "engine-res": { "tag": "stable" }
+    "engine": {
+      "tag": "latest"
+    },
+    "engine-res": {
+      "tag": "latest"
+    },
+    "official-res": {
+      "tag": "latest"
+    }
   },
   "build": {
     "generate_fs_path": true,
     "output_dir": "../dist",
-    "asset_dirs": ["../assets", "../scripts"],
+    "asset_dirs": [
+      "../assets",
+      "../scripts"
+    ],
     "asset_ignores": []
   }
 }

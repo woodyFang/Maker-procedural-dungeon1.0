@@ -1,5 +1,7 @@
 uuid_mappings.json
 .cache
+.build
+.project/build
 
 # Local AI development kits and engine reference copies
 .agents/

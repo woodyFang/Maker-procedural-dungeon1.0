@@ -1,8 +1,10 @@
 {
-  "$schema": "../../schemas/project.schema.json",
-  "project_id": "MecchaChameleon",
-  "name": "MecchaChameleon",
-  "author": { "id": "local" },
-  "version": "1.0.0",
-  "entry": "main.lua"
+  "$schema": "../schemas/project.schema.json",
+  "project_id": "procedural-dungeon",
+  "name": "urhox-test",
+  "author": {
+    "id": "local"
+  },
+  "entry": "main.lua",
+  "version": "1.0.0"
 }
