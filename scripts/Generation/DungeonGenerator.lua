@@ -926,10 +926,28 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
             end
         end
 
-        local function DecorateThemePackRoom(room, pack)
+        local function DecorateRoomGroup(room, allowedProps)
             local group = roomGroupsById and roomGroupsById[room.roomGroupId] or nil
-            local rules = group and group.propRules and #group.propRules > 0 and group.propRules
-                or pack.roomRules[room.type] or pack.roomRules.default or {}
+            if not group or type(group.propRules) ~= "table" or #group.propRules == 0 then return false end
+            for _, rule in ipairs(group.propRules) do
+                if not allowedProps or allowedProps[rule.kind] then
+                    for _ = 1, rule.count or 1 do
+                        if rng:Chance(rule.chance == nil and 1 or rule.chance) then
+                            AddProp(room, rule.kind, {
+                                rot = rng:Chance(0.5) and 0 or math.pi * 0.5,
+                                scale = rng:Float(rule.scaleMin or 0.92, rule.scaleMax or 1.0),
+                                tries = 100,
+                            })
+                        end
+                    end
+                end
+            end
+            return true
+        end
+
+        local function DecorateThemePackRoom(room, pack)
+            if DecorateRoomGroup(room, pack.props) then return end
+            local rules = pack.roomRules[room.type] or pack.roomRules.default or {}
             for _, rule in ipairs(rules) do
                 if pack.props[rule.kind] then
                     for _ = 1, rule.count or 1 do
@@ -948,7 +966,7 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
         for _, room in ipairs(dungeon.rooms) do
             if room.floor == layer.floor then
                 if settingKey == "hospital" then
-                    DecorateHospitalRoom(room)
+                    if not DecorateRoomGroup(room) then DecorateHospitalRoom(room) end
                 elseif ThemePacks.Get(settingKey) then
                     DecorateThemePackRoom(room, ThemePacks.Get(settingKey))
                 else
@@ -1221,7 +1239,7 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
 end
 
 local function GenerateAttempt(seed, parameters)
-    local floorCount = Clamp(math.floor((parameters.floorCount or 2) + 0.5), 1, 6)
+    local floorCount = math.max(1, math.floor((parameters.floorCount or 2) + 0.5))
     local floorHeight = MultiFloor.NormalizeFloorHeight(parameters.floorHeight)
     local emptyScene = parameters.emptyScene == true
     local stableSeed = Random.U32(parameters.stableSeed or seed)
@@ -1335,8 +1353,8 @@ local function GenerateAttempt(seed, parameters)
                         anchor = CopyPoint(spec.anchor), previewAnchor = CopyPoint(spec.previewAnchor),
                         direction = spec.direction, previewDirection = spec.previewDirection,
                         style = spec.style or "l-turn", previewStyle = spec.previewStyle,
-                        width = Clamp(tonumber(spec.width) or 2, 1, 5),
-                        previewWidth = spec.previewWidth and Clamp(tonumber(spec.previewWidth) or 2, 1, 5) or nil,
+                        width = MultiFloor.NormalizeStairWidth(spec.width),
+                        previewWidth = spec.previewWidth and MultiFloor.NormalizeStairWidth(spec.previewWidth) or nil,
                         length = tonumber(spec.length), previewLength = tonumber(spec.previewLength),
                         landingDepth = math.max(1, math.floor((tonumber(spec.landingDepth) or 2) + 0.5)),
                         previewLandingDepth = tonumber(spec.previewLandingDepth), manualPreview = spec.manualPreview == true,
@@ -1430,6 +1448,9 @@ local function GenerateAttempt(seed, parameters)
         rooms = rooms, edges = multi.edges, connectors = multi.connectors, layers = multi.layers,
         entrance = entrance, boss = boss, maxDepth = maxDepth,
         valid = multi.valid, errors = multi.errors, bfs3 = multi.bfs3,
+        stairAudits = multi.stairAudits,
+        passedStairs = multi.passedStairs,
+        totalStairs = multi.totalStairs,
         theme = parameters.theme or "ancient",
         roomCountsByFloor = roomCounts, loopRatesByFloor = loopRates,
         decorDensitiesByFloor = densities,

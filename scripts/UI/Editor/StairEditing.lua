@@ -1,4 +1,5 @@
 local MultiFloor = require("Generation.MultiFloor")
+local StairContract = require("Generation.StairContract")
 
 local StairEditing = {}
 
@@ -27,7 +28,9 @@ function StairEditing.NormalizeStyle(style)
 end
 
 function StairEditing.SnapWidth(width, minimum, maximum, step)
-    minimum, maximum, step = minimum or 1, maximum or 5, step or 0.25
+    minimum = minimum or StairContract.MIN_WIDTH
+    maximum = maximum or StairContract.MAX_WIDTH
+    step = step or StairContract.WIDTH_STEP
     local value = tonumber(width) or 2
     local snapped = math.floor(value / step + 0.5) * step
     return math.max(minimum, math.min(maximum, snapped))
