@@ -5,14 +5,18 @@ local ThemePacks = {
     packs = {},
 }
 
-local function Rule(kind, count, chance, scaleMin, scaleMax)
-    return {
+local function Rule(kind, count, chance, scaleMin, scaleMax, extra)
+    local rule = {
         kind = kind,
         count = count or 1,
         chance = chance == nil and 1 or chance,
         scaleMin = scaleMin or 0.92,
         scaleMax = scaleMax or scaleMin or 1.0,
     }
+    -- Optional layout params (layout, step, rot, margin, max, anchor, ...) let a
+    -- rule opt into a structured RoomLayout instead of random scatter.
+    if extra then for key, value in pairs(extra) do rule[key] = value end end
+    return rule
 end
 
 -- AI-authored packs are data only. The runtime validates this manifest before
@@ -86,33 +90,37 @@ ThemePacks.packs.school = {
     },
     roomRules = {
         entrance = {
-            Rule("schoolReception", 1, 1.0, 1.08),
-            Rule("schoolLocker", 2, 1.0, 0.92, 1.02),
+            Rule("schoolReception", 1, 1.0, 1.08, nil, { layout = "focal" }),
+            Rule("schoolLocker", 2, 1.0, 0.92, 1.02, { layout = "perimeter", step = 2 }),
         },
         combat = {
-            Rule("schoolStudentDesk", 4, 1.0, 0.92, 1.02),
-            Rule("schoolTeacherDesk", 1, 0.82, 0.95, 1.02),
+            -- Classroom: desks in aligned rows facing the front, teacher desk focal.
+            Rule("schoolStudentDesk", 4, 1.0, 0.92, 1.02, { layout = "grid", step = 2, rot = 0 }),
+            Rule("schoolTeacherDesk", 1, 0.82, 0.95, 1.02, { layout = "focal" }),
         },
         elite = {
-            Rule("schoolLabBench", 3, 1.0, 0.92, 1.02),
-            Rule("schoolGlobe", 1, 0.78, 0.92, 1.05),
+            -- Laboratory: benches in rows, globe as centre focal.
+            Rule("schoolLabBench", 3, 1.0, 0.92, 1.02, { layout = "grid", step = 3, rot = 0 }),
+            Rule("schoolGlobe", 1, 0.78, 0.92, 1.05, { layout = "focal" }),
         },
         treasure = {
-            Rule("schoolBookshelf", 4, 1.0, 0.90, 1.02),
-            Rule("schoolTeacherDesk", 1, 0.82, 0.92),
+            -- Library: bookshelves lined against the walls.
+            Rule("schoolBookshelf", 4, 1.0, 0.90, 1.02, { layout = "perimeter", step = 2 }),
+            Rule("schoolTeacherDesk", 1, 0.82, 0.92, nil, { layout = "focal" }),
         },
         shrine = {
-            Rule("schoolLabBench", 2, 1.0, 0.95, 1.05),
-            Rule("schoolGlobe", 1, 1.0, 1.0),
-            Rule("schoolBookshelf", 1, 0.72, 0.92),
+            Rule("schoolLabBench", 2, 1.0, 0.95, 1.05, { layout = "grid", step = 3, rot = 0 }),
+            Rule("schoolGlobe", 1, 1.0, 1.0, nil, { layout = "focal" }),
+            Rule("schoolBookshelf", 1, 0.72, 0.92, nil, { layout = "perimeter", step = 3 }),
         },
         boss = {
-            Rule("schoolStage", 1, 1.0, 1.12),
-            Rule("schoolCafeteriaTable", 4, 1.0, 0.95, 1.05),
+            -- Cafeteria: stage focal, dining tables in a neat grid.
+            Rule("schoolStage", 1, 1.0, 1.12, nil, { layout = "focal" }),
+            Rule("schoolCafeteriaTable", 4, 1.0, 0.95, 1.05, { layout = "grid", step = 3, rot = 0 }),
         },
         default = {
-            Rule("schoolStudentDesk", 3, 1.0, 0.92, 1.02),
-            Rule("schoolLocker", 1, 0.62, 0.88, 0.98),
+            Rule("schoolStudentDesk", 3, 1.0, 0.92, 1.02, { layout = "grid", step = 2, rot = 0 }),
+            Rule("schoolLocker", 1, 0.62, 0.88, 0.98, { layout = "perimeter", step = 3 }),
             Rule("schoolBookshelf", 1, 0.48, 0.88, 0.98),
         },
     },

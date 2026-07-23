@@ -81,7 +81,7 @@ function DungeonApp.new()
         editorDirty = false, editorRebuildPending = false,
         editorFrameSerial = 0, editorRebuildAfterFrame = 0, editorRebuildIdle = 0,
         selectedEditorRoom = nil, selectedEditorRoomGroupId = nil,
-        graphVisible = false, heatVisible = false, postEnabled = false,
+        graphVisible = false, heatVisible = false, roomGroupsVisible = false, postEnabled = false,
         cameraKeyboardConfirmed = false,
     }, DungeonApp)
 end
@@ -1034,6 +1034,7 @@ function DungeonApp:RebuildView(animate)
     self.dungeonRenderer:Build(self.dungeon, self.themeKey, {
         currentFloor = self.currentFloor, viewMode = self.floorViewMode,
         graphVisible = self.graphVisible, heatVisible = self.heatVisible, settingKey = self.settingKey,
+        roomGroupsVisible = self.roomGroupsVisible,
         roomGroups = self:ActiveRoomGroups(),
         animate = animate == true,
     })
@@ -1378,6 +1379,9 @@ function DungeonApp:HandleUpdate(timeStep)
     elseif input:GetKeyPress(KEY_P) then
         self.postEnabled = not self.postEnabled; self.zone.bloomPlusEnabled = self.postEnabled
         self.panel:SetStatus("后处理 " .. (self.postEnabled and "已开启" or "已关闭"))
+    elseif input:GetKeyPress(KEY_J) then
+        self.roomGroupsVisible = not self.roomGroupsVisible; self:RebuildView()
+        self.panel:SetStatus("房间分组着色 " .. (self.roomGroupsVisible and "已开启" or "已关闭"))
     end
     if self.forgeCamera:Update(timeStep) then self:ConfirmCameraKeyboardInput() end
 end

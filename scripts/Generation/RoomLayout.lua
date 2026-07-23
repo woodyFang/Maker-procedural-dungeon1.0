@@ -35,13 +35,35 @@ local function Scale(rng, spec)
 end
 
 -- Aligned rows. Ideal for seating/desks that should face one direction.
--- spec: step | rowStep/colStep, margin, rot (uniform facing), count (cap).
+-- spec: step | rowStep/colStep, margin, rot (uniform facing), max (optional cap).
+-- Fills by geometry; `count` from Rule() is ignored here (that is a scatter concept).
+--
+-- `centered = true` switches to a centre-anchored modulo lattice (pillar arrays):
+-- it walks every cell and keeps those on the `step` grid measured from the room
+-- centre, optionally skipping the exact centre. `stepThreshold`/`stepBig`/
+-- `stepSmall` pick the step from the room's short side.
 function RoomLayout.grid(room, rng, spec, place)
     local x0, x1, y0, y1 = Bounds(room, spec.margin)
+    local rot = spec.rot or 0
+    if spec.centered then
+        local step = spec.step
+        if not step and spec.stepThreshold then
+            step = math.min(room.w, room.h) >= spec.stepThreshold and spec.stepBig or spec.stepSmall
+        end
+        step = step or 3
+        for y = y0, y1 do
+            for x = x0, x1 do
+                if (x - room.cx) % step == 0 and (y - room.cy) % step == 0
+                    and (not spec.skipCenter or x ~= room.cx or y ~= room.cy) then
+                    place.at(room, spec.kind, x, y, rot, Scale(rng, spec))
+                end
+            end
+        end
+        return
+    end
     local rowStep = spec.rowStep or spec.step or 2
     local colStep = spec.colStep or spec.step or 2
-    local rot = spec.rot or 0
-    local cap, placed = spec.count, 0
+    local cap, placed = spec.max, 0
     for y = y0, y1, rowStep do
         for x = x0, x1, colStep do
             if cap and placed >= cap then return placed end
@@ -65,7 +87,7 @@ function RoomLayout.perimeter(room, rng, spec, place)
         cells[#cells + 1] = { x0, y, math.pi * 0.5 }
         if x1 > x0 then cells[#cells + 1] = { x1, y, -math.pi * 0.5 } end
     end
-    local cap, placed = spec.count, 0
+    local cap, placed = spec.max, 0
     for _, c in ipairs(cells) do
         if cap and placed >= cap then break end
         local s = Scale(rng, spec)
@@ -79,7 +101,7 @@ function RoomLayout.ring(room, rng, spec, place)
     if spec.anchor then place.prop(room, spec.anchor, { scale = spec.anchorScale or 1 }) end
     local count = spec.count or 6
     local radius = spec.radius or math.max(2.5, math.min(room.w, room.h) * 0.5 - 2)
-    local angle0 = spec.angleJitter == false and 0 or rng:Float(0, math.pi * 2)
+    local angle0 = spec.angleJitter == false and 0 or rng:Float(0, spec.angleSpan or math.pi * 2)
     for i = 0, count - 1 do
         local angle = angle0 + i * (2 * math.pi / count)
         local x = math.floor(room.cx + math.cos(angle) * radius + 0.5)
@@ -105,7 +127,8 @@ function RoomLayout.fill(room, rng, spec, place)
         end
     end
     if spec.anchor and math.min(room.w, room.h) >= (spec.anchorMinDim or 10) then
-        place.at(room, spec.anchor, room.cx, room.cy, spec.anchorRot or 0, spec.anchorScale or 1)
+        local arot = spec.anchorRotAxis and (rng:Chance(0.5) and 0 or math.pi * 0.5) or (spec.anchorRot or 0)
+        place.at(room, spec.anchor, room.cx, room.cy, arot, spec.anchorScale or 1)
     end
 end
 

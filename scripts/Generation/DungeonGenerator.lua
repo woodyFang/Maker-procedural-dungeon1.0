@@ -2,6 +2,7 @@ local Random = require("Generation.Random")
 local Delaunay = require("Generation.Delaunay")
 local MultiFloor = require("Generation.MultiFloor")
 local GeometryRules = require("Generation.GeometryRules")
+local RoomLayout = require("Generation.RoomLayout")
 local Themes = require("Config.Themes")
 local ThemePacks = require("Config.ThemePacks")
 local EnvironmentProfiles = require("Config.EnvironmentProfiles")
@@ -776,6 +777,10 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
             return false
         end
 
+        -- Placement helpers a RoomLayout pattern uses. Both go through the
+        -- validity-checked closures above, so a layout can only choose cells.
+        local layoutPlace = { at = AddPropAt, prop = AddProp }
+
         local function DecorateHospitalRoom(room)
             local area = math.max(1, room.w * room.h)
             local roomy = area >= 95
@@ -882,49 +887,58 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
         end
 
         local function DecorateDungeonRoom(room)
+            -- Ruins room layout now runs on the generic RoomLayout patterns; the
+            -- prop kinds are ruins DATA, the placement mechanics are shared.
             if room.type == ROOM_TYPES.ENTRANCE then
-                AddProp(room, "ring", { rot = 0 })
+                RoomLayout.focal(room, rng, { kind = "ring", rot = 0, tries = 24 }, layoutPlace)
             elseif room.type == ROOM_TYPES.BOSS then
-                AddProp(room, "bossCrystal", { scale = 1.15 })
-                local radius = math.max(2.5, math.min(room.w, room.h) * 0.5 - 2)
-                local angle0 = rng:Float(0, 1)
-                for index = 0, 5 do
-                    local angle = angle0 + index * math.pi / 3
-                    AddPropAt(room, "brazier", math.floor(room.cx + math.cos(angle)*radius + 0.5),
-                        math.floor(room.cy + math.sin(angle)*radius + 0.5), 0, 1)
-                end
+                RoomLayout.ring(room, rng, {
+                    kind = "brazier", count = 6, angleSpan = 1,
+                    anchor = "bossCrystal", anchorScale = 1.15,
+                }, layoutPlace)
             elseif room.type == ROOM_TYPES.TREASURE then
-                AddProp(room, "chest")
+                RoomLayout.focal(room, rng, { kind = "chest", tries = 24 }, layoutPlace)
             elseif room.type == ROOM_TYPES.SHRINE then
-                AddProp(room, "shrineCrystal")
+                RoomLayout.focal(room, rng, { kind = "shrineCrystal", tries = 24 }, layoutPlace)
             end
 
             if (room.type == ROOM_TYPES.COMBAT or room.type == ROOM_TYPES.ELITE or room.type == ROOM_TYPES.BOSS)
                 and math.min(room.w, room.h) >= 10 and not room.grave and not room.lake then
-                local step = math.min(room.w, room.h) >= 14 and 4 or 3
-                for y = math.ceil(room.cy - room.h * 0.5) + 2, math.floor(room.cy + room.h * 0.5) - 2 do
-                    for x = math.ceil(room.cx - room.w * 0.5) + 2, math.floor(room.cx + room.w * 0.5) - 2 do
-                        if (x-room.cx)%step == 0 and (y-room.cy)%step == 0
-                            and (x ~= room.cx or y ~= room.cy) then
-                            AddPropAt(room, "pillar", x, y, 0, rng:Float(0.94, 1.06))
-                        end
-                    end
-                end
+                RoomLayout.grid(room, rng, {
+                    kind = "pillar", centered = true, skipCenter = true,
+                    stepThreshold = 14, stepBig = 4, stepSmall = 3,
+                    scaleMin = 0.94, scaleMax = 1.06, rot = 0,
+                }, layoutPlace)
             end
             if room.grave then
-                for y=math.ceil(room.cy-room.h*0.5)+2,math.floor(room.cy+room.h*0.5)-2,2 do
-                    for x=math.ceil(room.cx-room.w*0.5)+2,math.floor(room.cx+room.w*0.5)-2,2 do
-                        if (math.abs(x-room.cx)>1 or math.abs(y-room.cy)>1) and rng:Chance(0.8) then
-                            AddPropAt(room,"grave",x,y,rng:Float(-0.3,0.3),rng:Float(0.85,1.15))
-                        end
-                    end
-                end
-                if math.min(room.w,room.h)>=10 then
-                    AddPropAt(room,"sarco",room.cx,room.cy,rng:Chance(0.5) and 0 or math.pi*0.5,1)
-                end
+                RoomLayout.fill(room, rng, {
+                    kind = "grave", step = 2, chance = 0.8, rotJitter = 0.3,
+                    scaleMin = 0.85, scaleMax = 1.15,
+                    anchor = "sarco", anchorMinDim = 10, anchorRotAxis = true, anchorScale = 1,
+                }, layoutPlace)
                 for _=1,4 do
                     AddPropAt(room,"candle",rng:Int(math.floor(room.cx-room.w*0.5)+1,math.ceil(room.cx+room.w*0.5)-1),
                         rng:Int(math.floor(room.cy-room.h*0.5)+1,math.ceil(room.cy+room.h*0.5)-1),0,rng:Float(0.85,1.2))
+                end
+            end
+        end
+
+        -- Apply one theme prop-rule. A rule may opt into a structured layout
+        -- (grid/perimeter/ring/fill/focal); with no layout it falls back to the
+        -- original random scatter, byte-for-byte, so existing themes are stable.
+        local function ApplyRule(room, rule)
+            local layout = rule.layout
+            if layout and layout ~= "scatter" and RoomLayout[layout] then
+                RoomLayout[layout](room, rng, rule, layoutPlace)
+                return
+            end
+            for _ = 1, rule.count or 1 do
+                if rng:Chance(rule.chance == nil and 1 or rule.chance) then
+                    AddProp(room, rule.kind, {
+                        rot = rule.rot or (rng:Chance(0.5) and 0 or math.pi * 0.5),
+                        scale = rng:Float(rule.scaleMin or 0.92, rule.scaleMax or 1.0),
+                        tries = 100,
+                    })
                 end
             end
         end
@@ -933,17 +947,7 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
             local group = roomGroupsById and roomGroupsById[room.roomGroupId] or nil
             if not group or type(group.propRules) ~= "table" or #group.propRules == 0 then return false end
             for _, rule in ipairs(group.propRules) do
-                if not allowedProps or allowedProps[rule.kind] then
-                    for _ = 1, rule.count or 1 do
-                        if rng:Chance(rule.chance == nil and 1 or rule.chance) then
-                            AddProp(room, rule.kind, {
-                                rot = rng:Chance(0.5) and 0 or math.pi * 0.5,
-                                scale = rng:Float(rule.scaleMin or 0.92, rule.scaleMax or 1.0),
-                                tries = 100,
-                            })
-                        end
-                    end
-                end
+                if not allowedProps or allowedProps[rule.kind] then ApplyRule(room, rule) end
             end
             return true
         end
@@ -952,17 +956,7 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
             if DecorateRoomGroup(room, pack.props) then return end
             local rules = pack.roomRules[room.type] or pack.roomRules.default or {}
             for _, rule in ipairs(rules) do
-                if pack.props[rule.kind] then
-                    for _ = 1, rule.count or 1 do
-                        if rng:Chance(rule.chance == nil and 1 or rule.chance) then
-                            AddProp(room, rule.kind, {
-                                rot = rng:Chance(0.5) and 0 or math.pi * 0.5,
-                                scale = rng:Float(rule.scaleMin or 0.92, rule.scaleMax or 1.0),
-                                tries = 100,
-                            })
-                        end
-                    end
-                end
+                if pack.props[rule.kind] then ApplyRule(room, rule) end
             end
         end
 

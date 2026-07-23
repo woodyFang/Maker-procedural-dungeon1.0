@@ -788,7 +788,9 @@ function NativeDungeonRenderer:Build(dungeon, themeKey, options)
     local exactInstances, exactBatches, stagedEntries = exact:Flush(root, stagingConfig)
     self.instanceCount = self.instanceCount + exactInstances
     self.batchCount = self.batchCount + exactBatches
-    self:AddRoomGroupHighlights(root, dungeon, FloorVisible, options.roomGroups)
+    if options.roomGroupsVisible then
+        self:AddRoomGroupHighlights(root, dungeon, FloorVisible, options.roomGroups)
+    end
 
     local stairs = {}
     local stairRailMaterial = CreateMaterial(theme.pillar, 0.38, 0.72)
