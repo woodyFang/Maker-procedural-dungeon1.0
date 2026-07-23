@@ -58,6 +58,7 @@ local function BuildInstanceGroups(rules, markersByName)
                 mesh = mesh,
                 transforms = {},
                 room_ids = {},
+                floor_ids = {},
             }
             local copies = type(rule.marker_copies) == "table" and rule.marker_copies or { false }
             for _, marker in ipairs(markers) do
@@ -66,6 +67,8 @@ local function BuildInstanceGroups(rules, markersByName)
                     group.transforms[#group.transforms + 1] = PCGDungeonCoordinateSystem.PackMarkerTransform(
                         copiedMarker, rule.marker_yaw_offset_deg)
                     group.room_ids[#group.room_ids + 1] = RoomId(marker)
+                    local floorId = tonumber(marker.attributes and marker.attributes.floor_id)
+                    group.floor_ids[#group.floor_ids + 1] = floorId ~= nil and floorId or false
                 end
             end
             groups[#groups + 1] = group
@@ -83,10 +86,11 @@ local function AppendPosition(vertices, position)
 end
 
 local function BuildGroundSurface(groundMarkers)
-    local vertices, indices = {}, {}
+    local vertices, indices, triangleFloorIds = {}, {}, {}
     for _, marker in ipairs(groundMarkers or {}) do
         local position = marker.position
         local size = marker.attributes and marker.attributes.marker_size or { 5, 5, 5 }
+        local floorId = marker.attributes and tonumber(marker.attributes.floor_id) or nil
         local halfX, halfZ = (size[1] or 5) * 0.5, (size[3] or size[1] or 5) * 0.5
         local base = #vertices // 3
         AppendPosition(vertices, { position[1] - halfX, position[2], position[3] - halfZ })
@@ -99,11 +103,16 @@ local function BuildGroundSurface(groundMarkers)
         indices[#indices + 1] = base
         indices[#indices + 1] = base + 2
         indices[#indices + 1] = base + 3
+        triangleFloorIds[#triangleFloorIds + 1] = floorId
+        triangleFloorIds[#triangleFloorIds + 1] = floorId
     end
-    return { name = "GroundScatterSurface", vertices_cm = vertices, indices = indices }
+    return {
+        name = "GroundScatterSurface", vertices_cm = vertices, indices = indices,
+        triangle_floor_ids = triangleFloorIds,
+    }
 end
 
-function PCGDungeonMeshInfoAdapter.Apply(meshInfo, markerResult)
+function PCGDungeonMeshInfoAdapter.Apply(meshInfo, markerResult, options)
     if type(meshInfo) ~= "table" or type(meshInfo.meshes) ~= "table" then
         return nil, "mesh_info rules are missing"
     end
@@ -117,12 +126,15 @@ function PCGDungeonMeshInfoAdapter.Apply(meshInfo, markerResult)
         markersByName[marker.name][#markersByName[marker.name] + 1] = marker
     end
     local groups, instanceCount = BuildInstanceGroups(meshInfo.meshes, markersByName)
+    options = options or {}
+    local decorDensitiesByFloor = options.decorDensitiesByFloor
     meshInfo.scene = {
         schema_version = 1,
         instance_group_count = #groups,
         instance_count = instanceCount,
         instances = groups,
         surfaces = { BuildGroundSurface(markersByName.Ground) },
+        scatter_density_by_floor = decorDensitiesByFloor,
     }
     return meshInfo, {
         markerCount = #markerResult.markers,

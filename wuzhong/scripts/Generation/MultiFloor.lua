@@ -9,6 +9,7 @@ MultiFloor.VERTICAL_SCALE = MultiFloor.FLOOR_HEIGHT / MultiFloor.SOURCE_FLOOR_HE
 MultiFloor.MIN_FLOOR_HEIGHT = 2.5
 MultiFloor.MAX_FLOOR_HEIGHT = 8.0
 MultiFloor.STAIR_TARGET_STEP_RISE = 0.25
+MultiFloor.RECOMMENDED_MAX_FLOORS = 6
 MultiFloor.Tiles = { VOID = 0, FLOOR = 1, WALL = 2, POOL = 3 }
 
 function MultiFloor.NormalizeFloorHeight(value)

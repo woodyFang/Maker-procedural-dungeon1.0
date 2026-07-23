@@ -14,8 +14,110 @@ local function CopyValue(value, seen)
     return result
 end
 
-local function EditorEdges(layout, graph)
+local function EdgeKey(a, b)
+    return math.min(a, b) .. ":" .. math.max(a, b)
+end
+
+local function GridCoordinates(index, nx, nz)
+    local x = index % nx
+    local remainder = index // nx
+    return x, remainder // nz, remainder % nz
+end
+
+local function EditorPoint(layout, routed, cell)
+    local nx, nz = routed.gridSize[1], routed.gridSize[3]
+    local x, floor, z = GridCoordinates(cell, nx, nz)
+    local cellSize = routed.cellSize
+    local worldX = routed.worldMin[1] + (x + 0.5) * cellSize
+    local worldZ = routed.worldMin[3] + (z + 0.5) * cellSize
+    return {
+        x = (worldX - layout.layoutWorldMin[1]) / cellSize,
+        y = (worldZ - layout.layoutWorldMin[3]) / cellSize,
+    }, floor
+end
+
+local function SimplifyRoute(points)
     local result = {}
+    for _, point in ipairs(points or {}) do
+        local count = #result
+        if count >= 2 then
+            local a, b = result[count - 1], result[count]
+            local abx, aby = b.x - a.x, b.y - a.y
+            local bcx, bcy = point.x - b.x, point.y - b.y
+            if math.abs(abx * bcy - aby * bcx) < 0.000001
+                and abx * bcx + aby * bcy >= 0 then
+                result[count] = point
+            else result[#result + 1] = point end
+        elseif count == 0 or result[count].x ~= point.x or result[count].y ~= point.y then
+            result[#result + 1] = point
+        end
+    end
+    return result
+end
+
+local function RuntimeRoutes(layout, routed, route)
+    local result, active = {}, nil
+    for _, cell in ipairs(route.cells or {}) do
+        local point, floor = EditorPoint(layout, routed, cell)
+        if not active or active.floor ~= floor then
+            if active and #active.points > 1 then
+                active.points = SimplifyRoute(active.points)
+                result[#result + 1] = active
+            end
+            active = { floor = floor, points = { point } }
+        else
+            active.points[#active.points + 1] = point
+        end
+    end
+    if active and #active.points > 1 then
+        active.points = SimplifyRoute(active.points)
+        result[#result + 1] = active
+    end
+    return result
+end
+
+local function DirectionName(dx, dy)
+    if math.abs(dx) >= math.abs(dy) then return dx >= 0 and "east" or "west" end
+    return dy >= 0 and "south" or "north"
+end
+
+local function RuntimeStairs(layout, routed, route, connectors)
+    local result = {}
+    for _, stair in ipairs(route.stairs or {}) do
+        local lower, fromFloor = EditorPoint(layout, routed, stair.lower_cell)
+        local upper, toFloor = EditorPoint(layout, routed, stair.upper_cell)
+        local dx, dy = upper.x - lower.x, upper.y - lower.y
+        local length = math.sqrt(dx * dx + dy * dy)
+        local connector = {
+            id = "pcg-stair-" .. tostring(stair.stairwell_id),
+            stairId = "pcg-stair-" .. tostring(stair.stairwell_id),
+            mode = "runtime",
+            style = "straight",
+            lower = lower,
+            upper = upper,
+            fromFloor = fromFloor,
+            toFloor = toFloor,
+            direction = DirectionName(dx, dy),
+            directionVector = length > 0 and { x = dx / length, y = dy / length } or { x = 1, y = 0 },
+            length = length,
+            width = 1,
+            landingDepth = 1,
+            rise = layout.cellSize,
+            stepCount = 12,
+            stairwellId = stair.stairwell_id,
+            connectionId = route.connection_id,
+        }
+        connectors[#connectors + 1] = connector
+        result[#result + 1] = connector
+    end
+    return result
+end
+
+local function EditorEdges(layout, graph, routed)
+    local result, connectors, routesByKey = {}, {}, {}
+    for _, route in ipairs(routed.successfulRoutes or {}) do
+        routesByKey[EdgeKey(route.a, route.b)] = route
+    end
     for index, source in ipairs(graph.edges or {}) do
         local edge = CopyValue(source)
         edge.id = index
@@ -23,10 +125,15 @@ local function EditorEdges(layout, graph)
         edge.isLoop = source.isLoop == true
         edge.kind = source.kind or (layout.rooms[source.a + 1].floor ~= layout.rooms[source.b + 1].floor
             and "stairs" or "corridor")
-        edge.connectorId = nil
+        local route = routesByKey[EdgeKey(source.a, source.b)]
+        edge.runtimeGenerated = route ~= nil
+        edge.width = route and 1 or edge.width
+        edge.runtimeRoutes = route and RuntimeRoutes(layout, routed, route) or {}
+        edge.runtimeStairs = route and RuntimeStairs(layout, routed, route, connectors) or {}
+        edge.connectorId = edge.runtimeStairs[1] and edge.runtimeStairs[1].id or nil
         result[index] = edge
     end
-    return result
+    return result, connectors
 end
 
 local function HashText(text)
@@ -61,8 +168,10 @@ function PCGDungeonGenerator.Generate(options)
         local reason = layout.warning or "PCG Dungeon room layout is invalid"
         return { valid = false, error = reason, layout = layout, errors = layout.errors or { reason } }
     end
+    local loopRates = options.loopRatesByFloor
+    if loopRates == nil then loopRates = options.loopRate end
     local graphResult = PCGDungeonGraph.Generate(layout,
-        options.editorEnabled and options.editorEdges or nil)
+        options.editorEnabled and options.editorEdges or nil, loopRates)
     if not graphResult.graph.connected then
         local reason = graphResult.graph.warning or "PCG Dungeon graph is disconnected"
         return { valid = false, error = reason, layout = layout, graphResult = graphResult, errors = { reason } }
@@ -71,6 +180,7 @@ function PCGDungeonGenerator.Generate(options)
     local valid = routed.allRoomsReachable and routed.failedMstPaths == 0
         and routed.stairTopologyValid ~= false
     local reason = valid and nil or (routed.warning or "PCG Dungeon A* failed to connect every room")
+    local editorEdges, connectors = EditorEdges(layout, graphResult.graph, routed)
     return {
         schemaVersion = 1,
         valid = valid,
@@ -82,12 +192,26 @@ function PCGDungeonGenerator.Generate(options)
         roomCount = layout.placedRoomCount,
         roomCountsByFloor = layout.roomCountsByFloor,
         rooms = layout.rooms,
-        edges = EditorEdges(layout, graphResult.graph),
-        connectors = {},
+        edges = editorEdges,
+        connectors = connectors,
         floorHeight = layout.cellSize,
         cellSize = layout.cellSize,
+        editorWorldScale = layout.cellSize,
+        editorSwapAxes = true,
+        editorCenterOffset = 0,
+        editorRoomMinimumWidth = 1,
+        editorRoomMinimumHeight = 1,
         width = (layout.editorGridCells or layout.gridCells)[1],
         height = (layout.editorGridCells or layout.gridCells)[3],
+        sceneInfo = {
+            floorHeight = layout.cellSize,
+            cellSize = layout.cellSize,
+            gridWidth = (layout.editorGridCells or layout.gridCells)[1],
+            gridHeight = (layout.editorGridCells or layout.gridCells)[3],
+            worldWidth = (layout.editorGridCells or layout.gridCells)[3] * layout.cellSize,
+            worldDepth = (layout.editorGridCells or layout.gridCells)[1] * layout.cellSize,
+            totalHeight = layout.floorCount * layout.cellSize,
+        },
         hash = TopologyHash(layout, graphResult, routed),
         topology = { cells = routed.cells, doors = routed.doors },
         layout = layout,

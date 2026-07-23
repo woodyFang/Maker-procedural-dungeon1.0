@@ -49,8 +49,8 @@ local function EditorLayout(options, seed, cellSize)
     local baseGridX, gridY, baseGridZ = GridDimensions(counts, floorCount)
     local configuredGrid = options.editorGridCells
     if type(configuredGrid) == "table" then
-        baseGridX = math.max(baseGridX, math.floor((tonumber(configuredGrid[1]) or 0) + 0.5))
-        baseGridZ = math.max(baseGridZ, math.floor((tonumber(configuredGrid[3]) or 0) + 0.5))
+        baseGridX = math.max(3, math.floor((tonumber(configuredGrid[1]) or baseGridX) + 0.5))
+        baseGridZ = math.max(3, math.floor((tonumber(configuredGrid[3]) or baseGridZ) + 0.5))
     end
     local layoutWorldMin = V(-baseGridX * cellSize * 0.5, 0, -baseGridZ * cellSize * 0.5)
     local rooms, roomMins, roomMaxs, errors = {}, {}, {}, {}

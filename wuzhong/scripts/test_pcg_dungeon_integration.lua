@@ -62,6 +62,17 @@ local function CountSceneLights(node)
     return count
 end
 
+local function InstanceHeightRange(renderer)
+    local minimum, maximum = math.huge, -math.huge
+    for _, nodes in pairs(renderer.groupInstanceNodes or {}) do
+        for _, node in ipairs(nodes) do
+            local y = node.worldPosition.y
+            minimum, maximum = math.min(minimum, y), math.max(maximum, y)
+        end
+    end
+    return minimum, maximum
+end
+
 local function ReadLightContracts()
     for _, path in ipairs({
         "assets/PCGDungeon/PCGDungeon.mesh_info.json",
@@ -210,6 +221,7 @@ function Start()
             "Ground marker rule_id was not preserved by the mesh_info adapter")
 
         local app = DungeonApp.new()
+        app.loopRates = { 8, 23 }
         local applied = app:ApplyPCGDungeonParameters({
             seed = 24681357, floorCount = 2, roomCountsByFloor = { 6, 8 },
         })
@@ -219,6 +231,8 @@ function Start()
             "PCG Dungeon floor parameter was not applied")
         Check(applied.roomCount == 14 and app.roomCounts[1] == 6 and app.roomCounts[2] == 8,
             "PCG Dungeon per-floor room parameters were not preserved")
+        Check(Near(applied.loopRatesByFloor[1], 0.08) and Near(applied.loopRatesByFloor[2], 0.23),
+            "PCG Dungeon per-floor loop rates were not normalized for graph generation")
         Check(app.pcgDungeonRoomCount == nil,
             "PCG Dungeon still retains a separate total room parameter")
 
@@ -422,6 +436,50 @@ function Start()
             "corridor Ground material remained an unloaded white placeholder")
         Check(cache:GetResource("Texture2D", "Textures/pavement2_D.png") ~= nil,
             "corridor Ground base-color texture was not loaded")
+
+        local allInstanceCount = stats.baseInstances + stats.attachedInstances + stats.scatterInstances
+        local _, allMaximumY = InstanceHeightRange(pcgDungeonRenderer)
+        local currentBuilt, currentStats = pcgDungeonRenderer:RebuildView({
+            currentFloor = 0, viewMode = "current", floorHeight = 5.0,
+        })
+        Check(currentBuilt, "current-floor PCG view failed: " .. tostring(currentStats))
+        local currentInstanceCount = currentStats.baseInstances
+            + currentStats.attachedInstances + currentStats.scatterInstances
+        Check(currentInstanceCount > 0 and currentInstanceCount < allInstanceCount,
+            "current-floor PCG view did not reduce visible instances")
+        Check(currentStats.lights > 0 and currentStats.lights < stats.lights,
+            "current-floor PCG view did not reduce visible Marker lights")
+
+        local neighborsBuilt, neighborsStats = pcgDungeonRenderer:RebuildView({
+            currentFloor = 0, viewMode = "neighbors", floorHeight = 5.0,
+        })
+        Check(neighborsBuilt, "neighbor-floor PCG view failed: " .. tostring(neighborsStats))
+        local neighborsInstanceCount = neighborsStats.baseInstances
+            + neighborsStats.attachedInstances + neighborsStats.scatterInstances
+        Check(neighborsInstanceCount > currentInstanceCount and neighborsInstanceCount < allInstanceCount,
+            "neighbor-floor PCG view did not show exactly one additional floor range")
+
+        local explodeBuilt, explodeStats = pcgDungeonRenderer:RebuildView({
+            currentFloor = 0, viewMode = "explode", floorHeight = 5.0,
+        })
+        Check(explodeBuilt, "exploded PCG view failed: " .. tostring(explodeStats))
+        local explodeInstanceCount = explodeStats.baseInstances
+            + explodeStats.attachedInstances + explodeStats.scatterInstances
+        local _, explodeMaximumY = InstanceHeightRange(pcgDungeonRenderer)
+        Check(explodeInstanceCount == allInstanceCount,
+            "exploded PCG view changed the full-scene instance count")
+        Check(explodeMaximumY > allMaximumY + 5.0,
+            "exploded PCG view did not increase vertical floor spacing")
+
+        local allBuilt, restoredAllStats = pcgDungeonRenderer:RebuildView({
+            currentFloor = 0, viewMode = "all", floorHeight = 5.0,
+        })
+        Check(allBuilt, "all-floor PCG view restore failed: " .. tostring(restoredAllStats))
+        Check(restoredAllStats.baseInstances + restoredAllStats.attachedInstances
+                + restoredAllStats.scatterInstances == allInstanceCount,
+            "all-floor PCG view did not restore the full instance count")
+        Check(restoredAllStats.lights == stats.lights,
+            "all-floor PCG view did not restore all Marker lights")
 
         local originalGroups = stats.groups
         local originalInstances = stats.baseInstances + stats.attachedInstances + stats.scatterInstances

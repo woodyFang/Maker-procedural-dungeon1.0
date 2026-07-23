@@ -1,0 +1,4 @@
+@echo off
+rem Copy this file to start-offline.local.cmd and use paths from the local machine.
+set "URHOX_RUNTIME=C:\path\to\UrhoXRuntime.exe"
+set "URHOX_EXTRA_PACKAGES=C:/path/to/UrhoXRes/;C:/path/to/project-resources/"

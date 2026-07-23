@@ -149,6 +149,22 @@ function Start()
             CheckAssetTransformParity(fixedScene, adapted.scene, mesh)
         end
 
+        local densityAdapted = PCGDungeonMeshInfoAdapter.Apply(meshInfo, report.result, {
+            decorDensitiesByFloor = { 0.25, 0.5, 0.75 },
+        })
+        local densityScene = densityAdapted.scene
+        Check(densityScene.scatter_density_by_floor[1] == 0.25
+                and densityScene.scatter_density_by_floor[2] == 0.5
+                and densityScene.scatter_density_by_floor[3] == 0.75,
+            "per-floor scatter density multipliers were not preserved")
+        local densitySurface = densityScene.surfaces[1]
+        Check(#densitySurface.triangle_floor_ids == #densitySurface.indices / 3,
+            "ground scatter surface lost triangle floor metadata")
+        local observedFloors = {}
+        for _, floorId in ipairs(densitySurface.triangle_floor_ids) do observedFloors[floorId] = true end
+        Check(observedFloors[0] and observedFloors[1] and observedFloors[2],
+            "ground scatter surface did not retain all dungeon floors")
+
         local orientationProbe = PCGDungeonMarkerPipeline.GenerateFromTopology({
             cells = {
                 {

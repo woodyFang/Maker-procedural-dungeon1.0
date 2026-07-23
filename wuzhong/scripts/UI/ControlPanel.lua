@@ -1,6 +1,5 @@
 local UI = require("urhox-libs/UI")
 local Themes = require("Config.Themes")
-local FixedThemes = require("Config.FixedThemes")
 local ThemePacks = require("Config.ThemePacks")
 local GenericThemeRules = require("Config.GenericThemeRules")
 local RoomGroupColors = require("Config.RoomGroupColors")
@@ -8,7 +7,7 @@ local MultiFloor = require("Generation.MultiFloor")
 local PaletteData = require("Config.PaletteData")
 local TextArea = require("UI.TextArea")
 local OriginalModal = require("UI.OriginalModal")
-
+local LocalRequirementPlanner = require("AI.LocalRequirementPlanner")
 local ControlPanel = {}
 ControlPanel.__index = ControlPanel
 
@@ -293,13 +292,13 @@ function ControlPanel.new(callbacks, initial)
     if not nvgSetRenderOrder then nvgSetRenderOrder = function() end end
     UI.Init({
         theme = "default-dark",
-        scale = UI.Scale.DEFAULT,
         fonts = {
             { family = "sans", weights = {
                 normal = "Fonts/MiSans-Regular.ttf",
                 bold = "Fonts/MiSans-Bold.ttf",
             } },
         },
+        scale = UI.Scale.DEFAULT,
     })
     activeDropOwner = self
     if not dropEventSubscribed then
@@ -331,25 +330,6 @@ function ControlPanel.new(callbacks, initial)
     })
     self.randomSeedTooltip = TooltipButton(self.randomSeedButton, "随机种子")
 
-    self.settingButtons = {}
-    self.settingButtonTooltips = {}
-    for _, key in ipairs(Themes.settingOrder) do
-        local setting = Themes.GetSetting(key)
-        local builtinItem = {
-            isBuiltin = true,
-            baseSettingKey = key,
-            label = setting.label,
-            cloneLabel = setting.label .. "副本",
-            prompt = (ThemePacks.Get(key) and ThemePacks.Get(key).prompt) or setting.description,
-            packStatus = "builtin",
-        }
-        self.settingButtons[key] = SecondaryClickButton(
-            PillButton(setting.label, function() callbacks.onSetting(key) end,
-                { width = 44, paddingHorizontal = 2, fontSize = 9.5 }),
-            function(event) self:OpenCustomSettingContextMenu(builtinItem, event) end)
-        self.settingButtonTooltips[key] = TooltipButton(self.settingButtons[key], "左键选择 · 右键编辑副本")
-    end
-
     self.paletteExpanded = false
     self.currentPaletteButton = PillButton("当前颜色", function()
         self:SetPaletteExpanded(not self.paletteExpanded)
@@ -370,20 +350,9 @@ function ControlPanel.new(callbacks, initial)
     end)
     self.customSettingToggleTooltip = TooltipButton(self.customSettingToggleButton, "展开题材")
 
-    self.fixedSettingExpanded = false
     self.fixedSettingModeButton = PillButton("固定PCG", function()
         callbacks.onFixedPCG()
     end, { width = 72, paddingHorizontal = 2, fontSize = 9.5 })
-    self.fixedSettingList = UI.Panel { width = "100%", gap = 5 }
-    self.fixedSettingList:SetVisible(false)
-    self.fixedSettingHint = Label("固定规则 PCG：不依赖 AI，选择后直接生成", 8.5, C.dim, {
-        whiteSpace = "normal",
-    })
-    self.fixedSettingHint:SetVisible(false)
-    self.fixedSettingToggleButton = ExpandButton(function()
-        self:SetFixedSettingExpanded(not self.fixedSettingExpanded)
-    end)
-    self.fixedSettingToggleTooltip = TooltipButton(self.fixedSettingToggleButton, "展开固定题材")
 
     self.floorSummary = Label("共 2 层 · 42 区", 11, C.accent, { fontWeight = "bold" })
     self.floorDropdown = UI.Dropdown {
@@ -467,9 +436,6 @@ function ControlPanel.new(callbacks, initial)
     self.previewCrosshair = Label("○", 12, { 217, 224, 234, 150 }, {
         position = "absolute", left = "50%", top = "50%",
     })
-    self.previewControlHint = Label(
-        "WASD 移动角色 · Shift+WASD 奔跑 · 鼠标右键拖拽环视 · 滚轮缩放第三人称镜头 · 1/2 切换视角 · Esc 返回观察",
-        9, { 143, 152, 170, 255 }, { textAlign = "center", whiteSpace = "normal" })
     self.previewHud = UI.Panel {
         position = "absolute", left = 0, right = 0, top = 0, bottom = 0, pointerEvents = "box-none",
         children = {
@@ -482,7 +448,9 @@ function ControlPanel.new(callbacks, initial)
             UI.Panel { position = "absolute", left = "28%", right = "28%", bottom = 101,
                 padding = { 7, 12 }, borderRadius = 5, backgroundColor = { 10, 14, 21, 205 },
                 borderColor = { 48, 55, 73, 255 }, borderWidth = 1, alignItems = "center",
-                children = { self.previewControlHint },
+                children = { Label(
+                    "WASD 移动角色 · Shift+WASD 奔跑 · 鼠标右键拖拽环视 · 滚轮缩放第三人称镜头 · 1/2 切换视角 · Esc 返回观察",
+                    9, { 143, 152, 170, 255 }, { textAlign = "center", whiteSpace = "normal" }) },
             },
             self.previewCrosshair,
         }
@@ -753,7 +721,7 @@ function ControlPanel.new(callbacks, initial)
         }),
     }, { alignItems = "center", gap = 8 }))
 
-    self.roomGroupModalTitle = Label("添加房间组", 20, C.text, { fontWeight = "bold" })
+    self.roomGroupModalTitle = Label("添加房间", 20, C.text, { fontWeight = "bold" })
     self.roomGroupNameField = UI.TextField {
         width = "100%", height = 46, value = "", maxLength = 40, placeholder = "例如：医院病房",
         borderRadius = 8, borderColor = { 52, 58, 77, 255 }, focusedBorderColor = C.accent,
@@ -816,7 +784,7 @@ function ControlPanel.new(callbacks, initial)
         },
     }
     self.roomGroupError = Label("", 10, C.danger, { whiteSpace = "normal" })
-    self.roomGroupDeleteButton = SmallButton("删除组", function() self:ConfirmDeleteRoomGroup() end, {
+    self.roomGroupDeleteButton = SmallButton("删除房间", function() self:ConfirmDeleteRoomGroup() end, {
         width = 82, variant = "danger",
     })
     self.roomGroupModal = OriginalModal {
@@ -845,7 +813,7 @@ function ControlPanel.new(callbacks, initial)
     }
     self.roomGroupModal:SetFooter(Row({
         self.roomGroupDeleteButton, UI.Panel { flexGrow = 1 },
-        SmallButton("保存房间组", function() self:ApplyRoomGroup() end, {
+        SmallButton("保存房间", function() self:ApplyRoomGroup() end, {
             width = 108, variant = "primary", backgroundColor = C.accent, borderColor = C.accent,
             textColor = { 20, 16, 12, 255 }, fontWeight = "bold",
         }),
@@ -862,7 +830,7 @@ function ControlPanel.new(callbacks, initial)
             Row({
                 UI.Panel { flexGrow = 1, gap = 3, children = {
                     Label("历史参考图", 18, C.text, { fontWeight = "bold" }),
-                    Label("从已保存的题材和房间组中复用图片", 9, C.dim),
+                    Label("从已保存的题材和房间中复用图片", 9, C.dim),
                 } },
                 SmallButton("×", function() self.imageHistoryModal:Close() end, {
                     width = 34, height = 34, fontSize = 18,
@@ -875,11 +843,23 @@ function ControlPanel.new(callbacks, initial)
         },
     }
     self.customSettingList = UI.Panel { width = "100%", gap = 5 }
-    self.customSettingHint = Label("题材包：单击切换 · 右键编辑", 8.5, C.dim)
+    self.customSettingHint = Label("题材：单击切换 · 右键编辑", 8.5, C.dim)
     self.customSettingHint:SetVisible(false)
     self.customSettingList:SetVisible(false)
     self.aiTopicLabel = Label("AI生成", 10.5, C.teal, { fontWeight = "bold" })
     self.aiTopicHint = Label("可自定义", 8.5, C.dim, { flexGrow = 1 })
+    self.currentTopicValue = Label("遗迹", 10, C.text, {
+        flexGrow = 1, fontWeight = "bold", whiteSpace = "nowrap", overflow = "hidden",
+    })
+    self.currentTopicStatus = Label("已生成", 8.5, C.dim)
+    self.currentTopicRow = UI.Panel {
+        width = "100%", height = 29, padding = { 5, 7 }, flexDirection = "row", alignItems = "center", gap = 6,
+        backgroundColor = { 17, 25, 29, 255 }, borderColor = { 39, 63, 64, 255 },
+        borderWidth = 1, borderRadius = 6,
+        children = {
+            Label("当前题材", 8.5, C.dim, { width = 48 }), self.currentTopicValue, self.currentTopicStatus,
+        },
+    }
     self.aiTopicPanel = UI.Panel {
         width = "100%", padding = { 7, 8 }, gap = 5,
         backgroundColor = { 20, 31, 34, 255 }, borderColor = { 47, 91, 86, 255 },
@@ -887,27 +867,24 @@ function ControlPanel.new(callbacks, initial)
         children = {
             Row({ self.aiTopicLabel, self.aiTopicHint,
                 self.customSettingButton, self.customSettingToggleTooltip, self.randomSettingTooltip }, { gap = 4 }),
-            Row({ self.settingButtonTooltips.dungeon, self.settingButtonTooltips.hospital,
-                self.settingButtonTooltips.school, UI.Panel { flexGrow = 1 } }, { gap = 1 }),
+            self.currentTopicRow,
             self.customSettingHint, self.customSettingList,
         },
     }
     self.fixedTopicLabel = Label("固定规则", 10.5, C.text, { fontWeight = "bold" })
     self.fixedTopicHint = Label("与 AI 生成互斥", 8.5, C.dim, { flexGrow = 1 })
     self.fixedTopicPanel = UI.Panel {
-        width = "100%", padding = { 7, 8 }, gap = 5,
+        width = "100%", padding = { 7, 8 },
         backgroundColor = { 24, 25, 31, 255 }, borderColor = C.inputLine,
         borderWidth = 1, borderRadius = 8,
         children = {
-            Row({ self.fixedTopicLabel, self.fixedTopicHint,
-                self.fixedSettingModeButton, self.fixedSettingToggleTooltip }, { gap = 4 }),
-            self.fixedSettingHint, self.fixedSettingList,
+            Row({ self.fixedTopicLabel, self.fixedTopicHint, self.fixedSettingModeButton }, { gap = 4 }),
         },
     }
     self.roomGroupExpanded = false
     self.roomGroupList = UI.Panel { width = "100%", gap = 5 }
     self.roomGroupList:SetVisible(false)
-    self.roomGroupHint = Label("房间组：展开后管理可复用的房间布局", 8.5, C.dim)
+    self.roomGroupHint = Label("房间：只属于当前题材；题材生成时自动加入，也可手动添加", 8.5, C.dim)
     self.roomGroupHint:SetVisible(false)
     self.roomGroupAddButton = AddButton("＋ 添加", function() self:OpenRoomGroupModal() end)
     self.roomGroupToggleButton = ExpandButton(function()
@@ -917,93 +894,13 @@ function ControlPanel.new(callbacks, initial)
     self.roomSelectionLabel = Label("未选择房间", 10, C.dim, { flexGrow = 1 })
     self.roomGroupAssignmentDropdown = UI.Dropdown {
         width = "100%", value = "", maxVisibleItems = 8,
-        options = { { value = "", label = "不赋予房间组" } },
+        options = { { value = "", label = "不指定特定房间" } },
         onChange = function(_, value)
             if self.updatingRoomAssignment then return end
             local ok, reason = callbacks.onRoomGroupAssign(value)
-            if ok == false then self:SetStatus(reason or "房间组赋予失败") end
+            if ok == false then self:SetStatus(reason or "房间赋予失败") end
         end,
     }
-    self.pcgDungeonSeed = initial.seed or 5
-    self.pcgDungeonFloorCount = 3
-    self.pcgDungeonSeedField = UI.TextField {
-        value = tostring(self.pcgDungeonSeed), placeholder = "随机种子", width = "100%", height = 30,
-        borderRadius = 6, borderColor = C.inputLine, focusedBorderColor = C.accent,
-        paddingHorizontal = 8, fontSize = 10.5,
-        onChange = function(_, value)
-            local parsed = tonumber(value)
-            if parsed then self.pcgDungeonSeed = math.max(0, math.min(0xffffffff, math.floor(parsed))) end
-        end,
-    }
-    self.pcgDungeonFloorValue = Label("3", 10.5, C.accent, { fontWeight = "bold" })
-    self.pcgDungeonFloorSlider = UI.Slider {
-        value = 3, min = 1, max = 6, step = 1,
-        onChange = function(_, value)
-            self.pcgDungeonFloorCount = math.floor(value + 0.5)
-            self.pcgDungeonFloorValue:SetText(tostring(self.pcgDungeonFloorCount))
-        end,
-    }
-    self.pcgDungeonParametersPanel = UI.Panel {
-        width = "100%", gap = 5, padding = { 7, 7, 6, 7 },
-        backgroundColor = { 25, 24, 27, 255 }, borderColor = { 73, 59, 45, 255 },
-        borderWidth = 1, borderRadius = 6,
-        children = {
-            Label("生成参数", 9.5, { 214, 177, 132, 255 }, { fontWeight = "bold" }),
-            Label("随机种子", 9, C.dim),
-            self.pcgDungeonSeedField,
-            UI.Panel { width = "100%", gap = 2, children = {
-                Row({ Label("层数", 9.5, C.text, { flexGrow = 1 }), self.pcgDungeonFloorValue }),
-                self.pcgDungeonFloorSlider,
-            } },
-        },
-    }
-    self.pcgDungeonParametersPanel:SetVisible(false)
-    self.pcgDungeonRefreshButton = SmallButton("刷新地牢", function()
-        local ok, reason = callbacks.onPCGDungeonRefresh({
-            seed = self.pcgDungeonSeed,
-            floorCount = self.pcgDungeonFloorCount,
-        })
-        if ok == false then self:SetStatus(reason or "暗影古堡刷新失败") end
-    end, {
-        width = "100%", height = 30, fontSize = 10.5,
-        backgroundColor = { 35, 29, 27, 255 }, borderColor = { 120, 82, 49, 255 },
-        textColor = { 255, 205, 151, 255 },
-    })
-    self.pcgDungeonRefreshButton:SetVisible(false)
-    self.pcgDungeonCellDebugButton = SmallButton("方块调试：关闭", function()
-        local enabled, statsOrReason = callbacks.onPCGDungeonCellDebug()
-        if enabled == nil then
-            self:SetStatus(statsOrReason or "方块调试切换失败")
-            return
-        end
-        if enabled then
-            local stats = statsOrReason or {}
-            self:SetStatus(string.format("方块调试已开启：房间 %d、走廊 %d、楼梯 %d 个方块",
-                stats.rooms or 0, stats.corridors or 0, stats.stairs or 0))
-        else
-            self:SetStatus("方块调试已关闭")
-        end
-    end, {
-        width = "100%", height = 30, fontSize = 10.5,
-        backgroundColor = { 35, 30, 21, 255 }, borderColor = { 151, 101, 22, 255 },
-        textColor = { 255, 190, 74, 255 },
-    })
-    self.pcgDungeonCellDebugButton:SetVisible(false)
-    self.pcgDungeonLightDebugButton = SmallButton("灯光调试：关闭", function()
-        local enabled, countOrReason = callbacks.onPCGDungeonLightDebug()
-        if enabled == nil then
-            self:SetStatus(countOrReason or "灯光调试切换失败")
-            return
-        end
-        self:SetStatus(string.format("灯光调试已%s：显示 %d 个点光源的位置和半径",
-            enabled and "开启" or "关闭", countOrReason or 0))
-    end, {
-        width = "100%", height = 30, fontSize = 10.5,
-        backgroundColor = { 20, 29, 34, 255 }, borderColor = { 55, 105, 112, 255 },
-        textColor = { 154, 218, 220, 255 },
-    })
-    self.pcgDungeonLightDebugButton:SetVisible(false)
-
     local logicalWidth = graphics:GetWidth() / math.max(1, graphics:GetDPR())
     local roomInspectorWidth = math.max(216, math.min(320, logicalWidth - 310 - 498))
     self.roomAssignmentPanel = UI.Panel {
@@ -1015,7 +912,7 @@ function ControlPanel.new(callbacks, initial)
         children = {
             Row({ Label("当前房间", 9, C.teal, { fontWeight = "bold" }), self.roomSelectionLabel }),
             self.roomGroupAssignmentDropdown,
-            Label("选择房间后，可在这里把可复用房间组赋予当前区域。", 8.5, C.dim,
+            Label("选择区域后，可在这里指定题材生成或手动创建的房间语义。", 8.5, C.dim,
                 { whiteSpace = "normal", lineHeight = 1.35 }),
         },
     }
@@ -1056,7 +953,6 @@ function ControlPanel.new(callbacks, initial)
             Section({
                 Row({ Label("房间", 10.5, C.dim, { flexGrow = 1, letterSpacing = 0.5 }),
                     self.roomGroupAddButton, self.roomGroupToggleTooltip }),
-                self.pcgDungeonRefreshButton,
                 self.roomGroupHint,
                 self.roomGroupList,
             }),
@@ -1068,10 +964,10 @@ function ControlPanel.new(callbacks, initial)
                 FloorSetting("本层区域数量", self.roomValue, self.roomSlider),
                 FloorSetting("本层回环率", self.loopValue, self.loopSlider),
                 FloorSetting("本层装饰密度", self.decorValue, self.decorSlider),
-                Label("调整层数  ·  最多 6 层", 9, C.dim),
+                Label(string.format("调整层数  · 建议不超过 %d 层，可继续添加", MultiFloor.RECOMMENDED_MAX_FLOORS), 9, C.dim),
                 Row({
+                    SmallButton("＋ 上一层", function() callbacks.onAddFloorBefore() end, { flexGrow = 1, fontSize = 9.5, textColor = { 182, 217, 207, 255 } }),
                     SmallButton("＋ 下一层", function() callbacks.onAddFloorAfter() end, { flexGrow = 1, fontSize = 9.5, textColor = { 182, 217, 207, 255 } }),
-                    SmallButton("＋ 顶层", function() callbacks.onAddFloorTop() end, { flexGrow = 1, fontSize = 9.5, textColor = { 182, 217, 207, 255 } }),
                     SmallButton("删当前", function() callbacks.onRemoveFloor() end, { flexGrow = 1, variant = "danger", fontSize = 10 }),
                 }),
                 Label("三维显示范围", 10, C.dim),
@@ -1154,7 +1050,7 @@ function ControlPanel:OpenImageHistory(kind)
             backgroundColor = { 23, 27, 38, 255 }, borderColor = C.line, borderWidth = 1, borderRadius = 8,
             children = {
                 Label("暂无历史参考图", 12, C.text, { fontWeight = "bold" }),
-                Label("保存过带图片的题材或房间组后，会显示在这里。", 9, C.dim, {
+                Label("保存过带图片的题材或房间后，会显示在这里。", 9, C.dim, {
                     textAlign = "center", whiteSpace = "normal",
                 }),
             },
@@ -1432,6 +1328,7 @@ function ControlPanel:ValidateCustomSetting(requireContent)
         if item.id ~= self.editingCustomId
             and string.lower(Trim(item.label)) == string.lower(payload.label) then
             self.customSettingError:SetText("已经存在同名题材，请换一个名称。")
+            self:SetCustomSettingExpanded(true)
             return nil
         end
     end
@@ -1516,12 +1413,10 @@ end
 function ControlPanel:OpenCustomSettingModal(item)
     self:CloseCustomSettingContextMenu()
     self.referenceImagePasteKind = nil
-    local isBuiltin = item and item.isBuiltin == true
-    self.editingCustomId = item and not isBuiltin and item.id or nil
-    self.customModalTitle:SetText(isBuiltin and ("编辑" .. item.label .. "副本")
-        or (item and (item.packStatus == "draft" and "继续编辑草稿" or "编辑题材包") or "新建题材包"))
+    self.editingCustomId = item and item.id or nil
+    self.customModalTitle:SetText(item and (item.packStatus == "draft" and "继续编辑草稿" or "编辑题材") or "新建题材")
     self.updatingCustomForm = true
-    self.customNameField:SetValue(isBuiltin and (item.cloneLabel or item.label) or (item and item.label or ""))
+    self.customNameField:SetValue(item and item.label or "")
     self.customBaseSettingDropdown:SetValue(item and item.baseSettingKey or "dungeon")
     self.customFloorHeightField:SetValue(string.format("%.2f", item and item.floorHeight
         or (self.currentState and self.currentState.floorHeight) or MultiFloor.FLOOR_HEIGHT))
@@ -1587,7 +1482,7 @@ function ControlPanel:OpenCustomSettingContextMenu(item, event)
     self:CloseCustomSettingContextMenu()
     self.contextCustomId = item.id
     local rootLayout = self.root:GetAbsoluteLayout()
-    local menuWidth, menuHeight = 150, item.isBuiltin and 48 or 108
+    local menuWidth, menuHeight = 150, 108
     local x = (event and event.x or rootLayout.x + 20) - rootLayout.x
     local y = (event and event.y or rootLayout.y + 20) - rootLayout.y
     x = math.max(8, math.min(x, rootLayout.w - menuWidth - 8))
@@ -1602,21 +1497,14 @@ function ControlPanel:OpenCustomSettingContextMenu(item, event)
             backgroundColor = { 0, 0, 0, 0 }, textColor = danger and C.danger or C.text,
         })
     end
-    local menuChildren
-    if item.isBuiltin then
-        menuChildren = {
-            menuButton("编辑副本", function() self:OpenCustomSettingModal(item) end),
-        }
-    else
-        menuChildren = {
-            menuButton(item.packStatus == "draft" and "继续编辑" or "编辑题材", function()
-                self:OpenCustomSettingModal(item)
-            end),
-            menuButton("重命名", function() self:OpenCustomSettingRename(item) end),
-            UI.Panel { width = "100%", height = 1, backgroundColor = C.line },
-            menuButton("删除题材", function() self:ConfirmDeleteCustomSetting(item) end, true),
-        }
-    end
+    local menuChildren = {
+        menuButton(item.packStatus == "draft" and "继续编辑" or "编辑题材", function()
+            self:OpenCustomSettingModal(item)
+        end),
+        menuButton("重命名", function() self:OpenCustomSettingRename(item) end),
+        UI.Panel { width = "100%", height = 1, backgroundColor = C.line },
+        menuButton("删除题材", function() self:ConfirmDeleteCustomSetting(item) end, true),
+    }
     local menu = UI.Panel {
         position = "absolute", left = x, top = y, width = menuWidth, padding = 5, gap = 2,
         backgroundColor = { 24, 28, 39, 250 }, borderColor = { 64, 71, 91, 255 },
@@ -1654,7 +1542,7 @@ end
 function ControlPanel:OpenRoomGroupModal(item)
     self.referenceImagePasteKind = nil
     self.editingRoomGroupId = item and item.id or nil
-    self.roomGroupModalTitle:SetText(item and "编辑房间组" or "添加房间组")
+    self.roomGroupModalTitle:SetText(item and "编辑房间" or "添加房间")
     self.roomGroupNameField:SetValue(item and item.name or "")
     self.roomGroupPromptField:SetValue(item and item.prompt or "")
     local color = RoomGroupColors.Parse(item and item.color,
@@ -1662,7 +1550,8 @@ function ControlPanel:OpenRoomGroupModal(item)
     self.roomGroupColorHex = RoomGroupColors.ToHex(color)
     self.roomGroupColorPicker:SetHex(self.roomGroupColorHex)
     self:SetReferenceImage("room", item and item.imagePath or nil, item and item.imageName or nil)
-    self.roomGroupDeleteButton:SetVisible(item ~= nil)
+    self.roomGroupDeleteButton:SetVisible(item ~= nil
+        and tostring(item.id or ""):sub(1, 8) ~= "builtin-")
     self.roomGroupError:SetText("")
     print("[ControlPanel] open room group modal mode=" .. (item and "edit" or "new"))
     self.roomGroupModal:Open()
@@ -1673,8 +1562,10 @@ function ControlPanel:ApplyRoomGroup()
     local prompt = Trim(self.roomGroupPromptField:GetValue())
     local editing = self:FindRoomGroup(self.editingRoomGroupId)
     local topicId = editing and editing.topicId or (self.currentState or {}).activeCustomSettingId
+    local settingKey = editing and editing.settingKey
+        or (not topicId and (self.currentState or {}).settingKey)
     if name == "" then
-        self.roomGroupError:SetText("请填写房间组名称。")
+        self.roomGroupError:SetText("请填写房间名称。")
         return
     end
     if prompt == "" and not self.roomGroupImagePath then
@@ -1682,9 +1573,10 @@ function ControlPanel:ApplyRoomGroup()
         return
     end
     for _, item in ipairs((self.currentState or {}).roomGroups or {}) do
-        if item.id ~= self.editingRoomGroupId and item.topicId == topicId
+        if item.id ~= self.editingRoomGroupId
+            and item.topicId == topicId and item.settingKey == settingKey
             and string.lower(Trim(item.name)) == string.lower(name) then
-            self.roomGroupError:SetText("已有同名房间组，请换一个名称。")
+            self.roomGroupError:SetText("已有同名房间，请换一个名称。")
             return
         end
     end
@@ -1693,7 +1585,7 @@ function ControlPanel:ApplyRoomGroup()
         imagePath = self.roomGroupImagePath, imageName = self.roomGroupImageFileName,
         color = RoomGroupColors.Parse(self.roomGroupColorHex),
     })
-    if ok == false then self.roomGroupError:SetText(reason or "房间组保存失败，请重试。"); return end
+    if ok == false then self.roomGroupError:SetText(reason or "房间保存失败，请重试。"); return end
     print("[ControlPanel] room group saved name=" .. name)
     self.roomGroupModal:Close()
 end
@@ -1702,11 +1594,11 @@ function ControlPanel:ConfirmDeleteRoomGroup()
     local item = self:FindRoomGroup(self.editingRoomGroupId)
     if not item then return end
     UI.Modal.Confirm {
-        title = "删除房间组", message = string.format("确定删除房间组“%s”吗？", item.name),
+        title = "删除房间", message = string.format("确定删除房间“%s”吗？", item.name),
         confirmText = "删除", cancelText = "取消",
         onConfirm = function()
             local ok, reason = self.callbacks.onRoomGroupDelete(item.id)
-            if ok == false then self.roomGroupError:SetText(reason or "房间组删除失败。"); return end
+            if ok == false then self.roomGroupError:SetText(reason or "房间删除失败。"); return end
             self.roomGroupModal:Close()
         end,
     }
@@ -1767,29 +1659,29 @@ function ControlPanel:RebuildRoomGroupList(items)
     self.roomGroupList:ClearChildren()
     local currentState = self.currentState or {}
     local activeTopicId = currentState.topicMode == "custom" and currentState.activeCustomSettingId or nil
-    for _, item in ipairs(items or {}) do
-        if (activeTopicId and item.topicId == activeTopicId) or (not activeTopicId and not item.topicId) then
-            local saved = item
-            self.roomGroupList:AddChild(UI.Panel {
-                width = "100%", height = 44, padding = 5, flexDirection = "row", alignItems = "center", gap = 6,
-                backgroundColor = C.section, borderColor = { 41, 47, 64, 255 }, borderWidth = 1, borderRadius = 8,
-                children = {
-                    UI.Panel {
-                        width = 16, height = 16, flexShrink = 0,
-                        backgroundColor = RoomGroupColors.ToRGBA(saved.color),
-                        borderColor = { 255, 255, 255, 64 }, borderWidth = 1, borderRadius = 4,
-                    },
-                    UI.Panel { flexGrow = 1, gap = 2, children = {
-                        Label(saved.name, 10, C.text, {
-                            fontWeight = "bold", whiteSpace = "nowrap", overflow = "hidden",
-                        }),
-                        Label("可分配到房间", 8.5, C.dim),
-                    } },
-                    SmallButton("编辑", function() self:OpenRoomGroupModal(saved) end,
-                        { width = 38, height = 24, fontSize = 8.5 }),
+    local visibleRooms = LocalRequirementPlanner.GroupsForTopic(
+        items, activeTopicId)
+    for _, item in ipairs(visibleRooms) do
+        local saved = item
+        self.roomGroupList:AddChild(UI.Panel {
+            width = "100%", height = 44, padding = 5, flexDirection = "row", alignItems = "center", gap = 6,
+            backgroundColor = C.section, borderColor = { 41, 47, 64, 255 }, borderWidth = 1, borderRadius = 8,
+            children = {
+                UI.Panel {
+                    width = 16, height = 16, flexShrink = 0,
+                    backgroundColor = RoomGroupColors.ToRGBA(saved.color),
+                    borderColor = { 255, 255, 255, 64 }, borderWidth = 1, borderRadius = 4,
                 },
-            })
-        end
+                UI.Panel { flexGrow = 1, gap = 2, children = {
+                    Label(saved.name, 10, C.text, {
+                        fontWeight = "bold", whiteSpace = "nowrap", overflow = "hidden",
+                    }),
+                    Label("仅用于当前题材", 8.5, C.dim),
+                } },
+                SmallButton("编辑", function() self:OpenRoomGroupModal(saved) end,
+                    { width = 38, height = 24, fontSize = 8.5 }),
+            },
+        })
     end
 end
 
@@ -1845,56 +1737,6 @@ function ControlPanel:SetCollapsed(collapsed)
     self.expandButton:SetVisible(collapsed)
 end
 
-function ControlPanel:SetFixedSettingExpanded(expanded)
-    self.fixedSettingExpanded = expanded == true
-    if self.fixedSettingExpanded and self.customSettingExpanded then
-        self:SetCustomSettingExpanded(false)
-    end
-    self.fixedSettingHint:SetVisible(self.fixedSettingExpanded)
-    self.fixedSettingList:SetVisible(self.fixedSettingExpanded)
-    self.fixedSettingToggleButton:SetExpanded(self.fixedSettingExpanded)
-    self.fixedSettingToggleTooltip:SetContent(self.fixedSettingExpanded and "收起固定题材" or "展开固定题材")
-    local state = self.currentState or {}
-    local fixedActive = state.topicMode == "fixedPCG"
-        or (state.topicMode == nil and state.activeFixedThemeId ~= nil)
-    self.fixedSettingModeButton:SetText((fixedActive and "● " or "") .. "固定PCG")
-    self.fixedSettingModeButton:SetStyle({
-        backgroundColor = fixedActive and { 48, 36, 29, 255 } or C.input,
-        borderColor = fixedActive and { 139, 91, 52, 255 } or C.inputLine,
-        textColor = fixedActive and { 255, 209, 157, 255 } or { 165, 173, 191, 255 },
-    })
-end
-
-function ControlPanel:RebuildFixedSettingList(items)
-    self.fixedSettingList:ClearChildren()
-    for _, item in ipairs(items or {}) do
-        local saved = item
-        local active = (self.currentState or {}).activeFixedThemeId == saved.id
-        local card = UI.Panel {
-            width = "100%", minHeight = 54, padding = 7, flexDirection = "row",
-            alignItems = "center", gap = 8, pointerEvents = "box-only",
-            backgroundColor = active and { 34, 31, 31, 255 } or C.section,
-            borderColor = active and { 139, 91, 52, 255 } or { 41, 47, 64, 255 },
-            borderWidth = 1, borderRadius = 8,
-            onClick = function()
-                local ok, reason = self.callbacks.onFixedSetting(saved.id)
-                if ok == false then self:SetStatus(reason or "固定题材生成失败") end
-            end,
-            children = {
-                UI.Panel { flexGrow = 1, gap = 3, children = {
-                    Label((active and "● " or "") .. saved.label, 10.5,
-                        active and { 255, 215, 168, 255 } or C.text, { fontWeight = "bold" }),
-                    Label(saved.description or "固定规则 PCG", 8.5, C.dim, {
-                        whiteSpace = "normal", lineHeight = 1.15,
-                    }),
-                } },
-                Label("固定规则", 8, C.teal, { flexShrink = 0 }),
-            },
-        }
-        self.fixedSettingList:AddChild(card)
-    end
-end
-
 function ControlPanel:SetCustomSettingExpanded(expanded)
     self.customSettingExpanded = expanded == true
     self.customSettingHint:SetVisible(self.customSettingExpanded)
@@ -1917,37 +1759,18 @@ function ControlPanel:SetState(state)
     self.seedField:SetValue(tostring(self.seed))
     local setting = Themes.GetSetting(state.settingKey)
     local theme = Themes.Get(state.themeKey)
-    local fixedTheme = FixedThemes.Get(state.activeFixedThemeId)
-    self.cameraOnlyTheme = state.activeFixedThemeId == "shadowCastle"
-    self.thirdPreviewButton:SetVisible(not self.cameraOnlyTheme)
-    local pcgDungeonActive = state.activeFixedThemeId == "shadowCastle"
-    self.pcgDungeonParametersPanel:SetVisible(false)
-    self.pcgDungeonRefreshButton:SetVisible(pcgDungeonActive)
-    self.pcgDungeonCellDebugButton:SetVisible(false)
-    self.pcgDungeonLightDebugButton:SetVisible(false)
-    if pcgDungeonActive then
-        self.pcgDungeonSeed = state.seed or self.pcgDungeonSeed
-        self.pcgDungeonFloorCount = state.floorCount or self.pcgDungeonFloorCount
-        self.pcgDungeonSeedField:SetValue(tostring(self.pcgDungeonSeed))
-        self.pcgDungeonFloorSlider:SetValue(self.pcgDungeonFloorCount)
-        self.pcgDungeonFloorValue:SetText(tostring(self.pcgDungeonFloorCount))
-    end
-    self.pcgDungeonLightDebugButton:SetText(state.lightDebugVisible and "灯光调试：开启" or "灯光调试：关闭")
-    self.pcgDungeonLightDebugButton:SetStyle({
-        backgroundColor = state.lightDebugVisible and { 24, 57, 57, 255 } or { 20, 29, 34, 255 },
-        borderColor = state.lightDebugVisible and C.teal or { 55, 105, 112, 255 },
-        textColor = state.lightDebugVisible and { 184, 255, 239, 255 } or { 154, 218, 220, 255 },
-    })
-    self.pcgDungeonCellDebugButton:SetText(state.cellDebugVisible and "方块调试：开启" or "方块调试：关闭")
-    self.pcgDungeonCellDebugButton:SetStyle({
-        backgroundColor = state.cellDebugVisible and { 19, 58, 38, 255 } or { 35, 30, 21, 255 },
-        borderColor = state.cellDebugVisible and { 36, 196, 94, 255 } or { 151, 101, 22, 255 },
-        textColor = state.cellDebugVisible and { 128, 255, 164, 255 } or { 255, 190, 74, 255 },
-    })
     local fixedActive = state.topicMode == "fixedPCG"
         or (state.topicMode == nil and state.activeFixedThemeId ~= nil)
     local aiActive = not fixedActive
-    self.fixedSettingModeButton:SetText((fixedActive and "● " or "") .. "固定PCG")
+    local enteredFixedMode = fixedActive and self.lastFixedModeActive ~= true
+    -- Fixed PCG and AI topics are mutually exclusive generation modes, but
+    -- the AI topic browser must remain available so the user can switch back
+    -- without losing the generated topic list.
+    self.aiTopicPanel:SetVisible(true)
+    self.customSettingButton:SetVisible(true)
+    self.customSettingToggleTooltip:SetVisible(true)
+    self.randomSettingTooltip:SetVisible(true)
+    self.fixedSettingModeButton:SetText("固定PCG")
     self.fixedSettingModeButton:SetStyle({
         backgroundColor = fixedActive and { 48, 36, 29, 255 } or C.input,
         borderColor = fixedActive and { 139, 91, 52, 255 } or C.inputLine,
@@ -1963,6 +1786,35 @@ function ControlPanel:SetState(state)
     })
     self.aiTopicLabel:SetStyle({ fontColor = aiActive and C.teal or C.dim })
     self.fixedTopicLabel:SetStyle({ fontColor = fixedActive and { 255, 209, 157, 255 } or C.text })
+    local customActive = state.topicMode == "custom" and state.activeCustomSettingId ~= nil
+    local hasCustomSettings = #(state.customSettings or {}) > 0
+    if hasCustomSettings and not self.customSettingsHaveBeenShown then
+        self:SetCustomSettingExpanded(true)
+        self.customSettingsHaveBeenShown = true
+    end
+    if enteredFixedMode and hasCustomSettings then
+        self:SetCustomSettingExpanded(true)
+    end
+    self.lastFixedModeActive = fixedActive
+    local currentTopicName = fixedActive and (state.activeFixedThemeLabel or "固定 PCG")
+        or (customActive and state.customSettingName)
+        or setting.label
+    self.currentTopicValue:SetText(currentTopicName or setting.label)
+    self.currentTopicStatus:SetText(fixedActive and "固定 PCG" or "已生成")
+    self.currentTopicValue:SetStyle({
+        fontColor = customActive and { 205, 239, 229, 255 } or (fixedActive and C.dim or C.text),
+    })
+    self.currentTopicStatus:SetStyle({
+        fontColor = customActive and C.teal or C.dim,
+    })
+    self.currentTopicRow:SetStyle({
+        backgroundColor = customActive and { 18, 38, 37, 255 } or { 17, 25, 29, 255 },
+        borderColor = customActive and { 49, 105, 96, 255 } or { 39, 63, 64, 255 },
+    })
+    if customActive and self.lastActiveCustomSettingId ~= state.activeCustomSettingId then
+        self:SetCustomSettingExpanded(true)
+    end
+    self.lastActiveCustomSettingId = customActive and state.activeCustomSettingId or nil
     self.currentPaletteButton:SetText(theme.label)
     self.currentPaletteButton:SetStyle({
         backgroundColor = { 48, 36, 29, 255 },
@@ -1971,21 +1823,8 @@ function ControlPanel:SetState(state)
     })
     self.subtitle:SetText(string.format("%s · %s · 种子 %u · %s", state.customSettingName or setting.label, theme.label,
         self.seed & 0xffffffff, state.valid == false and "生成失败" or "已连通 ✓"))
-    if fixedTheme then
-        self.subtitle:SetText(fixedTheme.label .. " · " .. theme.label .. " · 程序化生成")
-    elseif fixedActive then
-        self.subtitle:SetText("固定 · 空场景 · " .. theme.label)
-    end
-    for key, button in pairs(self.settingButtons) do
-        local active = key == state.settingKey
-            and (state.topicMode == "base"
-                or (state.topicMode == nil and state.activeCustomSettingId == nil and state.activeFixedThemeId == nil))
-        button:SetText(Themes.GetSetting(key).label)
-        button:SetStyle({
-            backgroundColor = active and { 48, 36, 29, 255 } or C.input,
-            borderColor = active and { 139, 91, 52, 255 } or C.inputLine,
-            textColor = active and { 255, 209, 157, 255 } or { 165, 173, 191, 255 },
-        })
+    if fixedActive then
+        self.subtitle:SetText("固定 · " .. (state.activeFixedThemeLabel or "PCG") .. " · " .. theme.label)
     end
     self:RebuildPaletteExpandedList(state)
     local options, total = {}, 0
@@ -2013,16 +1852,14 @@ function ControlPanel:SetState(state)
             textColor = active and { 255, 209, 157, 255 } or C.dim,
         })
     end
-    self:RebuildFixedSettingList(FixedThemes.All())
     self:RebuildCustomSettingList(state.customSettings)
     self:RebuildRoomGroupList(state.roomGroups)
-    local roomGroupOptions = { { value = "", label = "不赋予房间组" } }
-    for _, group in ipairs(state.roomGroups or {}) do
-        local activeTopicId = state.topicMode == "custom" and state.activeCustomSettingId or nil
-        if (activeTopicId and group.topicId == activeTopicId)
-            or (not activeTopicId and not group.topicId) then
-            roomGroupOptions[#roomGroupOptions + 1] = { value = group.id, label = group.name }
-        end
+    local activeTopicId = state.topicMode == "custom" and state.activeCustomSettingId or nil
+    local visibleRooms = LocalRequirementPlanner.GroupsForTopic(
+        state.roomGroups, activeTopicId)
+    local roomGroupOptions = { { value = "", label = "不指定特定房间" } }
+    for _, group in ipairs(visibleRooms) do
+        roomGroupOptions[#roomGroupOptions + 1] = { value = group.id, label = group.name }
     end
     self.roomGroupAssignmentDropdown:SetOptions(roomGroupOptions)
     self.updatingRoomAssignment = true
@@ -2037,43 +1874,16 @@ function ControlPanel:SetState(state)
     self:SetEditorActive(state.editorActive == true, state.editorMode)
 end
 
-function ControlPanel:SetPCGDungeonStats(stats)
-    if stats.markerCount then
-        self.stats:SetText(string.format(
-            "暗影古堡 · %d 层 · %d 总房间 · %d 楼梯\n%d Marker · %d 面 · %d 结构 · %d 附加 · %d 灯光",
-            stats.floorCount or 0,
-            stats.roomCount or 0,
-            stats.stairCount or 0,
-            stats.markerCount or 0,
-            stats.faceCount or 0,
-            stats.baseInstances or 0,
-            stats.attachedInstances or 0,
-            stats.lights or 0))
-        return
-    end
-    self.stats:SetText(string.format(
-        "PCG Dungeon 清单 · %d 源实例\n%d 结构 · %d 附加 · %d 散布 · %d 灯光",
-        stats.sourceInstances or 0,
-        stats.baseInstances or 0,
-        stats.attachedInstances or 0,
-        stats.scatterInstances or 0,
-        stats.lights or 0))
-end
-
-function ControlPanel:SetMarkerFlowStats(report)
-    self.stats:SetText(string.format(
-        "Marker 验证通过\n%d 类型 · %d 点 · %d 面 · %.1f 毫秒",
-        report.markerTypeCount or 0,
-        report.markerCount or 0,
-        report.faceCount or 0,
-        report.elapsedMs or 0))
-end
-
 function ControlPanel:SetDungeon(dungeon, generationMs)
     self.name:SetText(dungeon.name or "程序化房间生成器")
-    self.stats:SetText(string.format("%d 房间 · %d 连接 · %d 回环\n%d 层 · %d 楼梯 · %d 地面格\n结构 %s · %.1f 毫秒",
+    local passed = tonumber(dungeon.passedStairs) or 0
+    local total = tonumber(dungeon.totalStairs) or #dungeon.connectors
+    local stairStatus = total == 0 and "无楼梯" or string.format("楼梯验收 %d/%d%s",
+        passed, total, passed == total and " ✓" or "")
+    self.stats:SetText(string.format("%d 房间 · %d 连接 · %d 回环\n%d 层 · %d 楼梯 · %d 地面格\n%s · 结构 %s · %.1f 毫秒",
         dungeon.stats.rooms, dungeon.stats.edges, dungeon.stats.loops, dungeon.stats.floors,
-        #dungeon.connectors, dungeon.stats.floorTiles, tostring(dungeon.hash), generationMs or 0))
+        #dungeon.connectors, dungeon.stats.floorTiles, stairStatus,
+        tostring(dungeon.hash), generationMs or 0))
 end
 
 function ControlPanel:SetEditorActive(active, mode)
@@ -2097,17 +1907,8 @@ end
 
 function ControlPanel:SetPreviewMode(mode)
     local first = mode == "first"
-    if self.cameraOnlyTheme then
-        self.previewModeLabel:SetText("第一人称摄像机")
-        self.previewViewHint:SetText("自由摄像机观察暗影古堡")
-        self.previewControlHint:SetText(
-            "WASD 移动摄像机 · Shift+WASD 加速 · 鼠标右键拖拽环视 · Esc 返回观察")
-    else
-        self.previewModeLabel:SetText(first and "第一人称预览" or "第三人称预览")
-        self.previewViewHint:SetText(first and "以角色视线高度观察空间细节" or "跟随角色观察房间布局与动线")
-        self.previewControlHint:SetText(
-            "WASD 移动角色 · Shift+WASD 奔跑 · 鼠标右键拖拽环视 · 滚轮缩放第三人称镜头 · 1/2 切换视角 · Esc 返回观察")
-    end
+    self.previewModeLabel:SetText(first and "第一人称预览" or "第三人称预览")
+    self.previewViewHint:SetText(first and "以角色视线高度观察空间细节" or "跟随角色观察房间布局与动线")
     self.previewCrosshair:SetVisible(first and self.previewActive)
     self.thirdPreviewButton:SetStyle({
         backgroundColor = not first and { 48, 36, 29, 250 } or { 20, 25, 37, 245 },

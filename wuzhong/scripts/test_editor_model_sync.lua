@@ -6,9 +6,10 @@ local app = nil
 local state = "enter"
 local elapsed = 0
 local roomProof, pathProof = nil, nil
-local resultPath = "D:/Maker/PCG/Maker-procedural-dungeon1.0/.tmp/editor-model-sync.result.txt"
+local resultPath = ".tmp/editor-model-sync.result.txt"
 
 local function WriteResult(message)
+    if not fileSystem:DirExists(".tmp") then fileSystem:CreateDir(".tmp") end
     ---@type File|nil
     local result = File(resultPath, FILE_WRITE)
     if not result or not result:IsOpen() then return false end

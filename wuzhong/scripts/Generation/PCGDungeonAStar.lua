@@ -257,7 +257,7 @@ function PCGDungeonAStar.Generate(layout, graph)
     local ordered = OrderedConnections(layout, graph)
     local successfulPaths, failedPaths, failedMstPaths, failedLoopPaths = 0, 0, 0, 0
     local stairCount, corridorLinkCount, removedRoomSegments, expandedNodes = 0, 0, 0, 0
-    local successfulPairs, stairLandingPairs, doors = {}, {}, {}
+    local successfulPairs, successfulRoutes, stairLandingPairs, doors = {}, {}, {}, {}
     local directions = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
 
     for connectionIndex, edge in ipairs(ordered) do
@@ -374,6 +374,7 @@ function PCGDungeonAStar.Generate(layout, graph)
             failedPaths = failedPaths + 1
             if edge.isMst then failedMstPaths = failedMstPaths + 1 else failedLoopPaths = failedLoopPaths + 1 end
         else
+            local routeStairs = {}
             for _, cell in ipairs(path) do
                 if cellState[cell + 1] == EMPTY then cellState[cell + 1] = CORRIDOR end
             end
@@ -393,6 +394,13 @@ function PCGDungeonAStar.Generate(layout, graph)
                     -- marker orientation stays correct when A* searches down.
                     local _, fromY = GridCoordinates(fromCell, nx, nz)
                     local _, toY = GridCoordinates(toCell, nx, nz)
+                    local lowerCell = fromY < toY and fromCell or toCell
+                    local upperCell = fromY < toY and toCell or fromCell
+                    routeStairs[#routeStairs + 1] = {
+                        stairwell_id = stairCount,
+                        lower_cell = lowerCell,
+                        upper_cell = upperCell,
+                    }
                     local roles = fromY < toY and { 0, 2, 1, 3 } or { 1, 3, 0, 2 }
                     for index, cell in ipairs(occupied) do
                         cellState[cell + 1] = index % 2 == 1 and STAIR or HEADROOM
@@ -420,6 +428,15 @@ function PCGDungeonAStar.Generate(layout, graph)
             successfulPaths = successfulPaths + 1
             successfulPairs[#successfulPairs + 1] = startRoom
             successfulPairs[#successfulPairs + 1] = goalRoom
+            local routeCells = {}
+            for index, cell in ipairs(path) do routeCells[index] = cell end
+            successfulRoutes[#successfulRoutes + 1] = {
+                connection_id = connection,
+                a = edge.a,
+                b = edge.b,
+                cells = routeCells,
+                stairs = routeStairs,
+            }
         end
     end
 
@@ -481,6 +498,7 @@ function PCGDungeonAStar.Generate(layout, graph)
         stairLandingPairs = stairLandingPairs,
         orderedEdges = ordered,
         successfulRoomPairs = successfulPairs,
+        successfulRoutes = successfulRoutes,
         unreachableRoomIds = unreachable,
         allRoomsReachable = allReachable,
         connectedRoomCount = #rooms - #unreachable,

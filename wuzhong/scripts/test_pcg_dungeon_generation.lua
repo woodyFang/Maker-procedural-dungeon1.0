@@ -1,4 +1,5 @@
 local PCGDungeonGenerator = require("Generation.PCGDungeonGenerator")
+local PCGDungeonGraph = require("Generation.PCGDungeonGraph")
 
 local function Check(condition, message)
     if not condition then error(message, 2) end
@@ -162,6 +163,43 @@ function Start()
                 string.format("loop edge %d differs: Lua=%d-%d legacy reference=%d-%d",
                     index, actual.a, actual.b, expected.a, expected.b))
         end
+
+        local zeroRates, fullRates = {}, {}
+        for floor = 1, generated.floorCount do
+            zeroRates[floor], fullRates[floor] = 0, 1
+        end
+        local noLoopGraph = PCGDungeonGraph.BuildMst(generated.layout, generated.delaunay, zeroRates)
+        local fullLoopGraph = PCGDungeonGraph.BuildMst(generated.layout, generated.delaunay, fullRates)
+        Check(#noLoopGraph.loopEdges == 0, "0% PCG Dungeon loop rate still emitted loop edges")
+        local mstSources, expectedFullLoops = {}, 0
+        for _, edge in ipairs(fullLoopGraph.mstEdges) do mstSources[edge.sourcePrimitive] = true end
+        for _, edge in ipairs(generated.delaunay.edges) do
+            local roomA, roomB = generated.rooms[edge.a + 1], generated.rooms[edge.b + 1]
+            if not mstSources[edge.sourcePrimitive] and roomA.floor == roomB.floor then
+                expectedFullLoops = expectedFullLoops + 1
+            end
+        end
+        Check(expectedFullLoops > 0 and #fullLoopGraph.loopEdges == expectedFullLoops,
+            "100% PCG Dungeon loop rate did not emit every eligible same-floor loop edge")
+        for _, edge in ipairs(fullLoopGraph.loopEdges) do
+            Check(generated.rooms[edge.a + 1].floor == generated.rooms[edge.b + 1].floor,
+                "per-floor loop rate emitted a cross-floor loop edge")
+        end
+
+        local noLoopGenerated = PCGDungeonGenerator.Generate({
+            seed = parameters.seed, roomCount = parameters.room_count,
+            floorCount = parameters.floor_count, cellSize = parameters.cell_size,
+            loopRatesByFloor = zeroRates,
+        })
+        local fullLoopGenerated = PCGDungeonGenerator.Generate({
+            seed = parameters.seed, roomCount = parameters.room_count,
+            floorCount = parameters.floor_count, cellSize = parameters.cell_size,
+            loopRatesByFloor = fullRates,
+        })
+        Check(noLoopGenerated.valid and #noLoopGenerated.graph.loopEdges == 0,
+            "PCG Dungeon generator ignored the 0% loop-rate parameter")
+        Check(fullLoopGenerated.valid and #fullLoopGenerated.graph.loopEdges == expectedFullLoops,
+            "PCG Dungeon generator ignored the 100% loop-rate parameter")
 
         CheckIntegerArray(generated.astar.cellState, fixture.astar.cell_state, "cell_state")
         CheckIntegerArray(generated.astar.roomOwner, fixture.astar.room_owner, "room_owner")

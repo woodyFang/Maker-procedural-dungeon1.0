@@ -162,6 +162,9 @@ local function ValidateManifest(data)
         if type(group.room_ids) == "table" and #group.room_ids ~= #group.transforms then
             return false, "room_ids length does not match transforms"
         end
+        if type(group.floor_ids) == "table" and #group.floor_ids ~= #group.transforms then
+            return false, "floor_ids length does not match transforms"
+        end
         if group.rule_id and not rulesById[group.rule_id] then
             return false, "scene instance group references unknown rule_id: " .. tostring(group.rule_id)
         end
@@ -227,8 +230,10 @@ local function ConvertScale(values)
     return PCGDungeonCoordinateSystem.PackedScaleToUrho(values)
 end
 
-local function ApplyPackedTransform(node, values)
-    node.position = ConvertPosition(values)
+local function ApplyPackedTransform(node, values, floorOffset)
+    local position = ConvertPosition(values)
+    position.y = position.y + (floorOffset or 0)
+    node.position = position
     node.rotation = PCGDungeonCoordinateSystem.PackedQuaternionToUrho(values)
     node.scale = PCGDungeonCoordinateSystem.PackedTransformScaleToUrho(values)
 end
@@ -403,7 +408,56 @@ function PCGDungeonRenderer.new(scene)
         referenceLightsEnabled = false,
         lightingEnabled = true,
         preloadStats = nil,
+        viewOptions = nil,
     }, PCGDungeonRenderer)
+end
+
+local function NormalizeFloorIndex(value)
+    value = tonumber(value)
+    if value == nil or value < 0 then return nil end
+    return math.max(0, math.floor(value + 0.5))
+end
+
+function PCGDungeonRenderer:NormalizeViewOptions(options)
+    options = options or {}
+    local mode = options.viewMode
+    if mode ~= "current" and mode ~= "neighbors" and mode ~= "all" and mode ~= "explode" then
+        mode = "all"
+    end
+    local floorHeight = tonumber(options.floorHeight)
+        or (self.viewOptions and self.viewOptions.floorHeight) or 5.0
+    floorHeight = math.max(0.001, floorHeight)
+    return {
+        currentFloor = NormalizeFloorIndex(options.currentFloor)
+            or (self.viewOptions and self.viewOptions.currentFloor) or 0,
+        viewMode = mode,
+        floorHeight = floorHeight,
+        floorSpacing = mode == "explode" and 2.2 or 1.0,
+    }
+end
+
+function PCGDungeonRenderer:FloorVisible(floor, options)
+    options = options or self.viewOptions or self:NormalizeViewOptions()
+    if floor == nil then return true end
+    if options.viewMode == "current" then return floor == options.currentFloor end
+    if options.viewMode == "neighbors" then return math.abs(floor - options.currentFloor) <= 1 end
+    return true
+end
+
+function PCGDungeonRenderer:FloorOffset(floor, options)
+    options = options or self.viewOptions or self:NormalizeViewOptions()
+    return (tonumber(floor) or 0) * options.floorHeight * (options.floorSpacing - 1.0)
+end
+
+function PCGDungeonRenderer:TransformFloor(transform, explicitFloor, marker, options)
+    options = options or self.viewOptions or self:NormalizeViewOptions()
+    local floor = NormalizeFloorIndex(explicitFloor)
+    if floor ~= nil then return floor end
+    local position = ConvertPosition(transform)
+    floor = math.floor(position.y / options.floorHeight + 0.000001)
+    -- Ceiling markers sit one floor above the walkable surface they cap.
+    if string.lower(tostring(marker or "")) == "ceil" then floor = floor - 1 end
+    return math.max(0, floor)
 end
 
 function PCGDungeonRenderer:SetLightingEnabled(enabled)
@@ -457,7 +511,38 @@ function PCGDungeonRenderer:RestoreDungeonGeometry()
     if self.root then return true, self.stats end
     local build = self.cachedBuild
     if not build then return false, "cached PCG Dungeon build is unavailable" end
-    return self:BuildManifest(build.data, build.source, build.lightData, build.lightSource, build.pipelineStats)
+    return self:BuildManifest(build.data, build.source, build.lightData, build.lightSource,
+        build.pipelineStats, build.viewOptions)
+end
+
+function PCGDungeonRenderer:RebuildView(viewOptions)
+    local build = self.cachedBuild
+    if not build then return false, "cached PCG Dungeon build is unavailable" end
+    local normalized = self:NormalizeViewOptions(viewOptions)
+    local keepCellDebug = self.cellDebugVisible == true
+    if keepCellDebug then
+        self.cellDebugVisible = false
+        self:ClearCellDebugGeometry()
+    end
+    self:DestroyDungeonGeometry()
+    local ok, result = self:BuildManifest(build.data, build.source, build.lightData,
+        build.lightSource, build.pipelineStats, normalized)
+    if not ok then
+        self:DestroyDungeonGeometry()
+        return false, result
+    end
+    build.viewOptions = normalized
+    if keepCellDebug then
+        self.cellDebugVisible = true
+        local debugOk, debugReason = self:RefreshCellDebugGeometry()
+        if not debugOk then
+            self.cellDebugVisible = false
+            log:Write(LOG_ERROR, "[PCGDungeon] cell debug view restore failed: " .. tostring(debugReason))
+        end
+    else
+        self:RefreshEditorSelection()
+    end
+    return true, result
 end
 
 function PCGDungeonRenderer:Clear()
@@ -481,6 +566,7 @@ function PCGDungeonRenderer:Clear()
     self.previewStart = nil
     self.cellDebugData = nil
     self.cachedBuild = nil
+    self.viewOptions = nil
     self.elapsed = 0
     self.referenceLightsEnabled = false
 end
@@ -632,9 +718,10 @@ function PCGDungeonRenderer:AddGroupInstance(group, node)
     nodes[#nodes + 1] = node
 end
 
-function PCGDungeonRenderer:AddRuleInstance(group, parent, transform, rule, suffix, partRule)
+function PCGDungeonRenderer:AddRuleInstance(group, parent, transform, rule, suffix, partRule,
+    floor, viewOptions)
     local marker = parent:CreateChild("Marker-" .. suffix)
-    ApplyPackedTransform(marker, transform)
+    ApplyPackedTransform(marker, transform, self:FloorOffset(floor, viewOptions))
     local instance = marker
     if not IsIdentityRuleTransform(rule) then
         instance = marker:CreateChild("Offset")
@@ -647,7 +734,9 @@ function PCGDungeonRenderer:AddRuleInstance(group, parent, transform, rule, suff
     end
     local range = rule.override_uniform_scale_range
     if type(range) == "table" and #range == 2 then
-        local hash = PlacementHash(rule.selection_seed or 0, transform, tonumber(suffix) or 0)
+        -- Hash the transform itself so a floor remains visually stable when
+        -- another floor is temporarily filtered out of the candidate list.
+        local hash = PlacementHash(rule.selection_seed or 0, transform, 0)
         local alpha = HashCombine(hash, 0xb5297a4d) / UINT32_MASK
         local uniform = range[1] + (range[2] - range[1]) * alpha
         instance.scale = Vector3(uniform, uniform, uniform)
@@ -681,7 +770,7 @@ function PCGDungeonRenderer:AddPointLight(parent, rule, hash)
     return light
 end
 
-function PCGDungeonRenderer:BuildReferenceLights(data)
+function PCGDungeonRenderer:BuildReferenceLights(data, viewOptions)
     if not self.lightingEnabled then return 0 end
     local root = self.root:CreateChild("ReferenceLights")
     local count = 0
@@ -691,20 +780,23 @@ function PCGDungeonRenderer:BuildReferenceLights(data)
         if type(record) ~= "table" or #record ~= 6 or type(color) ~= "table" or #color ~= 3 then
             return nil, "invalid reference light record " .. tostring(index)
         end
-        local node = root:CreateChild("ReferenceLight-" .. index)
-        node.position = Vector3(record[1], record[2], record[3])
-        node.scale = Vector3(1, 1, 1)
-        local light = node:CreateComponent("Light")
-        light.color = Color(color[1], color[2], color[3], 1)
-        ConfigurePointLight(light, nil, data.defaults, profile.brightness, record[5], record[6] == true)
-        self.lights[#self.lights + 1] = {
-            node = node,
-            light = light,
-            baseBrightness = profile.brightness,
-            lightFunction = profile.light_function,
-            isBrazier = profile.light_function ~= nil,
-        }
-        count = count + 1
+        local floor = self:TransformFloor({ 0, 0, record[2] * 100 }, nil, nil, viewOptions)
+        if self:FloorVisible(floor, viewOptions) then
+            local node = root:CreateChild("ReferenceLight-" .. index)
+            node.position = Vector3(record[1], record[2] + self:FloorOffset(floor, viewOptions), record[3])
+            node.scale = Vector3(1, 1, 1)
+            local light = node:CreateComponent("Light")
+            light.color = Color(color[1], color[2], color[3], 1)
+            ConfigurePointLight(light, nil, data.defaults, profile.brightness, record[5], record[6] == true)
+            self.lights[#self.lights + 1] = {
+                node = node,
+                light = light,
+                baseBrightness = profile.brightness,
+                lightFunction = profile.light_function,
+                isBrazier = profile.light_function ~= nil,
+            }
+            count = count + 1
+        end
     end
     return count
 end
@@ -975,7 +1067,7 @@ function PCGDungeonRenderer:RefreshCellDebugGeometry()
     return true, stats
 end
 
-function PCGDungeonRenderer:BuildBase(data, transformsByMesh, roomsByMesh)
+function PCGDungeonRenderer:BuildBase(data, transformsByMesh, roomsByMesh, floorsByMesh, viewOptions)
     local inheritByMesh, prefabBySource, lightByMesh, rulesById = {}, {}, {}, {}
     for _, rule in ipairs(data.meshes or {}) do
         if rule.id then rulesById[rule.id] = rule end
@@ -985,36 +1077,51 @@ function PCGDungeonRenderer:BuildBase(data, transformsByMesh, roomsByMesh)
     end
     local count = 0
     for _, source in ipairs(data.scene.instances) do
-        transformsByMesh[source.mesh] = transformsByMesh[source.mesh] or {}
-        roomsByMesh[source.mesh] = roomsByMesh[source.mesh] or {}
+        local visibleTransforms, visibleRooms, visibleFloors = {}, {}, {}
         for index, transform in ipairs(source.transforms) do
-            transformsByMesh[source.mesh][#transformsByMesh[source.mesh] + 1] = transform
-            roomsByMesh[source.mesh][#roomsByMesh[source.mesh] + 1] = (source.room_ids or {})[index] or -1
+            local floor = self:TransformFloor(transform, (source.floor_ids or {})[index], source.marker, viewOptions)
+            if self:FloorVisible(floor, viewOptions) then
+                visibleTransforms[#visibleTransforms + 1] = transform
+                visibleRooms[#visibleRooms + 1] = (source.room_ids or {})[index] or -1
+                visibleFloors[#visibleFloors + 1] = floor
+            end
+        end
+        if #visibleTransforms > 0 then
+            transformsByMesh[source.mesh] = transformsByMesh[source.mesh] or {}
+            roomsByMesh[source.mesh] = roomsByMesh[source.mesh] or {}
+            floorsByMesh[source.mesh] = floorsByMesh[source.mesh] or {}
+            for index, transform in ipairs(visibleTransforms) do
+                transformsByMesh[source.mesh][#transformsByMesh[source.mesh] + 1] = transform
+                roomsByMesh[source.mesh][#roomsByMesh[source.mesh] + 1] = visibleRooms[index]
+                floorsByMesh[source.mesh][#floorsByMesh[source.mesh] + 1] = visibleFloors[index]
+            end
         end
         local selectedRule = source.rule_id and rulesById[source.rule_id] or nil
         local prefab = selectedRule and selectedRule.usage == "prefab" and selectedRule
             or prefabBySource[source.mesh]
         local rule = selectedRule and selectedRule.usage == "inherit" and selectedRule
             or inheritByMesh[source.mesh]
-        if prefab and prefab.visible ~= false then
+        if #visibleTransforms > 0 and prefab and prefab.visible ~= false then
             for partIndex, part in ipairs(prefab.parts or {}) do
                 if part.visible ~= false then
                     local partId = part.id or tostring(partIndex)
                     local group, node = self:CreateGroup(
                         "Prefab-" .. prefab.id .. "-" .. partId, part.mesh, part, prefab)
                     if group then
-                        for index, transform in ipairs(source.transforms) do
-                            self:AddRuleInstance(group, node, transform, prefab, index - 1, part)
+                        for index, transform in ipairs(visibleTransforms) do
+                            self:AddRuleInstance(group, node, transform, prefab, index - 1, part,
+                                visibleFloors[index], viewOptions)
                             count = count + 1
                         end
                     end
                 end
             end
-        elseif rule and rule.visible ~= false and not lightByMesh[source.mesh] then
+        elseif #visibleTransforms > 0 and rule and rule.visible ~= false and not lightByMesh[source.mesh] then
             local group, node = self:CreateGroup("PCGDungeon-" .. rule.id, rule.mesh, rule)
             if group then
-                for index, transform in ipairs(source.transforms) do
-                    self:AddRuleInstance(group, node, transform, rule, index - 1)
+                for index, transform in ipairs(visibleTransforms) do
+                    self:AddRuleInstance(group, node, transform, rule, index - 1, nil,
+                        visibleFloors[index], viewOptions)
                     count = count + 1
                 end
             end
@@ -1023,7 +1130,7 @@ function PCGDungeonRenderer:BuildBase(data, transformsByMesh, roomsByMesh)
     return count
 end
 
-function PCGDungeonRenderer:BuildAttachments(data, transformsByMesh)
+function PCGDungeonRenderer:BuildAttachments(data, transformsByMesh, floorsByMesh, viewOptions)
     local count, lightCount = 0, 0
     for _, rule in ipairs(data.meshes or {}) do
         if rule.usage == "attach" and rule.visible ~= false then
@@ -1034,7 +1141,7 @@ function PCGDungeonRenderer:BuildAttachments(data, transformsByMesh)
                 local candidates = {}
                 for index, transform in ipairs(transforms) do
                     candidates[#candidates + 1] = {
-                        index = index, hash = PlacementHash(rule.selection_seed or 0, transform, index - 1),
+                        index = index, hash = PlacementHash(rule.selection_seed or 0, transform, 0),
                     }
                 end
                 table.sort(candidates, CandidateSort)
@@ -1042,7 +1149,8 @@ function PCGDungeonRenderer:BuildAttachments(data, transformsByMesh)
                 for candidateIndex = 1, selected do
                     local candidate = candidates[candidateIndex]
                     local instance = self:AddRuleInstance(
-                        group, node, transforms[candidate.index], rule, candidate.index - 1)
+                        group, node, transforms[candidate.index], rule, candidate.index - 1, nil,
+                        floorsByMesh[rule.source_mesh][candidate.index], viewOptions)
                     if rule.interactive_door == true then
                         self.doorSystem:Register(instance, rule,
                             string.format("%s-%d", rule.id or "door", candidate.index - 1))
@@ -1064,7 +1172,8 @@ local function AppendCandidates(target, candidates, count)
     for index = 1, math.min(count, #candidates) do target[#target + 1] = candidates[index] end
 end
 
-function PCGDungeonRenderer:BuildMarkerLights(data, transformsByMesh, roomsByMesh)
+function PCGDungeonRenderer:BuildMarkerLights(data, transformsByMesh, roomsByMesh, floorsByMesh,
+    viewOptions)
     if not self.lightingEnabled or self.referenceLightsEnabled then return 0 end
     local count = 0
     local lightRoot = self.root:CreateChild("ManifestLights")
@@ -1075,7 +1184,7 @@ function PCGDungeonRenderer:BuildMarkerLights(data, transformsByMesh, roomsByMes
                 local candidates = {}
                 for index, transform in ipairs(transforms) do
                     candidates[#candidates + 1] = {
-                        index = index, hash = PlacementHash(rule.selection_seed or 0, transform, index - 1),
+                        index = index, hash = PlacementHash(rule.selection_seed or 0, transform, 0),
                         localOffset = nil,
                     }
                 end
@@ -1116,7 +1225,9 @@ function PCGDungeonRenderer:BuildMarkerLights(data, transformsByMesh, roomsByMes
                 end
                 for _, candidate in ipairs(selected) do
                     local marker = lightRoot:CreateChild(rule.id .. "-" .. candidate.index)
-                    ApplyPackedTransform(marker, transforms[candidate.index])
+                    local floor = floorsByMesh[rule.mesh][candidate.index]
+                    ApplyPackedTransform(marker, transforms[candidate.index],
+                        self:FloorOffset(floor, viewOptions))
                     local parent = marker
                     if candidate.localOffset then
                         parent = marker:CreateChild("DuplicateOffset")
@@ -1143,7 +1254,7 @@ local function VectorLength(value)
     return math.sqrt(value[1] * value[1] + value[2] * value[2] + value[3] * value[3])
 end
 
-function PCGDungeonRenderer:BuildScatter(data)
+function PCGDungeonRenderer:BuildScatter(data, viewOptions)
     local surfaces = {}
     for _, surface in ipairs(data.scene.surfaces or {}) do surfaces[string.lower(surface.name)] = surface end
     local sharedAccepted, total = {}, 0
@@ -1166,17 +1277,34 @@ function PCGDungeonRenderer:BuildScatter(data)
                 local scaleRange = rule.uniform_scale_range or { 1, 1 }
                 local offset = rule.offset_cm or { 0, 0, 0 }
                 for offsetIndex = 1, #indices, 3 do
+                    -- Dynamic PCG surfaces carry one floor id per triangle so
+                    -- each floor's decoration slider scales every scatter rule.
+                    local triangleIndex = (offsetIndex - 1) // 3
+                    local floorId = surface.triangle_floor_ids
+                        and surface.triangle_floor_ids[triangleIndex + 1] or nil
                     local ia, ib, ic = indices[offsetIndex] * 3 + 1, indices[offsetIndex + 1] * 3 + 1, indices[offsetIndex + 2] * 3 + 1
                     local a = { vertices[ia], vertices[ia + 1], vertices[ia + 2] }
                     local b = { vertices[ib], vertices[ib + 1], vertices[ib + 2] }
                     local c = { vertices[ic], vertices[ic + 1], vertices[ic + 2] }
+                    if floorId == nil then
+                        local averageY = (a[2] + b[2] + c[2]) / 3
+                        floorId = self:TransformFloor({ 0, 0, averageY }, nil, nil, viewOptions)
+                    end
+                    local densityMultiplier = self:FloorVisible(floorId, viewOptions) and 1 or 0
+                    if densityMultiplier > 0 and floorId ~= nil
+                        and type(data.scene.scatter_density_by_floor) == "table" then
+                        local configured = tonumber(data.scene.scatter_density_by_floor[floorId + 1])
+                        if configured ~= nil then
+                            densityMultiplier = math.max(0, math.min(1, configured))
+                        end
+                    end
                     local cross = Cross({ b[1] - a[1], b[2] - a[2], b[3] - a[3] },
                         { c[1] - a[1], c[2] - a[2], c[3] - a[3] })
                     local area = 0.5 * VectorLength(cross)
                     if area > 0.000001 then
-                        local triangleIndex = (offsetIndex - 1) // 3
                         local stream = NewRandomStream(HashCombine(U32(rule.seed or 0), U32(triangleIndex)))
                         local exact = area / 10000 * (rule.candidate_density_per_square_meter or 0)
+                            * densityMultiplier
                         local candidateCount = math.floor(exact)
                         if RandomFraction(stream) < exact - candidateCount then candidateCount = candidateCount + 1 end
                         for _ = 1, candidateCount do
@@ -1202,7 +1330,9 @@ function PCGDungeonRenderer:BuildScatter(data)
                                     local scale = RandomRange(stream, scaleRange[1], scaleRange[2])
                                     location = { location[1] + offset[1], location[2] + offset[2], location[3] + offset[3] }
                                     local instance = node:CreateChild(rule.id .. "-" .. total)
-                                    instance.position = ConvertPosition(location)
+                                    local position = ConvertPosition(location)
+                                    position.y = position.y + self:FloorOffset(floorId, viewOptions)
+                                    instance.position = position
                                     instance.rotation = PCGDungeonCoordinateSystem.UEScatterRotation(
                                         cross, rule.local_up_axis, yaw, rule.align_to_normal == true)
                                     instance.scale = Vector3(scale, scale, scale)
@@ -1220,10 +1350,13 @@ function PCGDungeonRenderer:BuildScatter(data)
     return total
 end
 
-function PCGDungeonRenderer:BuildManifest(data, source, lightData, lightSource, pipelineStats)
+function PCGDungeonRenderer:BuildManifest(data, source, lightData, lightSource, pipelineStats,
+    viewOptions)
     local started = os.clock()
     local valid, reason = ValidateManifest(data)
     if not valid then return false, reason end
+    viewOptions = self:NormalizeViewOptions(viewOptions)
+    self.viewOptions = viewOptions
     self.referenceLightsEnabled = lightData ~= nil
     self.assetBindings = data.asset_bindings
     self.diagnosticMeshes = data.diagnostic_meshes
@@ -1235,16 +1368,17 @@ function PCGDungeonRenderer:BuildManifest(data, source, lightData, lightSource, 
     end
     self.previewStart = FindPreviewStart(data)
     self.root = self.scene:CreateChild("PCGDungeon")
-    local transformsByMesh, roomsByMesh = {}, {}
-    local baseCount = self:BuildBase(data, transformsByMesh, roomsByMesh)
-    local attachCount, companionLights = self:BuildAttachments(data, transformsByMesh)
-    local markerLights = self:BuildMarkerLights(data, transformsByMesh, roomsByMesh)
+    local transformsByMesh, roomsByMesh, floorsByMesh = {}, {}, {}
+    local baseCount = self:BuildBase(data, transformsByMesh, roomsByMesh, floorsByMesh, viewOptions)
+    local attachCount, companionLights = self:BuildAttachments(data, transformsByMesh, floorsByMesh, viewOptions)
+    local markerLights = self:BuildMarkerLights(
+        data, transformsByMesh, roomsByMesh, floorsByMesh, viewOptions)
     local referenceLights = 0
     if lightData then
-        referenceLights, reason = self:BuildReferenceLights(lightData)
+        referenceLights, reason = self:BuildReferenceLights(lightData, viewOptions)
         if not referenceLights then return false, reason end
     end
-    local scatterCount = self:BuildScatter(data)
+    local scatterCount = self:BuildScatter(data, viewOptions)
     self.stats = {
         source = source,
         sourceInstances = data.scene.instance_count,
@@ -1264,6 +1398,7 @@ function PCGDungeonRenderer:BuildManifest(data, source, lightData, lightSource, 
         buildMs = (os.clock() - started) * 1000,
     }
     self:RefreshLightDebugGeometry()
+    self:RefreshEditorSelection()
     print(string.format(
         "[PCGDungeon] refreshed source=%d base=%d attached=%d scatter=%d lights=%d doors=%d groups=%d buildMs=%.1f",
         self.stats.sourceInstances, baseCount, attachCount, scatterCount, self.stats.lights,
@@ -1277,21 +1412,25 @@ function PCGDungeonRenderer:Rebuild()
     local data, source = ReadManifest()
     if not data then return false, source end
     local lightData, lightSource = ReadLightManifest()
-    local ok, result = self:BuildManifest(data, source, lightData, lightSource)
+    local ok, result = self:BuildManifest(data, source, lightData, lightSource, nil,
+        { viewMode = "all", currentFloor = 0 })
     if ok then
-        self.cachedBuild = { data = data, source = source, lightData = lightData, lightSource = lightSource }
+        self.cachedBuild = {
+            data = data, source = source, lightData = lightData, lightSource = lightSource,
+            viewOptions = self.viewOptions,
+        }
     end
     return ok, result
 end
 
-function PCGDungeonRenderer:RebuildFromMarkers(markerResult, cellDebugData)
+function PCGDungeonRenderer:RebuildFromMarkers(markerResult, cellDebugData, viewOptions)
     self:Clear()
     local data, source = ReadManifest()
     if not data then return false, source end
-    local adapted, pipelineStats = PCGDungeonMeshInfoAdapter.Apply(data, markerResult)
+    local adapted, pipelineStats = PCGDungeonMeshInfoAdapter.Apply(data, markerResult, cellDebugData)
     if not adapted then return false, pipelineStats end
     local ok, result = self:BuildManifest(adapted, "pcg-runtime + " .. source,
-        nil, "dynamic Marker lights", pipelineStats)
+        nil, "dynamic Marker lights", pipelineStats, viewOptions)
     if not ok then return false, result end
     self.cachedBuild = {
         data = adapted,
@@ -1299,6 +1438,7 @@ function PCGDungeonRenderer:RebuildFromMarkers(markerResult, cellDebugData)
         lightData = nil,
         lightSource = "dynamic Marker lights",
         pipelineStats = pipelineStats,
+        viewOptions = self.viewOptions,
     }
     self.cellDebugData = cellDebugData
     local debugOk, debugReason = self:RefreshCellDebugGeometry()

@@ -9,6 +9,7 @@ local EditorGesture = require("UI.Editor.EditorGesture")
 local RoomEditing = require("UI.Editor.RoomEditing")
 local EditorSession = require("UI.Editor.EditorSession")
 local CanvasViewport = require("UI.Editor.CanvasViewport")
+local LayoutEditor = require("UI.LayoutEditor")
 local SceneLayoutEditor = require("UI.SceneLayoutEditor")
 local MultiFloor = require("Generation.MultiFloor")
 local ForgeCameraController = require("Input.ForgeCameraController")
@@ -278,8 +279,12 @@ local function TestSegmentSnapTargetsUseHandlesOnly()
     local Editor = {}
     PathWorkflow.Install(Editor, { CopyLink = EditorData.CopyLink })
     local link = { a = 1, b = 2, bends = {}, autoRoute = {} }
+    local runtimeLink = {
+        a = 1, b = 2, kind = "corridor", runtimeGenerated = true,
+        bends = { { x = 20, y = 20 } }, autoRoute = {},
+    }
     local fake = setmetatable({
-        floor = 0, rooms = { { floor = 0 }, { floor = 0 } }, links = { link },
+        floor = 0, rooms = { { floor = 0 }, { floor = 0 } }, links = { link, runtimeLink },
         LinkRoute = function()
             return { { x = 0, y = 0 }, { x = 2, y = 0 }, { x = 2, y = 3 }, { x = 5, y = 3 } }
         end,
@@ -287,6 +292,32 @@ local function TestSegmentSnapTargetsUseHandlesOnly()
     local targets = fake:ControlSnapTargets()
     Check(#targets == 2 and SamePoint(targets[1], 0, 0) and SamePoint(targets[2], 5, 3),
         "automatic route cells leaked into segment snap targets")
+    Check(#fake:CaptureAdaptiveRoutes(1) == 0,
+        "runtime A* route leaked into authored path adaptation")
+end
+
+local function TestRoomClickWinsOverCorridor()
+    local editor = setmetatable({
+        floor = 0,
+        rooms = {
+            { cx = 0, cy = 0, w = 1, h = 1, floor = 0 },
+            { cx = 10, cy = 0, w = 1, h = 1, floor = 0 },
+            { cx = 5, cy = 0, w = 4, h = 4, floor = 0 },
+        },
+        links = { { a = 1, b = 2, kind = "corridor", width = 1 } },
+        HitTolerance = function() return 0.5 end,
+        DisplayLinkRoute = function() return { { x = 0, y = 0 }, { x = 10, y = 0 } } end,
+    }, { __index = LayoutEditor })
+
+    Check(not editor:HitLink(5, 0),
+        "corridor segment crossing a room still won the room's first click")
+    local pieces = EditorGizmos.OutsideRoomSegments({
+        floor = 0, rooms = { editor.rooms[3] },
+    }, { { x = 0, y = 0 }, { x = 10, y = 0 } })
+    Check(#pieces == 2 and math.abs(pieces[1].b.x - 3) < 0.000001
+            and math.abs(pieces[2].a.x - 7) < 0.000001,
+        "corridor overlay was not clipped to the room boundaries")
+    Check(editor:HitLink(1, 0), "corridor outside a room became unselectable")
 end
 
 local function TestEditableRouteSimplifiesAutoCells()
@@ -405,6 +436,32 @@ local function TestRoomMoveAndFourCornerResizeParity()
             and room.w == expected[3] and room.h == expected[4],
             case.mode .. " did not match Three's unsnapped-pointer resize result")
     end
+
+    local shrinkStart = { cx = 20, cy = 18, w = 9, h = 7 }
+    for _, corner in ipairs({
+        { mode = "resize-nw", x = 16.7, y = 15.7 },
+        { mode = "resize-ne", x = 23.3, y = 15.7 },
+        { mode = "resize-sw", x = 16.7, y = 20.3 },
+        { mode = "resize-se", x = 23.3, y = 20.3 },
+    }) do
+        local room = RoomEditing.Resize(shrinkStart, corner, corner.mode, 1, 1)
+        Check(room.w == 8 and room.h == 6,
+            corner.mode .. " did not shrink toward the room interior")
+    end
+
+    local horizontal = RoomEditing.Resize(shrinkStart, { x = 17.1, y = 18 }, "resize-w", 1, 1)
+    local vertical = RoomEditing.Resize(shrinkStart, { x = 20, y = 16.1 }, "resize-n", 1, 1)
+    Check(horizontal.w == 7 and horizontal.h == 7,
+        "west edge handle did not shrink width without changing height")
+    Check(vertical.w == 9 and vertical.h == 5,
+        "north edge handle did not shrink height without changing width")
+
+    local defaultMinimum = RoomEditing.NormalizeRect({ x = 0, y = 0 }, { x = 1, y = 1 })
+    local pcgMinimum = RoomEditing.NormalizeRect({ x = 0, y = 0 }, { x = 1, y = 1 }, 1, 1)
+    Check(defaultMinimum.w == 5 and defaultMinimum.h == 5,
+        "default dungeon room minimum is no longer 5x5")
+    Check(pcgMinimum.w == 1 and pcgMinimum.h == 1,
+        "PCG room minimum did not allow a 1x1 room")
 end
 
 local function TestStairScreenGizmos()
@@ -628,6 +685,52 @@ local function TestDuplicateConnectionDetection()
     Check(EditorData.FindLink(links, 1, 3) == nil, "unconnected room pair reported a duplicate")
 end
 
+local function TestDrawnRoomWaitsForConnection()
+    local committedRooms, commitCount = nil, 0
+    local editor = setmetatable({
+        floor = 0,
+        rooms = { { id = 1, cx = 5, cy = 5, w = 6, h = 6, floor = 0 } },
+        links = {},
+        draw = { gx = 20, gy = 20, ex = 28, ey = 26 },
+        callbacks = {
+            onCommit = function(rooms)
+                committedRooms, commitCount = rooms, commitCount + 1
+            end,
+        },
+        editorInteraction = { Release = function(self) self.released = true end },
+    }, { __index = LayoutEditor })
+
+    Check(EditorGesture.Finish(editor, nil), "room draw gesture did not finish")
+    Check(#editor.rooms == 2 and editor.draw == nil and editor.selected == 2,
+        "finished room draw did not leave a selectable block on the canvas")
+    Check(editor.rooms[2].pendingConnection and committedRooms[2].pendingConnection,
+        "new room was published before it had a scene connection")
+    Check(EditorData.CopyRooms(editor.rooms)[2].pendingConnection,
+        "pending room state was lost while synchronizing editor views")
+    Check(EditorData.HasPendingConnections(committedRooms) and commitCount == 1,
+        "pending room commit was not identifiable by the scene update gate")
+
+    editor.links[1] = { a = 1, b = 2, kind = "corridor" }
+    editor:Commit()
+    Check(not editor.rooms[2].pendingConnection
+            and not EditorData.HasPendingConnections(committedRooms) and commitCount == 2,
+        "connecting the drawn room did not release the scene update gate")
+
+    local rooms = {
+        { id = 1 },
+        { id = 2, pendingConnection = true },
+        { id = 3, pendingConnection = true },
+    }
+    local links = { { a = 2, b = 3 } }
+    Check(not EditorData.ResolvePendingConnections(rooms, links)
+            and rooms[2].pendingConnection and rooms[3].pendingConnection,
+        "an isolated group of new rooms was treated as connected to the scene")
+    links[#links + 1] = { a = 1, b = 2 }
+    Check(EditorData.ResolvePendingConnections(rooms, links)
+            and not rooms[2].pendingConnection and not rooms[3].pendingConnection,
+        "a new room group did not join the scene after reaching an existing room")
+end
+
 local function TestStairPairingAndRotation()
     local source = { id = 1, cx = 10, cy = 10, w = 10, h = 8, floor = 0 }
     local target = { id = 2, cx = 11, cy = 10, w = 8, h = 8, floor = 1 }
@@ -751,7 +854,9 @@ local function Test2D3DSessionSynchronization()
         },
         floor = 1, floorCount = 3, floorHeight = 3,
         dungeonWidth = 80, dungeonHeight = 64,
+        roomMinimumWidth = 1, roomMinimumHeight = 1,
         generatedOffset = { x = 13, y = 9 },
+        editorWorldScale = 5, editorSwapAxes = true, editorCenterOffset = 0,
         selected = 2, selectedLink = 1, mode = "connect", linkStart = 2, nextStairId = 9,
         stairPlacing = true, stairPlacementStyle = "straight",
         stairSnapshot = { floor = 1, rooms = { { id = 1, cx = 8, cy = 7, w = 10, h = 8, floor = 0 } } },
@@ -762,8 +867,13 @@ local function Test2D3DSessionSynchronization()
     Check(EditorSession.Apply(target, EditorSession.Capture(source)), "editor view session synchronization failed")
     Check(target.floor == 1 and target.floorCount == 3 and target.selected == 2 and target.selectedLink == 1,
         "editor view session lost floor or selection state")
+    Check(target.roomMinimumWidth == 1 and target.roomMinimumHeight == 1,
+        "editor view session lost the active room size constraints")
     Check(SamePoint(target.generatedOffset, 13, 9),
         "editor view session lost the generated coordinate offset")
+    Check(target.editorWorldScale == 5 and target.editorSwapAxes == true
+            and target.editorCenterOffset == 0,
+        "editor view session lost the runtime world-coordinate transform")
     Check(target.rooms[1].roomGroupId == "crypt" and target.rooms[2].stairRoomPairId == "pair-sync",
         "editor view session lost room authoring metadata")
     Check(target.links[1].stairSpec.style == "straight" and target.links[1].connector.width == 3,
@@ -795,6 +905,83 @@ local function TestGeneratedCoordinateMapping()
     local gridX, gridY = editor:WorldToGrid(world)
     Check(math.abs(gridX - 8) < 0.000001 and math.abs(gridY - 7) < 0.000001,
         "3D editor generated coordinate mapping was not reversible")
+
+    local pcgEditor = setmetatable({
+        dungeonWidth = 80, dungeonHeight = 64, floor = 1, floorHeight = MultiFloor.FLOOR_HEIGHT,
+        generatedOffset = { x = 0, y = 0 }, editorWorldScale = 5,
+        editorSwapAxes = true, editorCenterOffset = 0,
+    }, { __index = SceneLayoutEditor })
+    local pcgWorld = pcgEditor:GridToWorld({ x = 8, y = 7 }, 0.34)
+    Check(math.abs(pcgWorld.x + 125) < 0.000001 and math.abs(pcgWorld.z + 160) < 0.000001,
+        "3D editor did not apply the PCG 5m X/Z-swapped coordinate mapping")
+    local pcgX, pcgY = pcgEditor:WorldToGrid(pcgWorld)
+    Check(math.abs(pcgX - 8) < 0.000001 and math.abs(pcgY - 7) < 0.000001,
+        "PCG 3D editor coordinate mapping was not reversible")
+    local pcgScale = pcgEditor:RoomWorldScale({ w = 10, h = 8 }, 0.1)
+    Check(math.abs(pcgScale.x - 40) < 0.000001 and math.abs(pcgScale.z - 50) < 0.000001,
+        "PCG 3D editor room size did not follow the swapped 5m world scale")
+end
+
+local function TestRuntimeGeneratedGeometryIsReadOnly()
+    local Editor = {}
+    StairWorkflow.Install(Editor, { CopyRooms = EditorData.CopyRooms, CopyLink = EditorData.CopyLink })
+    local projectedLink = {
+        kind = "stairs", runtimeGenerated = true,
+        connector = { stairId = "pcg-stair-1", lower = { x = 4, y = 5 }, direction = "east" },
+    }
+    EditorData.EnsureStairSpec(projectedLink, { id = 1 })
+    Check(projectedLink.stairSpec == nil,
+        "runtime A* stair was adapted into an authored stair specification")
+    local link = {
+        a = 1, b = 2, kind = "stairs", runtimeGenerated = true,
+        connector = { lower = { x = 4, y = 5 }, upper = { x = 5, y = 5 }, direction = "east", width = 1 },
+        stairSpec = {
+            id = "pcg-stair-1", mode = "runtime", pending = true,
+            anchor = { x = 4, y = 5 }, previewAnchor = { x = 4, y = 5 },
+            direction = "east", previewDirection = "east", length = 1, previewLength = 1,
+            style = "straight", previewStyle = "straight", width = 1, previewWidth = 1,
+        },
+    }
+    local fake = setmetatable({
+        rooms = {
+            { cx = 4, cy = 5, w = 2, h = 2, floor = 0 },
+            { cx = 5, cy = 5, w = 2, h = 2, floor = 1 },
+        },
+        links = { link }, selectedLink = 1, stairPlacementStyle = "straight", callbacks = {},
+        RefreshOverlay = function(self) self.refreshCount = (self.refreshCount or 0) + 1 end,
+        NotifySelection = function() end,
+        MarkDisconnectedRoomsSecret = function() end,
+        Commit = function(self) self.commitCount = (self.commitCount or 0) + 1 end,
+    }, { __index = Editor })
+
+    local roomEdit = fake:CaptureRoomStairEdit(1)
+    Check(#roomEdit.stairs == 0 and fake:CaptureStairDrag(1) == nil,
+        "runtime A* stair was captured as authored stair geometry")
+    fake:UpdateRoomStairEdit(roomEdit, 3, 2, false)
+    Check(SamePoint(link.connector.lower, 4, 5),
+        "moving a room changed a runtime A* stair connector")
+    Check(not fake:ApplyStairPlacement(link, { anchor = { x = 8, y = 8 }, direction = "north" })
+            and not fake:RotateSelectedStair()
+            and not fake:SetSelectedStairStyle("l-turn")
+            and not fake:ToggleSelectedStairLock()
+            and not fake:ConfirmSelectedStair()
+            and not fake:UpdateStairDrag({ link = 1 }, { anchor = { x = 8, y = 8 } })
+            and not fake:DeleteSelectedStair(),
+        "runtime A* stair accepted an authored stair operation")
+    Check(#fake.links == 1 and fake.stairPlacementStyle == "straight"
+            and link.stairSpec.pending and link.stairSpec.direction == "east"
+            and not fake.commitCount and not fake.refreshCount,
+        "rejected runtime A* stair operation still mutated editor state")
+
+    local graphEditor = setmetatable({
+        rooms = fake.rooms, links = { link }, selectedLink = 1,
+        MarkDisconnectedRoomsSecret = function(self) self.markedDisconnected = true end,
+        Commit = function(self) self.committed = true end,
+    }, { __index = LayoutEditor })
+    graphEditor:DeleteSelected()
+    Check(#graphEditor.links == 0 and graphEditor.selectedLink == nil
+            and graphEditor.markedDisconnected and graphEditor.committed,
+        "runtime A* stair edge did not use direct graph-edge deletion")
 end
 
 local function TestCanvasViewportPanZoom()
@@ -826,6 +1013,7 @@ function EditorTests.Run()
         { "orthogonal route adaptation", TestOrthogonalRouteAdaptation },
         { "automatic route room moves", TestAutomaticRouteFollowsRepeatedRoomMoves },
         { "unselected corridor overlay", TestCorridorOverlayIncludesUnselectedRoutes },
+        { "room click wins over corridor", TestRoomClickWinsOverCorridor },
         { "segment control snapping", TestSegmentControlSnapping },
         { "segment endpoint shape", TestSegmentEndpointShapePreservation },
         { "middle segment room points", TestMiddleSegmentAdaptsRoomPoints },
@@ -841,9 +1029,11 @@ function EditorTests.Run()
         { "isolated editor copies", TestEditorCopiesAreIsolated },
         { "generated stair editability", TestGeneratedStairBecomesEditable },
         { "duplicate connection detection", TestDuplicateConnectionDetection },
+        { "drawn room waits for connection", TestDrawnRoomWaitsForConnection },
         { "stair pairing and rotation", TestStairPairingAndRotation },
         { "stair style/width controls", TestStairStyleWidthAndPointerControls },
         { "direct stair workflow", TestDirectStairWorkflow },
+        { "runtime geometry read-only", TestRuntimeGeneratedGeometryIsReadOnly },
         { "critical stair detection", TestCriticalStairDetection },
         { "paired stair room removal", TestPairedStairRoomRemoval },
         { "2D/3D session synchronization", Test2D3DSessionSynchronization },
@@ -867,6 +1057,7 @@ function EditorTests.RunStairs()
         { "stair pairing and rotation", TestStairPairingAndRotation },
         { "stair style/width controls", TestStairStyleWidthAndPointerControls },
         { "direct stair workflow", TestDirectStairWorkflow },
+        { "runtime geometry read-only", TestRuntimeGeneratedGeometryIsReadOnly },
         { "critical stair detection", TestCriticalStairDetection },
         { "paired stair room removal", TestPairedStairRoomRemoval },
     }

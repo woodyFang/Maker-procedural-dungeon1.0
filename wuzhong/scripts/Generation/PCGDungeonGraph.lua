@@ -14,6 +14,25 @@ end
 local function Length2(a) return Dot(a, a) end
 local function Distance(a, b) return math.sqrt(Length2(Sub(a, b))) end
 
+local DEFAULT_LOOP_RATE = 0.125
+
+local function ClampLoopRate(value, fallback)
+    local rate = tonumber(value)
+    if rate == nil then rate = tonumber(fallback) or DEFAULT_LOOP_RATE end
+    return math.max(0, math.min(1, rate))
+end
+
+local function LoopRateForEdge(layout, edge, loopRates)
+    if type(loopRates) ~= "table" then
+        return ClampLoopRate(loopRates, DEFAULT_LOOP_RATE)
+    end
+    local roomA, roomB = layout.rooms[edge.a + 1], layout.rooms[edge.b + 1]
+    local floorA = math.floor(tonumber(roomA and roomA.floor) or 0)
+    local floorB = math.floor(tonumber(roomB and roomB.floor) or 0)
+    if floorA ~= floorB then return 0 end
+    return ClampLoopRate(loopRates[floorA + 1], loopRates[1] or DEFAULT_LOOP_RATE)
+end
+
 local function CopyValue(value, seen)
     if type(value) ~= "table" then return value end
     seen = seen or {}
@@ -158,7 +177,7 @@ function PCGDungeonGraph.BuildDelaunay(layout)
     return { tets = finalTets, edges = edges, warning = warning, scale = scale }
 end
 
-function PCGDungeonGraph.BuildMst(layout, delaunay)
+function PCGDungeonGraph.BuildMst(layout, delaunay, loopRates)
     local rooms, inputEdges = layout.rooms or {}, delaunay.edges or {}
     local roomCount = #rooms
     if roomCount < 2 or #inputEdges == 0 then
@@ -210,7 +229,8 @@ function PCGDungeonGraph.BuildMst(layout, delaunay)
     local loops = {}
     for _, edge in ipairs(inputEdges) do
         if not mstSources[edge.sourcePrimitive]
-            and PCGRandomStream.Rand(PCGRandomStream.Affine(19037, edge.sourcePrimitive, 37.719)) < 0.125 then
+            and PCGRandomStream.Rand(PCGRandomStream.Affine(19037, edge.sourcePrimitive, 37.719))
+                < LoopRateForEdge(layout, edge, loopRates) then
             loops[#loops + 1] = {
                 a = edge.a, b = edge.b, weight = edge.weight,
                 isMst = false, isLoop = true, isFallback = false,
@@ -292,7 +312,7 @@ function PCGDungeonGraph.BuildAuthored(layout, editorEdges)
     }
 end
 
-function PCGDungeonGraph.Generate(layout, editorEdges)
+function PCGDungeonGraph.Generate(layout, editorEdges, loopRates)
     if editorEdges ~= nil then
         local graph = PCGDungeonGraph.BuildAuthored(layout, editorEdges)
         return {
@@ -301,7 +321,7 @@ function PCGDungeonGraph.Generate(layout, editorEdges)
         }
     end
     local delaunay = PCGDungeonGraph.BuildDelaunay(layout)
-    return { delaunay = delaunay, graph = PCGDungeonGraph.BuildMst(layout, delaunay) }
+    return { delaunay = delaunay, graph = PCGDungeonGraph.BuildMst(layout, delaunay, loopRates) }
 end
 
 return PCGDungeonGraph
