@@ -3,18 +3,22 @@ local ThemePacks = require("Config.ThemePacks")
 local TopicSeeds = require("Config.TopicSeeds")
 
 local BuiltinRoomRules = {
-    SCHEMA_VERSION = 1,
-    SOURCE = "builtin-room-rules-v1",
+    SCHEMA_VERSION = 2,
+    SOURCE = "builtin-room-rules-v2",
 }
 
-local function Rule(kind, count, chance, scaleMin, scaleMax)
-    return {
+local function Rule(kind, count, chance, scaleMin, scaleMax, extra)
+    local rule = {
         kind = kind,
         count = count or 1,
         chance = chance == nil and 1 or chance,
         scaleMin = scaleMin or 0.92,
         scaleMax = scaleMax or scaleMin or 1.0,
     }
+    if extra then
+        for key, value in pairs(extra) do rule[key] = value end
+    end
+    return rule
 end
 
 local SCHOOL_ROOMS = {
@@ -42,6 +46,82 @@ local SCHOOL_ROOMS = {
         key = "cafeteria", name = "食堂", purpose = "使用餐桌和舞台构成大型公共活动空间。",
         sortOrder = 5, roleKeys = { "boss" }, ruleKey = "boss",
         minCount = 1, maxCount = 1, minArea = 80,
+    },
+}
+
+local TEMPLE_ROOMS = {
+    {
+        key = "pilgrimage-gate", name = "朝圣门厅",
+        purpose = "以中央门环、对称陶瓮和墙面徽章构成进入神域的第一处仪式空间。",
+        sortOrder = 1, roleKeys = { "entrance" }, ruleKey = "entrance",
+        minCount = 1, maxCount = 1, minArea = 64,
+        propRules = {
+            Rule("ring", 1, 1.0, 1.0, 1.0, { layout = "focal", rot = 0 }),
+            Rule("templeUrn", 4, 1.0, 0.82, 1.02, { layout = "perimeter", step = 3, max = 4 }),
+            Rule("templeMedallion", 1, 1.0, 0.94, 1.02, { layout = "focal", tries = 30 }),
+        },
+    },
+    {
+        key = "rune-sanctum", name = "符文圣坛",
+        purpose = "以中央圣晶、四方石碑和克制的符文秩序形成神殿的静默祭坛。",
+        sortOrder = 2, roleKeys = { "shrine" }, ruleKey = "shrine",
+        minCount = 1, minArea = 52,
+        propRules = {
+            Rule("shrineCrystal", 1, 1.0, 1.0, 1.0, { layout = "focal", tries = 36 }),
+            Rule("obelisk", 4, 1.0, 0.92, 1.04,
+                { layout = "ring", radius = 3, angleJitter = false }),
+            Rule("templeUrn", 2, 1.0, 0.82, 0.96, { layout = "perimeter", step = 4, max = 2 }),
+        },
+    },
+    {
+        key = "astral-gallery", name = "星象观礼台",
+        purpose = "以环形石碑、中心晶簇和规整柱列表达神殿观测天象与迎接神辉的高阶空间。",
+        sortOrder = 3, roleKeys = { "elite" }, ruleKey = "elite",
+        minCount = 1, minArea = 64,
+        propRules = {
+            Rule("obelisk", 6, 1.0, 0.90, 1.04,
+                { layout = "ring", radius = 3.5, angleJitter = false }),
+            Rule("crystalCluster", 1, 1.0, 1.0, 1.18, { layout = "focal", tries = 36 }),
+            Rule("pillar", 4, 1.0, 0.94, 1.04,
+                { layout = "grid", step = 4, centered = true, skipCenter = true, rot = 0, max = 4 }),
+        },
+    },
+    {
+        key = "relic-vault", name = "神藏宝库",
+        purpose = "以中央宝箱、环形金堆和低亮度晶簇构成庄严而不喧闹的圣物收藏空间。",
+        sortOrder = 4, roleKeys = { "treasure" }, ruleKey = "treasure",
+        minCount = 1, minArea = 48,
+        propRules = {
+            Rule("chest", 1, 1.0, 1.0, 1.0, { layout = "focal", tries = 36 }),
+            Rule("goldPile", 3, 1.0, 0.84, 1.16,
+                { layout = "ring", radius = 2.5, angleJitter = false }),
+            Rule("crystalCluster", 1, 1.0, 0.82, 1.02, { layout = "focal", tries = 30 }),
+        },
+    },
+    {
+        key = "guardian-seat", name = "守护神座",
+        purpose = "以边缘守护巨像、中央晶碑和环形圣火鼎构成神殿的最终试炼空间。",
+        sortOrder = 5, roleKeys = { "boss" }, ruleKey = "boss",
+        minCount = 1, maxCount = 1, minArea = 80,
+        propRules = {
+            Rule("guardianStatue", 1, 1.0, 1.18, 1.30,
+                { layout = "edgeFocal", side = "south", edgeInset = 2, rot = 0, tries = 36 }),
+            Rule("brazier", 6, 1.0, 0.92, 1.04,
+                { layout = "ring", radius = 3.5, angleJitter = false, anchor = "bossCrystal", anchorScale = 1.12 }),
+        },
+    },
+    {
+        key = "processional-ruin", name = "断垣祭仪殿",
+        purpose = "以柱阵、残拱和断柱保留神殿仪式轴线，作为普通战斗与秘密区域的统一基底。",
+        sortOrder = 6, roleKeys = { "combat", "secret" }, ruleKey = "default",
+        defaultGroup = true, minCount = 1, minArea = 35,
+        propRules = {
+            Rule("pillar", 4, 1.0, 0.94, 1.06,
+                { layout = "grid", step = 3, centered = true, skipCenter = true, rot = 0, max = 4 }),
+            Rule("archRuin", 1, 1.0, 0.95, 1.10, { layout = "focal", tries = 30 }),
+            Rule("brokenPillar", 2, 1.0, 0.90, 1.12, { layout = "focal", tries = 28 }),
+            Rule("templeUrn", 2, 1.0, 0.80, 0.98, { layout = "perimeter", step = 4, max = 2 }),
+        },
     },
 }
 
@@ -121,6 +201,7 @@ local HOSPITAL_ROOMS = {
 
 local REGISTRY = {
     dungeon = {},
+    temple = TEMPLE_ROOMS,
     hospital = HOSPITAL_ROOMS,
     school = SCHOOL_ROOMS,
 }
@@ -133,8 +214,18 @@ end
 
 local function CopyRules(values)
     local result = {}
+    local extraKeys = {
+        "layout", "step", "rowStep", "colStep", "margin", "max", "rot", "centered",
+        "skipCenter", "stepThreshold", "stepBig", "stepSmall", "radius", "angleSpan",
+        "angleJitter", "anchor", "anchorScale", "anchorMinDim", "anchorRot", "anchorRotAxis",
+        "tries", "side", "edgeInset",
+    }
     for _, value in ipairs(values or {}) do
-        result[#result + 1] = Rule(value.kind, value.count, value.chance, value.scaleMin, value.scaleMax)
+        local extra = {}
+        for _, key in ipairs(extraKeys) do
+            if value[key] ~= nil then extra[key] = value[key] end
+        end
+        result[#result + 1] = Rule(value.kind, value.count, value.chance, value.scaleMin, value.scaleMax, extra)
     end
     return result
 end

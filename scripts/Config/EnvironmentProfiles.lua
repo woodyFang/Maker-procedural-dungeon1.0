@@ -18,7 +18,7 @@
 -- validity. A theme that omits a layer simply skips that pass.
 
 local EnvironmentProfiles = {
-    SCHEMA_VERSION = 2,
+    SCHEMA_VERSION = 3,
 }
 
 -- Layer vocabulary (all optional per theme):
@@ -45,6 +45,21 @@ local EnvironmentProfiles = {
 --
 -- ambientClutter  Depth-gated floor scatter for atmosphere (bones-style).
 --                 { kind, requireThemeFlag, chanceBase, chanceDensity, minDepth, avoidCorridor, scaleMin, scaleMax }
+--
+-- structureRuin   Structural weathering applied while walls are batched: a
+--                 fraction of eligible wall cells collapse to a partial height
+--                 with rubble on the break. Never applies to doorway-adjacent
+--                 or stair-contract walls, so connectivity reads intact.
+--                 { brokenWallChance, heightMin, heightMax, rubbleChance }
+--
+-- atmosphere      Declares which AtmosphereFX passes run for this setting and
+--                 where. Palette-level colors/counts live in theme.particles /
+--                 theme.fx; this block only owns placement policy.
+--                 { particles = { perFloorCap, totalCap, size, emissive },
+--                   godRays = { roomTypes, minDim, maxPerFloor },
+--                   runeCircles = { roomTypes },
+--                   animatedProps = { <propKind> = true, ... },
+--                   pulse = { min, max, speed } (fallback envelope) }
 local PROFILES = {
     dungeon = {
         -- Shared structure-tone algorithm parameters. The renderer owns the
@@ -174,6 +189,101 @@ local PROFILES = {
         wallFixtures = { mode = "spaced", channel = "pack", spacing = 3, proximity = 5 },
     },
 }
+
+-- 神殿遗迹 (temple) keeps every ruins layer and stacks the showcase-only ones
+-- on top: structural weathering, the dynamic atmosphere, and the signature
+-- set pieces the ruins room decorator reads as data.
+local function ExtendProfile(base, overrides)
+    local result = {}
+    for key, value in pairs(base) do result[key] = value end
+    for key, value in pairs(overrides) do result[key] = value end
+    return result
+end
+
+PROFILES.temple = ExtendProfile(PROFILES.dungeon, {
+    -- A fully separate architectural kit: polished rosette paving with faint
+    -- rune inlays inside rooms, dressed masonry (skirting + crown band) under
+    -- a stepped cornice, pedimented doorways, fire sconces instead of stick
+    -- torches. Geometry keys live in DungeonGeometryLibrary, materials in
+    -- ProceduralMaterialRules; the batcher consumes this like a pack kit.
+    structure = {
+        floorGeometry = "templeFloor", floorMaterial = "templeFloor",
+        floorAccentGeometry = "templeFloorRosette", floorAccentEvery = 2,
+        floorInlay = { geometry = "templeFloorInlay", every = 3, colorField = "runeColor", dim = 0.45 },
+        wallGeometry = "templeWall", wallMaterial = "templeWall",
+        wallAccentGeometry = "templeWallPier", wallAccentEvery = 3, wallAccentGain = 1.06,
+        capGeometry = "templeWallCap", capMaterial = "templeCap",
+        doorPostGeometry = "templeDoorPost", doorLintelGeometry = "templeDoorLintel",
+        doorMaterial = "templeCap",
+        wallHeight = 2.0, wallHeightVariation = 0.06,
+        -- Wall lamp: hanging gilt lantern whose glass capsule carries the glow
+        -- (and the point light) instead of an open flame pair.
+        torchGeometry = "templeLantern", torchMaterial = "gild", torchColor = 0xb08d52,
+        torchGlow = { geometry = "templeLanternGlass", height = 1.675, out = 0.16 },
+        flameGeometry = "templeFlame", flameCoreGeometry = "templeFlameCore",
+    },
+    -- Fluted columns with gilt rings and the great tripod cauldron replace
+    -- the plain ruins pillar/brazier; the boss spike cluster becomes a dais
+    -- with a levitated crystal monolith. Placement mechanics stay shared.
+    propStyle = {
+        pillar = { geometry = "templePillar", trimGeometry = "templePillarTrim",
+            trimMaterial = "gild", trimColor = 0xd8b46a },
+        brazier = { geometry = "templeBrazier", color = 0x6e5428 },
+        bossCrystal = { core = "templeBossCore", crystal = "templeBossCrystal" },
+    },
+    -- Floating-bead tier markers instead of the ruins spike spires.
+    spawnVisual = {
+        geometry = "templeSpawn",
+        material = "glow",
+        colors = { 0xcf6a3a, 0xe0483e, 0xa678ff },
+        scales = { 0.85, 1.0, 1.2 },
+    },
+    -- Scene-richness overrides: gilt sigil plaques between the lanterns,
+    -- ceremonial amphorae in deep rooms, and waymark runes along corridors.
+    wallAccents = {
+        { kind = "templeMedallion", chanceBase = 0.05, chanceDensity = 0.06,
+            scaleMin = 0.92, scaleMax = 1.06 },
+        { kind = "icicle", requireThemeFlag = "icicles",
+            chanceBase = 0.06, chanceDensity = 0.08, scaleMin = 0.70, scaleMax = 1.30 },
+    },
+    ambientClutter = {
+        kind = "templeUrn", chanceBase = 0.015, chanceDensity = 0.017, minDepth = 1,
+        avoidCorridor = true, scaleMin = 0.80, scaleMax = 1.08,
+    },
+    corridorScatter = {
+        { kind = "pathRune", chanceBase = 0.030, chanceDensity = 0.032, rotMode = "quarter",
+            scaleMin = 0.88, scaleMax = 1.10 },
+    },
+    emphasis = {
+        kind = "templeBanner", minSpacing = 4,
+        roleTargets = { elite = 2, boss = 4 },
+    },
+    structureRuin = {
+        brokenWallChance = 0.055, heightMin = 0.32, heightMax = 0.60, rubbleChance = 0.7,
+    },
+    atmosphere = {
+        particles = { perFloorCap = 240, totalCap = 420, size = 0.052, emissive = 1.9 },
+        godRays = {
+            roomTypes = { entrance = true, shrine = true, boss = true, treasure = true },
+            minDim = 6, maxPerFloor = 5,
+        },
+        runeCircles = { roomTypes = { boss = true, shrine = true } },
+        animatedProps = { ring = true, shrineCrystal = true },
+        pulse = { min = 0.88, max = 1.18, speed = 1.1 },
+    },
+    -- Signature set pieces consumed by the ruins room decorator. A profile
+    -- without this block (the plain dungeon) keeps the original dressing.
+    roomSetPieces = {
+        bossGuardian = { kind = "guardianStatue", scale = 1.25, edgeInset = 2 },
+        eliteRing = { kind = "obelisk", count = 4, minDim = 8, radiusInset = 2.5,
+            scaleMin = 0.92, scaleMax = 1.04 },
+        treasureFocal = { kind = "crystalCluster", count = 2, scaleMin = 0.95, scaleMax = 1.30 },
+        treasureGold = { kind = "goldPile", count = 2, scaleMin = 0.85, scaleMax = 1.25 },
+        shrineFocal = { kind = "crystalCluster", count = 2, scaleMin = 0.75, scaleMax = 1.05 },
+        combatArch = { kind = "archRuin", minDim = 12, chance = 0.4, scaleMin = 0.95, scaleMax = 1.10 },
+        combatBroken = { kind = "brokenPillar", minDim = 8, chance = 0.55, scaleMin = 0.90, scaleMax = 1.12 },
+    },
+})
 
 function EnvironmentProfiles.Resolve(settingKey)
     return PROFILES[settingKey] or PROFILES.dungeon

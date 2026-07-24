@@ -388,6 +388,12 @@ local function TestHospitalPropMigration()
     Check(kinds.floorStripe or kinds.floorArrow, "hospital generated no corridor markings")
 end
 
+local TEMPLE_SET_PIECES = {
+    obelisk = true, guardianStatue = true, crystalCluster = true,
+    archRuin = true, brokenPillar = true, templeBanner = true,
+    templeMedallion = true, templeUrn = true, goldPile = true, pathRune = true,
+}
+
 local function TestDungeonPropBlueprintCoverage()
     for _, theme in ipairs({ "ancient", "molten", "frost", "grim", "verdant" }) do
         local dungeon = DungeonGenerator.Generate({
@@ -399,9 +405,46 @@ local function TestDungeonPropBlueprintCoverage()
             for _, prop in ipairs(layer.props) do
                 Check(PropBlueprints.Get(prop.kind) ~= nil,
                     string.format("theme %s has unsupported prop %s", theme, tostring(prop.kind)))
+                -- The showcase kit belongs to 神殿遗迹 only; the plain ruins
+                -- setting must keep its original dressing.
+                Check(not TEMPLE_SET_PIECES[prop.kind],
+                    string.format("dungeon leaked temple set piece %s", tostring(prop.kind)))
             end
         end
     end
+end
+
+local function TestTempleSettingCoverage()
+    local seen = {}
+    for _, theme in ipairs({ "templeGold", "templeMagma", "templeFrost", "templeGrim", "templeVine" }) do
+        local dungeon = DungeonGenerator.Generate({
+            seed = 90100 + #theme * 131, floorCount = 2, roomCount = 24,
+            settingKey = "temple", theme = theme,
+        })
+        CheckValid(dungeon, "temple coverage " .. theme)
+        for _, layer in ipairs(dungeon.layers) do
+            for _, prop in ipairs(layer.props) do
+                seen[prop.kind] = true
+                Check(PropBlueprints.Get(prop.kind) ~= nil,
+                    string.format("temple theme %s has unsupported prop %s", theme, tostring(prop.kind)))
+            end
+        end
+        local resolved = Themes.Resolve("temple", theme)
+        Check(resolved.bloom == true, "temple palette " .. theme .. " must enable bloom")
+        Check(type(resolved.fx) == "table", "temple palette " .. theme .. " is missing fx data")
+        Check(type(resolved.fx.emissiveScale) == "number" and resolved.fx.emissiveScale < 0.6,
+            "temple palette " .. theme .. " emissive budget is too high")
+        Check(type(resolved.particles) == "table" and (resolved.particles.n or 0) > 0,
+            "temple palette " .. theme .. " is missing its particle field")
+    end
+    for kind in pairs(TEMPLE_SET_PIECES) do
+        Check(seen[kind], "temple setting never generated set piece " .. kind)
+    end
+    local profile = EnvironmentProfiles.Resolve("temple")
+    Check(type(profile.atmosphere) == "table" and type(profile.structureRuin) == "table",
+        "temple profile is missing its showcase layers")
+    Check(EnvironmentProfiles.Resolve("dungeon").atmosphere == nil,
+        "plain dungeon profile must not carry the temple atmosphere")
 end
 
 local function TestSchoolThemePackStability()
@@ -627,12 +670,19 @@ local function TestBuiltinRoomRuleFlow()
     Check(materialized ~= nil and changed, mergeReason)
     local hospitalTopicId = TopicSeeds.IdForSetting("hospital")
     local schoolTopicId = TopicSeeds.IdForSetting("school")
+    local templeTopicId = TopicSeeds.IdForSetting("temple")
     local hospitalRooms = LocalRequirementPlanner.GroupsForTopic(materialized, hospitalTopicId)
     local schoolRooms = LocalRequirementPlanner.GroupsForTopic(materialized, schoolTopicId)
+    local templeRooms = LocalRequirementPlanner.GroupsForTopic(materialized, templeTopicId)
     Check(#hospitalRooms == 8, "hospital seed rooms or manual room were not materialized")
     Check(#schoolRooms == 5, "school seed rooms were not materialized")
+    Check(#templeRooms == 6, "temple signature rooms were not materialized")
     Check(#LocalRequirementPlanner.GroupsForTopic(materialized, TopicSeeds.IdForSetting("dungeon")) == 0,
-        "hospital or school seed room leaked into dungeon")
+        "hospital, school or temple seed room leaked into dungeon")
+    local shrineSeed = CustomizationStore.FindById(templeRooms, "seed-temple-rune-sanctum")
+    Check(shrineSeed and shrineSeed.propRules[2].layout == "ring"
+            and shrineSeed.propRules[2].radius == 3,
+        "temple structured room layout was not materialized")
 
     local foundManual, foundHospitalBed, foundClassroom = false, false, false
     for _, room in ipairs(hospitalRooms) do
@@ -665,8 +715,13 @@ local function TestBuiltinRoomRuleFlow()
     local normalized = CustomizationStore.Normalize({ roomGroups = afterManualEdit })
     local normalizedHospital = LocalRequirementPlanner.GroupsForTopic(normalized.roomGroups, hospitalTopicId)
     local normalizedSchool = LocalRequirementPlanner.GroupsForTopic(normalized.roomGroups, schoolTopicId)
-    Check(#normalizedHospital == 8 and #normalizedSchool == 5,
+    local normalizedTemple = LocalRequirementPlanner.GroupsForTopic(normalized.roomGroups, templeTopicId)
+    Check(#normalizedHospital == 8 and #normalizedSchool == 5 and #normalizedTemple == 6,
         "seed room scopes were lost during persistence normalization")
+    local normalizedShrine = CustomizationStore.FindById(normalizedTemple, "seed-temple-rune-sanctum")
+    Check(normalizedShrine and normalizedShrine.propRules[2].layout == "ring"
+            and normalizedShrine.propRules[2].radius == 3,
+        "temple structured layout fields were lost during persistence normalization")
     local preservedBuiltin = CustomizationStore.FindById(normalized.roomGroups, "seed-hospital-ward")
     Check(preservedBuiltin and preservedBuiltin.source == "seed",
         "seed room lifecycle source was lost during normalization")
@@ -692,6 +747,17 @@ local function TestBuiltinRoomRuleFlow()
                 ["seed-school-library"] = "schoolBookshelf",
                 ["seed-school-laboratory"] = "schoolLabBench",
                 ["seed-school-cafeteria"] = "schoolStage",
+            },
+        },
+        {
+            settingKey = "temple", theme = "templeGold", rooms = normalizedTemple,
+            expected = {
+                ["seed-temple-pilgrimage-gate"] = "ring",
+                ["seed-temple-rune-sanctum"] = "shrineCrystal",
+                ["seed-temple-astral-gallery"] = "obelisk",
+                ["seed-temple-relic-vault"] = "chest",
+                ["seed-temple-guardian-seat"] = "guardianStatue",
+                ["seed-temple-processional-ruin"] = "pillar",
             },
         },
     }
@@ -1050,6 +1116,7 @@ end
 local function TestThemeQualityProfiles()
     local cases = {
         { setting = "dungeon", theme = "ancient", required = { "floorScatter", "emphasis", "wallFixtures", "ambientClutter" } },
+        { setting = "temple", theme = "templeGold", required = { "floorScatter", "emphasis", "wallFixtures", "ambientClutter", "atmosphere", "structureRuin" } },
         { setting = "hospital", theme = "sterile", required = { "floorScatter", "emphasis", "wallFixtures", "ambientClutter", "corridorScatter" } },
         { setting = "school", theme = "schoolDay", required = { "floorScatter", "emphasis", "wallFixtures", "ambientClutter" } },
     }
@@ -1145,7 +1212,7 @@ local function TestCustomizationNormalization()
         nextCustomPaletteId = 2,
         activeCustomSettingId = "custom-4",
     })
-    Check(#data.customSettings == 5, "customization normalization kept duplicate or invalid themes")
+    Check(#data.customSettings == 6, "customization normalization kept duplicate or invalid themes")
     Check(data.customSettings[1].label == "Ice Temple", "custom theme label was not trimmed")
     Check(data.customSettings[1].baseSettingKey == "hospital", "valid base setting was lost")
     Check(data.customSettings[1].packStatus == "draft", "draft ThemePack status was lost")
@@ -1408,6 +1475,7 @@ function GenerationTests.Run()
         { "six-floor shaft regression", TestSixFloorShaftRegression },
         { "hospital prop migration", TestHospitalPropMigration },
         { "dungeon prop blueprints", TestDungeonPropBlueprintCoverage },
+        { "temple setting coverage", TestTempleSettingCoverage },
         { "school ThemePack stability", TestSchoolThemePackStability },
         { "school AI requirement flow", TestSchoolRequirementPlannerFlow },
         { "built-in room rule flow", TestBuiltinRoomRuleFlow },

@@ -918,6 +918,10 @@ function SceneLayoutEditor:AddRoomAt(gridX, gridY)
         cx = Snap(gridX), cy = Snap(gridY), w = 12, h = 9, floor = self.floor,
         locked = false, roleHint = nil, roomGroupId = nil,
     }
+    -- A freshly added region has no path yet. Generation rejects unreachable
+    -- normal rooms, so mark disconnected rooms as secret to survive the
+    -- rebuild; connecting a path later clears the flag automatically.
+    self:MarkDisconnectedRoomsSecret()
     self.selected, self.selectedLink = #self.rooms, nil
     self:NotifySelection()
     self:Commit()

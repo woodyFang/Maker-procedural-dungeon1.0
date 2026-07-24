@@ -182,6 +182,259 @@ G.bone = M({
     X(BoxGeometry(0.07, 0.05, 0.06), -0.12, 0.03, -0.03),
 })
 
+-- Ruins signature kit. Square-taper monoliths, fractured columns and the boss
+-- guardian are authored from convex point clouds so the silhouettes stay
+-- faceted; the glow layers (runes, eyes, crystals) are separate GEO entries so
+-- they land in the emissive vertex-colour batches.
+local function TaperBox(bottomWidth, topWidth, height)
+    local a, b = bottomWidth * 0.5, topWidth * 0.5
+    return D(ConvexGeometry({
+        Vector3(-a, 0, -a), Vector3(a, 0, -a), Vector3(a, 0, a), Vector3(-a, 0, a),
+        Vector3(-b, height, -b), Vector3(b, height, -b), Vector3(b, height, b), Vector3(-b, height, b),
+    }))
+end
+
+-- Rune stele: a round-crowned monolith (no pyramid tip), gilt collars and
+-- circular rune discs — the temple's "obelisk" without a single sharp cone.
+G.obelisk = M({
+    X(ChamferBox(0.64, 0.14, 0.48, 0.030), 0, 0, 0),
+    X(ChamferBox(0.50, 0.10, 0.36, 0.020), 0, 0.14, 0),
+    X(BoxGeometry(0.40, 1.52, 0.22), 0, 1.00, 0),
+    X(CylinderGeometry(0.20, 0.20, 0.22, 14, 1, false, 0, math.pi),
+        0, 1.76, 0, math.pi * 0.5, 0, math.pi * 0.5),
+})
+G.obeliskCollar = M({
+    X(BoxGeometry(0.44, 0.055, 0.26), 0, 0.32, 0),
+    X(BoxGeometry(0.44, 0.055, 0.26), 0, 1.44, 0),
+})
+G.obeliskRune = M({
+    X(CircleGeometry(0.055, 14), 0, 0.62, 0.115),
+    X(CircleGeometry(0.062, 14), 0, 0.95, 0.115),
+    X(CircleGeometry(0.055, 14), 0, 1.28, 0.115),
+    X(RingGeometry(0.062, 0.095, 20), 0, 1.60, 0.115),
+    X(CircleGeometry(0.055, 14), 0, 0.62, -0.115, 0, math.pi, 0),
+    X(CircleGeometry(0.062, 14), 0, 0.95, -0.115, 0, math.pi, 0),
+    X(CircleGeometry(0.055, 14), 0, 1.28, -0.115, 0, math.pi, 0),
+    X(RingGeometry(0.062, 0.095, 20), 0, 1.60, -0.115, 0, math.pi, 0),
+})
+G.brokenPillar = M({
+    X(ChamferBox(0.68, 0.15, 0.68, 0.035), 0, 0, 0),
+    X(CylinderGeometry(0.21, 0.25, 0.74, 10), 0, 0.51, 0),
+    X(CylinderGeometry(0.15, 0.20, 0.24, 10), 0.03, 0.97, -0.02, 0.10, 0, 0.16),
+    X(CylinderGeometry(0.19, 0.19, 0.46, 10), 0.58, 0.19, 0.14, math.pi * 0.5, 0.55, 0),
+    X(IcosahedronGeometry(0.11, 0), -0.42, 0.06, 0.30, 0, 0.8, 0),
+    X(IcosahedronGeometry(0.08, 0), 0.34, 0.05, -0.36, 0.5, 0, 0),
+})
+G.guardianStatue = M({
+    X(ChamferBox(1.30, 0.22, 1.02, 0.05), 0, 0, 0),
+    X(TaperBox(0.96, 0.62, 0.72), 0, 0.22, 0),
+    X(TaperBox(0.60, 0.80, 0.72), 0, 0.92, 0),
+    X(ChamferBox(1.12, 0.20, 0.44, 0.05), 0, 1.60, 0),
+    X(BoxGeometry(0.19, 0.86, 0.24), -0.55, 1.22, 0.02, 0, 0, 0.10),
+    X(BoxGeometry(0.19, 0.86, 0.24), 0.55, 1.22, 0.02, 0, 0, -0.10),
+    X(BoxGeometry(0.11, 1.02, 0.05), 0, 0.86, 0.40),
+    X(BoxGeometry(0.36, 0.07, 0.09), 0, 1.40, 0.40),
+    X(SphereGeometry(0.055, 7, 5), 0, 1.48, 0.40),
+    X(ChamferBox(0.34, 0.38, 0.34, 0.06), 0, 1.80, 0),
+    X(BoxGeometry(0.06, 0.26, 0.44), 0, 2.14, -0.02),
+})
+G.guardianEyes = M({
+    X(BoxGeometry(0.055, 0.035, 0.02), -0.078, 1.98, 0.165),
+    X(BoxGeometry(0.055, 0.035, 0.02), 0.078, 1.98, 0.165),
+})
+G.archRuin = M({
+    X(ChamferBox(0.30, 1.92, 0.30, 0.045), -0.78, 0, 0),
+    X(ChamferBox(0.30, 1.42, 0.30, 0.045), 0.78, 0, 0),
+    X(BoxGeometry(0.58, 0.24, 0.28), -0.52, 1.98, 0, 0, 0, -0.10),
+    X(ChamferBox(0.40, 0.30, 0.30, 0.04), 0.34, 0, 0.42, 0, 0.6, 0),
+    X(IcosahedronGeometry(0.12, 0), 0.10, 0.05, -0.34, 0, 1.1, 0),
+    X(IcosahedronGeometry(0.09, 0), 0.62, 0.04, -0.12, 0.4, 0, 0),
+})
+G.crystalCluster = M({
+    X(OctahedronGeometry(0.16, 0), 0, 0.28, 0, 0, 0.3, 0.10, 1, 1.9, 1),
+    X(OctahedronGeometry(0.11, 0), 0.22, 0.18, 0.10, 0.18, 0.9, -0.22, 1, 1.7, 1),
+    X(OctahedronGeometry(0.09, 0), -0.19, 0.14, 0.14, -0.24, 0.4, 0.16, 1, 1.6, 1),
+    X(OctahedronGeometry(0.07, 0), -0.06, 0.10, -0.22, 0.28, 1.4, 0.12, 1, 1.5, 1),
+})
+G.crystalRocks = M({
+    X(IcosahedronGeometry(0.15, 0), 0.05, 0.05, 0.02, 0, 0.5, 0),
+    X(IcosahedronGeometry(0.10, 0), -0.24, 0.04, -0.08, 0.7, 0, 0),
+    X(IcosahedronGeometry(0.08, 0), 0.24, 0.03, -0.16, 0, 1.2, 0.3),
+})
+
+-- 神殿遗迹 structural kit. A completely separate architectural language from
+-- the rough ruins blocks: polished paving with rune inlays, dressed masonry
+-- with skirting and crown bands, a stepped cornice, fluted columns with gilt
+-- rings, pedimented doorways, wall-mounted fire sconces, a great tripod
+-- cauldron and long processional banners. Wall geometry is authored in UNIT
+-- height (the batcher scales sy to the storey wall height), caps and doors in
+-- absolute metres like their ruins counterparts.
+G.templeFloor = X(ChamferBox(0.965, 0.16, 0.965, 0.020), 0, -0.16, 0)
+G.templeFloorRosette = M({
+    X(ChamferBox(0.965, 0.16, 0.965, 0.020), 0, -0.16, 0),
+    X(BoxGeometry(0.36, 0.016, 0.36), 0, 0.004, 0, 0, math.pi * 0.25, 0),
+    X(BoxGeometry(0.13, 0.020, 0.13), 0, 0.006, 0, 0, 0, 0),
+})
+G.templeFloorInlay = M({
+    X(BoxGeometry(0.24, 0.014, 0.055), 0, 0.010, 0, 0, math.pi * 0.25, 0),
+    X(BoxGeometry(0.055, 0.014, 0.24), 0, 0.010, 0, 0, math.pi * 0.25, 0),
+})
+-- Wall v4 (unit height), Roman curtain-and-pier rhythm: brick coursing
+-- panels fill between engaged columns that repeat at an even interval along
+-- every run (the batcher swaps in templeWallPier on the accent lattice).
+-- Brick reads through alternating course insets; the pier keeps freestanding
+-- column proportions — plinth, entasis shaft, flared capital, abacus.
+G.templeWall = M({
+    X(ChamferBox(1.04, 0.12, 1.04, 0.020), 0, 0, 0),
+    X(BoxGeometry(1.00, 0.17, 1.00), 0, 0.205, 0),
+    X(BoxGeometry(0.945, 0.17, 0.945), 0, 0.375, 0),
+    X(BoxGeometry(1.00, 0.17, 1.00), 0, 0.545, 0),
+    X(BoxGeometry(0.945, 0.17, 0.945), 0, 0.715, 0),
+    X(ChamferBox(1.005, 0.20, 1.005, 0.018), 0, 0.80, 0),
+})
+G.templeWallPier = M({
+    X(ChamferBox(1.06, 0.14, 1.06, 0.025), 0, 0, 0),
+    X(CylinderGeometry(0.50, 0.545, 0.66, 8), 0, 0.47, 0),
+    X(CylinderGeometry(0.58, 0.50, 0.09, 8), 0, 0.845, 0),
+    X(ChamferBox(1.04, 0.11, 1.04, 0.020), 0, 0.89, 0),
+})
+G.templeWallCap = M({
+    X(ChamferBox(1.05, 0.055, 1.05, 0.015), 0, 0, 0),
+    X(ChamferBox(1.16, 0.075, 1.16, 0.025), 0, 0.055, 0),
+})
+local templePillarParts = {
+    X(ChamferBox(0.80, 0.10, 0.80, 0.030), 0, 0, 0),
+    X(ChamferBox(0.66, 0.09, 0.66, 0.025), 0, 0.10, 0),
+    X(CylinderGeometry(0.185, 0.225, 1.24, 12), 0, 0.86, 0),
+    X(CylinderGeometry(0.30, 0.20, 0.12, 12), 0, 1.545, 0),
+    X(ChamferBox(0.60, 0.11, 0.60, 0.028), 0, 1.665, 0),
+}
+for k = 0, 5 do
+    local angle = k * math.pi / 3
+    templePillarParts[#templePillarParts + 1] = X(BoxGeometry(0.045, 1.18, 0.045),
+        math.cos(angle) * 0.205, 0.86, math.sin(angle) * 0.205, 0, -angle, 0)
+end
+G.templePillar = M(templePillarParts)
+G.templePillarTrim = M({
+    X(TorusGeometry(0.245, 0.042, 8, 16), 0, 0.235, 0, math.pi * 0.5, 0, 0),
+    X(TorusGeometry(0.205, 0.034, 8, 16), 0, 1.475, 0, math.pi * 0.5, 0, 0),
+})
+G.templeDoorPost = M({
+    X(ChamferBox(0.34, 0.12, 0.34, 0.025), 0, 0, 0),
+    X(TaperBox(0.27, 0.21, 1.44), 0, 0.12, 0),
+    X(ChamferBox(0.32, 0.10, 0.32, 0.020), 0, 1.56, 0),
+    X(ChamferBox(0.36, 0.06, 0.36, 0.015), 0, 1.66, 0),
+})
+-- Segmental arch crown over the lintel beam (grave-headstone transform, with
+-- local X flattened so the rise stays low even on wide, sx-scaled openings).
+G.templeDoorLintel = M({
+    X(ChamferBox(1, 0.15, 0.34, 0.028), 0, 0, 0),
+    X(CylinderGeometry(0.5, 0.5, 0.26, 16, 1, false, 0, math.pi),
+        0, 0.15, 0, math.pi * 0.5, 0, math.pi * 0.5, 0.44, 1, 1),
+})
+-- Hanging gilt lantern (wall lamp v2): a high bracket arm, two chain links
+-- and an open cage — cap dome, three ribs, twin rings, bottom plate and
+-- finial. The glowing glass capsule (templeLanternGlass) hangs inside it via
+-- structure.torchGlow, so the lamp reads as a lit fixture, not a floating dot.
+-- Authored relative to the torch mount point (baseY + 1.02), +Z faces out.
+local templeLanternParts = {
+    X(ChamferBox(0.15, 0.20, 0.045, 0.012), 0, 0.78, 0.005),
+    X(BoxGeometry(0.045, 0.045, 0.22), 0, 0.945, 0.10),
+    X(CylinderGeometry(0.014, 0.014, 0.09, 6), 0, 0.90, 0.16),
+    X(CylinderGeometry(0.012, 0.012, 0.07, 6), 0, 0.83, 0.16),
+    X(SphereGeometry(0.075, 8, 6), 0, 0.795, 0.16, 0, 0, 0, 1, 0.62, 1),
+    X(CylinderGeometry(0.100, 0.115, 0.035, 8), 0, 0.775, 0.16),
+    X(TorusGeometry(0.105, 0.014, 6, 12), 0, 0.755, 0.16, math.pi * 0.5, 0, 0),
+    X(TorusGeometry(0.105, 0.014, 6, 12), 0, 0.555, 0.16, math.pi * 0.5, 0, 0),
+    X(CylinderGeometry(0.100, 0.085, 0.030, 8), 0, 0.535, 0.16),
+    X(SphereGeometry(0.035, 7, 5), 0, 0.505, 0.16),
+}
+for k = 0, 2 do
+    local angle = math.rad(30 + k * 120)
+    templeLanternParts[#templeLanternParts + 1] = X(BoxGeometry(0.016, 0.20, 0.016),
+        math.cos(angle) * 0.104, 0.655, 0.16 + math.sin(angle) * 0.104)
+end
+G.templeLantern = M(templeLanternParts)
+G.templeLanternGlass = M({
+    X(CylinderGeometry(0.082, 0.096, 0.19, 8), 0, 0, 0),
+    X(SphereGeometry(0.050, 8, 6), 0, -0.005, 0),
+})
+G.templeBrazier = M({
+    X(CylinderGeometry(0.035, 0.050, 0.44, 6), 0.22, 0.22, 0),
+    X(CylinderGeometry(0.035, 0.050, 0.44, 6), -0.11, 0.22, 0.19),
+    X(CylinderGeometry(0.035, 0.050, 0.44, 6), -0.11, 0.22, -0.19),
+    X(SphereGeometry(0.05, 6, 5), 0.23, 0.03, 0),
+    X(SphereGeometry(0.05, 6, 5), -0.115, 0.03, 0.20),
+    X(SphereGeometry(0.05, 6, 5), -0.115, 0.03, -0.20),
+    X(CylinderGeometry(0.40, 0.16, 0.26, 12), 0, 0.50, 0),
+    X(TorusGeometry(0.385, 0.032, 8, 16), 0, 0.635, 0, math.pi * 0.5, 0, 0),
+    X(TorusGeometry(0.070, 0.020, 6, 10), 0.42, 0.60, 0),
+    X(TorusGeometry(0.070, 0.020, 6, 10), -0.42, 0.60, 0),
+})
+G.templeBannerRod = M({
+    X(CylinderGeometry(0.024, 0.024, 0.56, 8), 0, 0, 0, 0, 0, math.pi * 0.5),
+    X(SphereGeometry(0.045, 7, 5), -0.28, 0, 0),
+    X(SphereGeometry(0.045, 7, 5), 0.28, 0, 0),
+})
+G.templeBannerCloth = D(ShapeGeometry({
+    Vector2(-0.185, 0), Vector2(0.185, 0), Vector2(0.185, -0.92),
+    Vector2(0, -1.12), Vector2(-0.185, -0.92),
+}))
+-- Arcane flame orbs replace the cone flames on every temple fire (sconces,
+-- cauldrons, candles): a soft outer teardrop and a hot inner bead.
+G.templeFlame = M({ X(SphereGeometry(0.115, 10, 8), 0, 0.17, 0, 0, 0, 0, 1, 1.32, 1) })
+G.templeFlameCore = M({ X(SphereGeometry(0.062, 8, 6), 0, 0.10, 0, 0, 0, 0, 1, 1.25, 1) })
+-- Spawn marker: twin floor rings, a slim gilt stem and a levitating bead —
+-- the temple's tier marker without a single spike.
+G.templeSpawn = M({
+    X(RingGeometry(0.26, 0.36, 24), 0, 0.016, 0, -math.pi * 0.5, 0, 0),
+    X(CircleGeometry(0.14, 16), 0, 0.020, 0, -math.pi * 0.5, 0, 0),
+    X(CylinderGeometry(0.032, 0.048, 0.34, 8), 0, 0.19, 0),
+    X(SphereGeometry(0.085, 10, 8), 0, 0.46, 0),
+})
+-- Boss centrepiece: stepped dais under a levitated crystal monolith (tall
+-- octahedron column) instead of the jagged spire cluster.
+G.templeBossCore = M({
+    X(ChamferBox(1.34, 0.16, 1.34, 0.05), 0, 0, 0),
+    X(ChamferBox(1.02, 0.14, 1.02, 0.04), 0, 0.16, 0),
+    X(CylinderGeometry(0.34, 0.42, 0.22, 12), 0, 0.41, 0),
+    X(IcosahedronGeometry(0.16, 0), 0.62, 0.34, 0.38, 0, 0.7, 0),
+    X(IcosahedronGeometry(0.12, 0), -0.55, 0.30, -0.42, 0.4, 0, 0),
+})
+G.templeBossCrystal = M({
+    X(OctahedronGeometry(0.34, 0), 0, 1.30, 0, 0, 0, 0, 1, 1.80, 1),
+    X(OctahedronGeometry(0.15, 0), 0, 2.22, 0, 0, 0.6, 0, 1, 1.50, 1),
+    X(TorusGeometry(0.30, 0.028, 8, 22), 0, 1.30, 0, math.pi * 0.5, 0, 0),
+})
+-- Scene-richness kit: wall medallion plaque (gilt ring + glowing sigil core),
+-- ceremonial amphora, treasure-room gold mounds and corridor waymark runes.
+G.templeMedallion = M({
+    X(TorusGeometry(0.16, 0.024, 8, 20), 0, 0, 0),
+    X(TorusGeometry(0.085, 0.016, 6, 14), 0, 0, 0),
+    X(BoxGeometry(0.035, 0.09, 0.03), 0, 0.195, 0),
+})
+G.templeMedallionCore = D(CircleGeometry(0.128, 18))
+G.templeUrn = M({
+    X(CylinderGeometry(0.14, 0.10, 0.06, 10), 0, 0.03, 0),
+    X(SphereGeometry(0.185, 10, 8), 0, 0.27, 0, 0, 0, 0, 1, 1.15, 1),
+    X(CylinderGeometry(0.085, 0.065, 0.14, 8), 0, 0.50, 0),
+    X(TorusGeometry(0.095, 0.018, 6, 12), 0, 0.565, 0, math.pi * 0.5, 0, 0),
+    X(TorusGeometry(0.052, 0.014, 6, 10), 0.20, 0.36, 0, 0, 0, math.pi * 0.35),
+    X(TorusGeometry(0.052, 0.014, 6, 10), -0.20, 0.36, 0, 0, 0, -math.pi * 0.35),
+})
+G.goldPile = M({
+    X(SphereGeometry(0.30, 10, 7), 0, 0.02, 0, 0, 0, 0, 1, 0.38, 1),
+    X(SphereGeometry(0.20, 9, 6), 0.24, 0.02, 0.14, 0, 0.5, 0, 1, 0.40, 1),
+    X(SphereGeometry(0.16, 8, 6), -0.20, 0.015, -0.16, 0, 1.1, 0, 1, 0.42, 1),
+    X(CylinderGeometry(0.045, 0.045, 0.012, 8), 0.34, 0.012, -0.18, 0.2, 0, 0.1),
+    X(CylinderGeometry(0.045, 0.045, 0.012, 8), -0.30, 0.010, 0.24, -0.15, 0, 0.2),
+    X(CylinderGeometry(0.045, 0.045, 0.012, 8), 0.05, 0.015, 0.33, 0.1, 0.4, 0),
+})
+G.pathRune = M({
+    X(RingGeometry(0.15, 0.205, 20), 0, 0.017, 0, -math.pi * 0.5, 0, 0),
+    X(CircleGeometry(0.055, 12), 0, 0.018, 0, -math.pi * 0.5, 0, 0),
+})
+
 -- Hospital kit. These definitions are a direct Lua translation of the
 -- reference project's GEO.* composites. procedural-geometry.md guarantees
 -- Three.js parameter order, metre scale, and parameterized-shape orientation.

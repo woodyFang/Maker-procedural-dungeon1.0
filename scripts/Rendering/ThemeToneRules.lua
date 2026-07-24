@@ -13,7 +13,7 @@ local ROOM_TINT = {
     boss = 0xd8433a,
 }
 
-local SETTING_KEYS = { "dungeon", "hospital", "school" }
+local SETTING_KEYS = { "dungeon", "temple", "hospital", "school" }
 
 local function ClampByte(value)
     return math.max(0, math.min(255, math.floor(value + 0.5)))

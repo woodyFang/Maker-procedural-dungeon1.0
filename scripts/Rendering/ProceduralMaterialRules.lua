@@ -24,6 +24,13 @@ local ProceduralMaterialRules = {
         dungeonFloor = { color = 0xe8e8e8, roughness = 0.70, metalness = 0.00, specular = 0.36 },
         dungeonWall = { color = 0xcccccc, roughness = 0.88, metalness = 0.00, specular = 0.18 },
         dungeonCap = { color = 0xdcdcdc, roughness = 0.82, metalness = 0.01, specular = 0.24 },
+        -- 神殿遗迹: polished paving over dressed matte masonry, with a gilt
+        -- accent metal for column rings, sconces and banner rods. The three
+        -- structural surfaces stay achromatic (NEUTRAL_STRUCTURAL below).
+        templeFloor = { color = 0xe6e6e6, roughness = 0.46, metalness = 0.00, specular = 0.56 },
+        templeWall = { color = 0xd4d4d4, roughness = 0.80, metalness = 0.00, specular = 0.24 },
+        templeCap = { color = 0xe0e0e0, roughness = 0.62, metalness = 0.02, specular = 0.34 },
+        gild = { color = 0xf2d494, roughness = 0.22, metalness = 0.85, specular = 0.90 },
         stone = { color = 0xdddddd, roughness = 0.86, metalness = 0.00, specular = 0.26 },
         hospitalFloor = { color = 0xb0b0b0, roughness = 0.56, metalness = 0.01, specular = 0.52 },
         hospitalWall = { color = 0x9e9e9e, roughness = 0.82, metalness = 0.00, specular = 0.22 },
@@ -92,6 +99,7 @@ function ProceduralMaterialRules.Validate()
     -- never by "colored material × colored tint". See PROFILES comment.
     local NEUTRAL_STRUCTURAL = {
         "dungeonFloor", "dungeonWall", "dungeonCap", "stone",
+        "templeFloor", "templeWall", "templeCap",
         "hospitalFloor", "hospitalWall", "hospitalTrim",
         "schoolFloor", "schoolWall", "schoolTrim",
     }
@@ -142,6 +150,13 @@ function ProceduralMaterialRules.Validate()
     end
     if profiles.schoolTrim.metalness < 0.50 or profiles.schoolWood.metalness > 0.05 then
         return false, "school metal and wood material roles are not separated"
+    end
+    local templeRoughnessGap = profiles.templeWall.roughness - profiles.templeFloor.roughness
+    if templeRoughnessGap < 0.25 or templeRoughnessGap > 0.45 then
+        return false, "temple paving must read clearly more polished than the dressed walls"
+    end
+    if profiles.gild.metalness < 0.75 then
+        return false, "temple gilt trim must stay metallic"
     end
     return true
 end

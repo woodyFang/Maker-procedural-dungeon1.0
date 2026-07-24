@@ -15,6 +15,8 @@ local UI = require("urhox-libs/UI/Core/UI")
 ---@field size string|nil "sm" | "md" | "lg" | "xl" | "fullscreen" (default: "md")
 ---@field dialogWidth number|nil Exact dialog width before viewport clamping
 ---@field dialogMaxHeight number|nil Exact dialog maximum height before viewport clamping
+---@field fillHeight boolean|nil Stretch the dialog between vertical margins
+---@field verticalMargin number|nil Top and bottom margin when fillHeight is enabled
 ---@field closeOnOverlay boolean|nil Close when clicking overlay (default: true)
 ---@field closeOnEscape boolean|nil Close on Escape key (default: true)
 ---@field showCloseButton boolean|nil Show close button (default: true)
@@ -108,11 +110,16 @@ function Modal:Init(props)
     -- Create Yoga-managed content container (NOT added to Modal's Yoga tree)
     -- This Panel manages layout for content children via Yoga flexbox
     local Panel = require("urhox-libs/UI/Widgets/Panel")
+    local ScrollView = require("urhox-libs/UI/Widgets/ScrollView")
     self.contentContainer_ = Panel({
-        flexDirection = "column",
+        width = "100%", flexDirection = "column",
         gap = props.contentGap or 8,
     })
-    self.contentContainer_.parent = self
+    self.contentScroll_ = ScrollView({
+        width = "100%", flexGrow = 1, flexBasis = 0,
+        scrollY = true, showScrollbar = true,
+    })
+    self.contentScroll_:AddChild(self.contentContainer_)
 
     -- Convenience alias: contentChildren_ points to contentContainer_'s children
     self.contentChildren_ = self.contentContainer_.children
@@ -203,22 +210,40 @@ function Modal:RenderModalContent(nvg)
     local alpha = self.animProgress_
     local animScale = 0.9 + 0.1 * self.animProgress_
 
-    -- Draw overlay backdrop
-    local overlayAlpha = math.floor(alpha * 180)
+    -- Draw overlay backdrop. Right-docked editors use a lighter backdrop so
+    -- the 3D preview remains visible beside the form.
+    local backdrop = self.props.backdropColor or { 0, 0, 0, 180 }
+    local overlayAlpha = math.floor(alpha * (backdrop[4] or 180))
     nvgBeginPath(nvg)
     nvgRect(nvg, 0, 0, screenWidth, screenHeight)
-    nvgFillColor(nvg, nvgRGBA(0, 0, 0, overlayAlpha))
+    nvgFillColor(nvg, nvgRGBA(backdrop[1] or 0, backdrop[2] or 0, backdrop[3] or 0, overlayAlpha))
     nvgFill(nvg)
 
     -- Calculate content area width for Yoga layout
     local contentAreaWidth = modalWidth - cpLeft - cpRight
 
-    -- Calculate modal position (centered)
-    local modalHeight = self:CalculateContentHeight(contentAreaWidth) + cpTop + cpBottom + (title and headerHeight or 0) + (self.footerWidget_ and footerHeight or 0)
-    modalHeight = math.min(modalHeight, modalMaxHeight)
+    -- Calculate modal position. Docked editor pages can fill the viewport vertically.
+    local modalHeight
+    local verticalMargin = tonumber(self.props.verticalMargin) or 18
+    if self.props.fillHeight then
+        modalHeight = math.min(modalMaxHeight, math.max(1, screenHeight - verticalMargin * 2))
+    else
+        modalHeight = self:CalculateContentHeight(contentAreaWidth) + cpTop + cpBottom
+            + (title and headerHeight or 0) + (self.footerWidget_ and footerHeight or 0)
+        modalHeight = math.min(modalHeight, modalMaxHeight)
+    end
 
-    local modalX = (screenWidth - modalWidth * animScale) / 2
-    local modalY = (screenHeight - modalHeight * animScale) / 2
+    local modalWidthScaled = modalWidth * animScale
+    local modalHeightScaled = modalHeight * animScale
+    local modalX
+    if self.props.anchor == "right" then
+        local margin = tonumber(self.props.anchorMargin) or 18
+        modalX = screenWidth - modalWidthScaled - margin
+    else
+        modalX = (screenWidth - modalWidthScaled) / 2
+    end
+    local modalY = self.props.fillHeight and verticalMargin
+        or (screenHeight - modalHeightScaled) / 2
 
     -- Apply scale transform
     nvgSave(nvg)
@@ -311,23 +336,21 @@ function Modal:RenderModalContent(nvg)
     end
 
     if #self.contentContainer_.children > 0 then
-        -- Use constrained height so flexGrow/flexShrink and ScrollView work
-        -- correctly within the visible content area. CalculateContentHeight
-        -- (above) already measured natural height with YGUndefined; this call
-        -- is for rendering layout and must respect the actual available space.
-        YGNodeCalculateLayout(self.contentContainer_.node, contentAreaWidth, clipHeight, YGDirectionLTR)
+        -- The full-height editor uses a real ScrollView so its narrow page keeps
+        -- the same top/bottom frame as the left control panel without clipping fields.
+        YGNodeCalculateLayout(self.contentScroll_.node, contentAreaWidth, clipHeight, YGDirectionLTR)
 
-        -- Position the content container for rendering and hit testing
-        self.contentContainer_.renderOffsetX_ = modalX + cpLeft
-        self.contentContainer_.renderOffsetY_ = contentY
-        self.contentContainer_.renderWidth_ = contentAreaWidth
-        self.contentContainer_.renderHeight_ = clipHeight
+        -- Position the scroll container for rendering and hit testing.
+        self.contentScroll_.renderOffsetX_ = modalX + cpLeft
+        self.contentScroll_.renderOffsetY_ = contentY
+        self.contentScroll_.renderWidth_ = contentAreaWidth
+        self.contentScroll_.renderHeight_ = clipHeight
 
         nvgSave(nvg)
         nvgIntersectScissor(nvg, modalX, clipY, modalWidth, clipHeight)
 
-        -- Render via framework tree walker (handles children recursion)
-        UI.RenderWidgetSubtree(self.contentContainer_, nvg)
+        -- Render via framework tree walker (handles children recursion).
+        UI.RenderWidgetSubtree(self.contentScroll_, nvg)
 
         nvgRestore(nvg)
     end
@@ -497,7 +520,7 @@ function Modal:Update(dt)
     end
 
     if #self.contentContainer_.children > 0 then
-        updateWidgetTree(self.contentContainer_)
+        updateWidgetTree(self.contentScroll_)
     end
 
     -- Update footer subtree
@@ -601,8 +624,17 @@ end
 -- ============================================================================
 
 function Modal:HitTest(x, y)
-    -- Modal captures all input when open
-    return self.isOpen_ and self.animProgress_ > 0
+    if not self.isOpen_ or self.animProgress_ <= 0 then
+        return false
+    end
+
+    -- Right-side editors leave the scene interactive outside their own box.
+    -- Overlay-closing modals still capture outside clicks so OnPointerDown can close them.
+    local layout = self.modalLayout_
+    if not layout then return true end
+    local inside = x >= layout.x and x <= layout.x + layout.w
+        and y >= layout.y and y <= layout.y + layout.h
+    return inside or self.closeOnOverlay_
 end
 
 --- Return children for findWidgetAt to recurse into
@@ -610,8 +642,8 @@ end
 ---@return Widget[]|nil
 function Modal:GetHitTestChildren()
     local hitChildren = {}
-    if self.contentContainer_ and #self.contentContainer_.children > 0 then
-        table.insert(hitChildren, self.contentContainer_)
+    if self.contentScroll_ and self.contentContainer_ and #self.contentContainer_.children > 0 then
+        table.insert(hitChildren, self.contentScroll_)
     end
     if self.footerWidget_ then
         table.insert(hitChildren, self.footerWidget_)
@@ -705,6 +737,12 @@ function Modal:Close()
             self.contentContainer_.renderOffsetY_ = nil
             self.contentContainer_.renderWidth_ = nil
             self.contentContainer_.renderHeight_ = nil
+        end
+        if self.contentScroll_ then
+            self.contentScroll_.renderOffsetX_ = nil
+            self.contentScroll_.renderOffsetY_ = nil
+            self.contentScroll_.renderWidth_ = nil
+            self.contentScroll_.renderHeight_ = nil
         end
         if self.footerWidget_ then
             self.footerWidget_.renderOffsetX_ = nil

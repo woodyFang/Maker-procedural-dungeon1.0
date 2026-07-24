@@ -110,6 +110,78 @@ local BLUEPRINTS = {
         P("torus", "bossGlow", 0, 0.54, 0, 0.66, 0.12, 0.66),
     } },
 
+    -- Ruins 2.0 signature kit (exact GEO composites live in
+    -- DungeonGeometryLibrary; these parts keep the legacy blueprint path and
+    -- the prop-coverage contract in sync with the same silhouettes).
+    obelisk = { parts = {
+        P("roundedBox", "stone", 0, 0.07, 0, 0.64, 0.14, 0.48),
+        P("roundedBox", "stone", 0, 0.19, 0, 0.50, 0.10, 0.36),
+        P("box", "stone", 0, 1.00, 0, 0.40, 1.52, 0.22),
+        P("sphere", "stone", 0, 1.76, 0, 0.40, 0.36, 0.22),
+        P("box", "trim", 0, 0.32, 0, 0.44, 0.055, 0.26),
+        P("box", "trim", 0, 1.44, 0, 0.44, 0.055, 0.26),
+        P("disc", "glow", 0, 0.95, 0.115, 0.12, 0.12, 1),
+        P("disc", "glow", 0, 1.28, 0.115, 0.11, 0.11, 1),
+    } },
+    brokenPillar = { parts = {
+        P("roundedBox", "stone", 0, 0.08, 0, 0.68, 0.15, 0.68),
+        P("cylinder", "stone", 0, 0.51, 0, 0.44, 0.74, 0.44),
+        P("cylinder", "stone", 0.03, 0.97, -0.02, 0.34, 0.24, 0.34, 6, 0, 9),
+        P("cylinder", "stone", 0.58, 0.19, 0.14, 0.38, 0.46, 0.38, 90, 32, 0),
+        P("icosahedron", "stone", -0.42, 0.08, 0.30, 0.22, 0.16, 0.22),
+    } },
+    guardianStatue = { parts = {
+        P("roundedBox", "stone", 0, 0.11, 0, 1.30, 0.22, 1.02),
+        P("box", "stone", 0, 0.58, 0, 0.88, 0.72, 0.64),
+        P("box", "stone", 0, 1.28, 0, 0.72, 0.72, 0.52),
+        P("roundedBox", "stone", 0, 1.70, 0, 1.12, 0.20, 0.44),
+        P("box", "stone", -0.55, 1.22, 0.02, 0.19, 0.86, 0.24, 0, 0, 6),
+        P("box", "stone", 0.55, 1.22, 0.02, 0.19, 0.86, 0.24, 0, 0, -6),
+        P("box", "stone", 0, 0.86, 0.40, 0.11, 1.02, 0.05),
+        P("box", "stone", 0, 1.40, 0.40, 0.36, 0.07, 0.09),
+        P("box", "stone", 0, 1.98, 0, 0.34, 0.38, 0.34),
+        P("box", "glow", -0.078, 2.02, 0.17, 0.06, 0.04, 0.02),
+        P("box", "glow", 0.078, 2.02, 0.17, 0.06, 0.04, 0.02),
+    } },
+    archRuin = { parts = {
+        P("roundedBox", "stone", -0.78, 0.96, 0, 0.30, 1.92, 0.30),
+        P("roundedBox", "stone", 0.78, 0.71, 0, 0.30, 1.42, 0.30),
+        P("box", "stone", -0.52, 1.98, 0, 0.58, 0.24, 0.28, 0, 0, -6),
+        P("roundedBox", "stone", 0.34, 0.15, 0.42, 0.40, 0.30, 0.30, 0, 34, 0),
+        P("icosahedron", "stone", 0.10, 0.05, -0.34, 0.24, 0.10, 0.24),
+    } },
+    crystalCluster = { parts = {
+        P("octahedron", "glow", 0, 0.30, 0, 0.32, 0.62, 0.32, 0, 17, 6),
+        P("octahedron", "glow", 0.22, 0.20, 0.10, 0.22, 0.40, 0.22, 10, 52, -13),
+        P("octahedron", "glow", -0.19, 0.16, 0.14, 0.18, 0.32, 0.18, -14, 23, 9),
+        P("icosahedron", "stone", 0.02, 0.05, -0.04, 0.30, 0.12, 0.30),
+    }, light = { color = "glow", y = 0.5, brightness = 1.6, range = 3.5 } },
+    templeBanner = { mount = "wallHigh", parts = {
+        P("cylinder", "trim", 0, -0.48, 0, 0.05, 0.56, 0.05, 0, 0, 90),
+        P("sphere", "trim", -0.28, -0.48, 0, 0.09, 0.09, 0.09),
+        P("sphere", "trim", 0.28, -0.48, 0, 0.09, 0.09, 0.09),
+        P("bannerCloth", "cloth", 0, -0.50, -0.02, 1.35, 1.40, 1),
+        P("plane", "glow", 0, -1.08, -0.04, 0.24, 0.24, 1, 0, 0, 45),
+    } },
+    templeMedallion = { mount = "wall", parts = {
+        P("torus", "trim", 0, 0.05, 0, 0.32, 0.32, 0.32),
+        P("disc", "glow", 0, 0.05, 0.012, 0.26, 0.26, 1),
+    } },
+    templeUrn = { parts = {
+        P("sphere", "stone", 0, 0.27, 0, 0.37, 0.42, 0.37),
+        P("cylinder", "stone", 0, 0.50, 0, 0.15, 0.14, 0.15),
+        P("cylinder", "stone", 0, 0.03, 0, 0.26, 0.06, 0.26),
+    } },
+    goldPile = { parts = {
+        P("sphere", "trim", 0, 0.02, 0, 0.60, 0.23, 0.60),
+        P("sphere", "trim", 0.24, 0.02, 0.14, 0.40, 0.16, 0.40),
+        P("sphere", "trim", -0.20, 0.015, -0.16, 0.32, 0.14, 0.32),
+    } },
+    pathRune = { mount = "floor", parts = {
+        P("ring", "glow", 0, 0.018, 0, 0.41, 0.41, 1, -90, 0, 0),
+        P("disc", "glow", 0, 0.019, 0, 0.11, 0.11, 1, -90, 0, 0),
+    } },
+
     hospitalBed = { parts = {
         P("roundedBox", "cloth", 0, 0.42, 0, 1.35, 0.18, 0.62),
         P("roundedBox", "white", -0.66, 0.62, 0, 0.18, 0.46, 0.66),

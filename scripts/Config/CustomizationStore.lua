@@ -61,19 +61,47 @@ end
 
 local function NormalizePropRules(values)
     local result = {}
+    local validLayouts = { grid = true, perimeter = true, ring = true, fill = true, focal = true, edgeFocal = true }
+    local validSides = { north = true, south = true, east = true, west = true }
+    local function Number(source, target, key, minimum, maximum, integer)
+        local value = tonumber(source[key])
+        if value ~= nil then
+            if integer then value = math.floor(value) end
+            value = math.max(minimum, value)
+            if maximum then value = math.min(maximum, value) end
+            target[key] = value
+        end
+    end
     for _, source in ipairs(type(values) == "table" and values or {}) do
         local kind = type(source) == "table" and Trim(source.kind) or ""
         if kind ~= "" then
-            local chance = tonumber(source.chance)
+            local chanceValue = tonumber(source.chance) or 1.0
             local scaleMin = tonumber(source.scaleMin) or 0.92
             local scaleMax = tonumber(source.scaleMax) or scaleMin
-            result[#result + 1] = {
+            local rule = {
                 kind = kind,
                 count = math.max(1, math.floor(tonumber(source.count) or 1)),
-                chance = math.max(0.0, math.min(1.0, chance == nil and 1.0 or chance)),
+                chance = math.max(0.0, math.min(1.0, chanceValue)),
                 scaleMin = math.max(0.05, math.min(scaleMin, scaleMax)),
                 scaleMax = math.max(0.05, math.max(scaleMin, scaleMax)),
             }
+            local layout = Trim(source.layout)
+            if validLayouts[layout] then rule.layout = layout end
+            local side = Trim(source.side)
+            if validSides[side] then rule.side = side end
+            for _, key in ipairs({ "step", "rowStep", "colStep", "margin", "max", "stepThreshold",
+                "stepBig", "stepSmall", "radius", "anchorMinDim", "tries", "edgeInset" }) do
+                Number(source, rule, key, 0, 1000, key == "max" or key == "tries" or key:find("Step", 1, true) ~= nil)
+            end
+            for _, key in ipairs({ "rot", "angleSpan", "scale", "anchorScale", "anchorRot" }) do
+                Number(source, rule, key, -1000, 1000, false)
+            end
+            for _, key in ipairs({ "centered", "skipCenter", "angleJitter", "anchorRotAxis" }) do
+                if type(source[key]) == "boolean" then rule[key] = source[key] end
+            end
+            local anchor = Trim(source.anchor)
+            if anchor ~= "" then rule.anchor = anchor end
+            result[#result + 1] = rule
         end
     end
     return result

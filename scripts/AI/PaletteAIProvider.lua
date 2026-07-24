@@ -68,7 +68,13 @@ local function DecodeJSONText(text)
 end
 
 local function ExtractContent(value)
-    if type(value) == "string" then return DecodeJSONText(value) end
+    if type(value) == "string" then
+        local decoded, reason = DecodeJSONText(value)
+        if type(decoded) ~= "table" then return decoded, reason end
+        -- A JSON string may itself be a provider envelope (choices /
+        -- dataAsString); fall through so the table branch unwraps it.
+        value = decoded
+    end
     if type(value) ~= "table" then return nil, "AI 服务返回的内容格式不受支持。" end
 
     if value.dataAsString ~= nil then return ExtractContent(value.dataAsString) end

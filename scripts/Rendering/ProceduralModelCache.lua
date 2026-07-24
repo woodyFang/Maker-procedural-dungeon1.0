@@ -19,6 +19,15 @@ local FACTORIES = {
             Vector2(0, -0.80), Vector2(-0.27, -0.62),
         }):ToModel()
     end,
+    -- Atmosphere FX primitives. godRay is a downward-widening open cone that
+    -- spans one 5m storey (0..6 local, scaled by the renderer). Ring/disc
+    -- geometry stays in the three.js XY plane; the FX layer lays it flat with
+    -- a -90° pitch on the holder node before spinning the parent around +Y.
+    godRay = function() return CylinderGeometry(0.40, 1.55, 6, 16, 1, true):ToModel() end,
+    runeRing = function() return RingGeometry(1.5, 2.3, 48):ToModel() end,
+    runeRingInner = function() return RingGeometry(0.78, 1.18, 36):ToModel() end,
+    portalDisc = function() return CircleGeometry(0.86, 24):ToModel() end,
+    gateRing = function() return TorusGeometry(0.95, 0.055, 8, 40):ToModel() end,
 }
 
 function ProceduralModelCache.new()

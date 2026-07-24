@@ -17,6 +17,7 @@ local DungeonGeometryLibrary = require("Rendering.DungeonGeometryLibrary")
 local ProceduralMaterialRules = require("Rendering.ProceduralMaterialRules")
 local LocalRequirementPlanner = require("AI.LocalRequirementPlanner")
 local PaletteAIProvider = require("AI.PaletteAIProvider")
+local PaletteData = require("Config.PaletteData")
 local EditorData = require("UI.Editor.EditorData")
 local UI = require("urhox-libs/UI")
 
@@ -53,6 +54,10 @@ local ENVIRONMENTS = {
         preset = "LightGroup/Night.xml", fog = 0x171b24,
         sun = 0xffe8c8, brightness = 1.05,
     },
+    temple = {
+        preset = "LightGroup/Night.xml", fog = 0x14181f,
+        sun = 0xffe2b8, brightness = 1.05,
+    },
     hospital = {
         preset = "LightGroup/Daytime.xml", fog = 0x26312f,
         sun = 0xe5f0ed, brightness = 0.92,
@@ -83,6 +88,8 @@ function DungeonApp.new()
         editorFrameSerial = 0, editorRebuildAfterFrame = 0, editorRebuildIdle = 0,
         selectedEditorRoom = nil, selectedEditorRoomGroupId = nil,
         graphVisible = false, heatVisible = false, roomGroupsVisible = false, postEnabled = false,
+        palettePreviewTheme = nil, palettePreviewPending = false, palettePreviewColors = nil,
+        palettePreviewIdle = 0,
         cameraKeyboardConfirmed = false,
     }, DungeonApp)
 end
@@ -494,6 +501,12 @@ function DungeonApp:CreatePanel()
         onPaletteAIGenerate = function(request, done)
             return PaletteAIProvider.Generate(request, done)
         end,
+        onPaletteColorPreview = function(colors, settingKey, basePaletteKey)
+            return self:PreviewPaletteTheme(colors, settingKey, basePaletteKey)
+        end,
+        onPaletteModalClosed = function()
+            self:CancelPalettePreview()
+        end,
         onSetting = function(key)
             local record = CustomizationStore.FindById(
                 self.customSettings, TopicSeeds.IdForSetting(key))
@@ -720,6 +733,7 @@ function DungeonApp:CreatePanel()
             return true
         end,
         onCustomPaletteSave = function(palette)
+            self:CancelPalettePreview(false)
             local oldSetting, oldTheme = self.settingKey, self.themeKey
             local oldActiveId, oldActiveName = self.activeCustomSettingId, self.customSettingName
             local oldFloorHeight = self.floorHeight
@@ -745,7 +759,7 @@ function DungeonApp:CreatePanel()
             self:RefreshPanel()
             local saved, reason = self:SaveCustomizations(function(success, detail, target)
                 self:ReportCustomizationSave(success,
-                    string.format("自定义配色“%s”已保存并使用", palette.label), detail, target)
+                    string.format("自定义配色“%s”已保存", palette.label), detail, target)
             end)
             if not saved then
                 CustomizationStore.DeleteById(self.customPalettes, palette.id)
@@ -1014,9 +1028,57 @@ function DungeonApp:Start()
     end)
 end
 
+local PALETTE_PREVIEW_DEBOUNCE_SECONDS = 0.08
+
+function DungeonApp:PreviewPaletteTheme(colors, settingKey, basePaletteKey)
+    local normalized = PaletteData.NormalizeColors(colors)
+    if not normalized then return false end
+    settingKey = Themes.settings[settingKey] and settingKey or self.settingKey
+    local baseKey = basePaletteKey
+    if not baseKey or not Themes.Get(baseKey) then
+        baseKey = Themes.GetPalettes(settingKey)[1] or self.themeKey
+    end
+    local baseTheme = Themes.Get(baseKey)
+    local previewTheme = PaletteData.CreateRuntimeTheme({
+        id = "__palette_preview__", label = "配色预览", colors = normalized,
+    }, baseTheme)
+    if not previewTheme then return false end
+    self.palettePreviewColors = normalized
+    self.palettePreviewTheme = previewTheme
+    self.palettePreviewPending = true
+    self.palettePreviewIdle = 0
+    return true
+end
+
+function DungeonApp:FlushPalettePreview(timeStep)
+    if not self.palettePreviewPending then return false end
+    self.palettePreviewIdle = (self.palettePreviewIdle or 0) + math.max(0, timeStep or 0)
+    if self.palettePreviewIdle < PALETTE_PREVIEW_DEBOUNCE_SECONDS then return false end
+    self.palettePreviewPending = false
+    self.palettePreviewIdle = 0
+    if not self.dungeon or not self.palettePreviewTheme then return false end
+    self:RebuildView()
+    return true
+end
+
+function DungeonApp:CancelPalettePreview(rebuild)
+    local hadPreview = self.palettePreviewTheme ~= nil or self.palettePreviewPending
+    self.palettePreviewTheme = nil
+    self.palettePreviewColors = nil
+    self.palettePreviewPending = false
+    self.palettePreviewIdle = 0
+    if hadPreview and rebuild ~= false and self.dungeon then self:RebuildView() end
+end
+
 function DungeonApp:ApplyTheme()
     local theme = Themes.Resolve(self.settingKey, self.themeKey)
     self:LoadLightingPreset(self.settingKey)
+    -- 色调自带泛光默认值（遗迹 2.0 全系开启，自发光元素靠它出彩）。
+    -- 手动开关（B 键）仍可在当前色调内覆盖，切换色调时重新采纳默认。
+    if self.bloomThemeKey ~= theme.key then
+        self.bloomThemeKey = theme.key
+        if theme.bloom ~= nil then self.postEnabled = theme.bloom == true end
+    end
     self.zone.fogColor = HexColor(theme.fog, 1.0)
     self.zone.fogStart, self.zone.fogEnd = 0, 1000
     self.zone.fogDensity = theme.fogDensity
@@ -1042,6 +1104,7 @@ function DungeonApp:RebuildView(animate)
         graphVisible = self.graphVisible, heatVisible = self.heatVisible, settingKey = self.settingKey,
         roomGroupsVisible = self.roomGroupsVisible,
         roomGroups = self:ActiveRoomGroups(),
+        previewTheme = self.palettePreviewTheme,
         animate = animate == true,
     })
 end
@@ -1319,6 +1382,7 @@ end
 
 function DungeonApp:HandleUpdate(timeStep)
     self.dungeonRenderer:Update(timeStep)
+    self:FlushPalettePreview(timeStep)
     if self.preview and self.preview:IsActive() then self.preview:Update(timeStep); return end
     local textInputFocused = IsTextInputFocused()
     if not textInputFocused and input:GetKeyPress(KEY_E) then self:ToggleEditorMode("3d") end

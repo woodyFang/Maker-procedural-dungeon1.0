@@ -12,6 +12,8 @@ local LocalRequirementPlanner = require("AI.LocalRequirementPlanner")
 local ControlPanel = {}
 ControlPanel.__index = ControlPanel
 
+local PALETTE_PREVIEW_THROTTLE_SECONDS = 0.12
+
 local C = {
     panel = { 16, 19, 29, 232 }, section = { 17, 21, 32, 255 }, line = { 37, 42, 58, 255 },
     input = { 21, 25, 37, 255 }, inputLine = { 48, 53, 72, 255 },
@@ -27,11 +29,11 @@ local PREVIEW = {
 }
 
 local HINT_OVERVIEW =
-    "相机（UE 视口习惯）：左键拖拽转向+前后走 · 右键自由环视（按住时滚轮调速）· 左+右键升降平移 · 中键平移 · Alt+左键绕焦点 · Alt+右键推拉 · WASD/方向键移动，Shift 加速 · 滚轮缩放 · Home/F 复原居中\n编辑：直接点 2D 平面，E 进入 3D 编辑 · R 重新生成 · T 切换色调 · Shift+T 切换题材"
+    "相机：左键前后 · 右键环视 · 中键平移 · Alt+左键聚焦 · Alt+右键推拉\nWASD/方向键移动 · Shift 加速 · 滚轮缩放 · Home/F 复原 · E 编辑 · R 重新生成 · T 色调"
 local HINT_EDIT_3D =
-    "3D 编辑（正交顶视）：左键编辑房间与通路 · 空白处/Alt+左键 或 中键拖拽平移 · 滚轮缩放（对准光标）· WASD/方向键移动，Shift 加速 · F 焦点居中复原 · E 退出编辑 · Esc 完成"
+    "三维编辑：左键编辑房间与通路 · 空白处/Alt+左键/中键平移 · 滚轮缩放\nWASD/方向键移动 · Shift 加速 · F 居中复原 · E 退出 · Esc 完成"
 local HINT_EDIT_2D =
-    "2D 平面编辑：拖动使用轻量预览，松手后同步三维 · 中键/空白处拖拽平移 · 滚轮缩放 · Tab 返回三维 · Esc 完成"
+    "二维编辑：拖动为轻量预览，松手同步三维 · 中键/空白处拖拽平移 · 滚轮缩放\nTab 返回三维 · Esc 完成"
 
 local function Contains(items, value)
     for _, item in ipairs(items or {}) do if item == value then return true end end
@@ -243,16 +245,16 @@ local function PreviewButton(code, title, hint, onClick)
         borderWidth = 1, borderRadius = 0, fontWeight = "bold",
     })
     return UI.Button {
-        width = 128, height = 42, padding = { 5, 7 }, gap = 7,
+        width = 116, height = 38, padding = { 4, 6 }, gap = 6, flexShrink = 1,
         flexDirection = "row", alignItems = "center",
         backgroundColor = PREVIEW.surface, borderColor = PREVIEW.border,
         borderWidth = { 1, 3, 3, 1 }, borderRadius = 0,
         boxShadow = PREVIEW.shadow, onClick = onClick,
         children = {
             icon,
-            UI.Panel { flexGrow = 1, gap = 1, pointerEvents = "none", children = {
-                Label(title, 10, PREVIEW.text, { fontWeight = "bold" }),
-                Label(hint, 8, PREVIEW.dim, { whiteSpace = "nowrap", fontWeight = "bold" }),
+            UI.Panel { flexGrow = 1, flexShrink = 1, gap = 1, pointerEvents = "none", children = {
+                Label(title, 9, PREVIEW.text, { fontWeight = "bold", whiteSpace = "nowrap" }),
+                Label(hint, 7.5, PREVIEW.dim, { whiteSpace = "nowrap", fontWeight = "bold" }),
             } },
         },
     }
@@ -318,7 +320,11 @@ function HandleDungeonReferenceImagePasteKey(_, eventData)
 end
 
 function ControlPanel.new(callbacks, initial)
-    local self = setmetatable({ callbacks = callbacks, seed = initial.seed, collapsed = false }, ControlPanel)
+    local self = setmetatable({
+        callbacks = callbacks, seed = initial.seed, collapsed = false,
+        activeRightModal = nil, rightModalSwitchPending = false,
+        customSettingSnapshot = nil, paletteSnapshot = nil, roomGroupSnapshot = nil,
+    }, ControlPanel)
     if not nvgSetRenderOrder then nvgSetRenderOrder = function() end end
     UI.Init({ theme = "default-dark", scale = UI.Scale.DEFAULT })
     activeDropOwner = self
@@ -415,47 +421,50 @@ function ControlPanel.new(callbacks, initial)
     self.editorButtons = UI.Panel {
         flexDirection = "row", gap = 6, children = { self.edit2DButton, self.edit3DButton },
     }
-    self.hints = Label(
-        HINT_OVERVIEW,
-        10, C.dim,
-        { position = "absolute", bottom = 14, left = "24%", right = "18%", minHeight = 46,
-            textAlign = "center", whiteSpace = "normal", lineHeight = 1.35,
-            backgroundColor = { 11, 14, 23, 220 }, padding = 8, borderRadius = 18 })
+    self.hintText = Label(HINT_OVERVIEW, 9, C.dim, {
+        width = "48%", maxWidth = 560, minHeight = 42, textAlign = "center", whiteSpace = "normal", lineHeight = 1.35,
+        backgroundColor = { 11, 14, 23, 228 }, borderColor = { 48, 53, 70, 220 }, borderWidth = 1,
+        padding = { 6, 12 }, borderRadius = 10,
+    })
+    self.hints = UI.Panel {
+        position = "absolute", left = 0, right = 0, bottom = 16, alignItems = "center", pointerEvents = "box-none",
+        children = { self.hintText },
+    }
 
     self.thirdPreviewButton = PreviewButton("三", "第三人称", "角色与动线",
         function() callbacks.onPreview("third") end)
     self.firstPreviewButton = PreviewButton("一", "第一人称", "空间与尺度",
         function() callbacks.onPreview("first") end)
     self.previewExitButton = SmallButton("退出  Esc", function() callbacks.onExitPreview() end, {
-        width = 88, height = 42, fontSize = 10, backgroundColor = { 35, 32, 48, 245 },
+        width = 76, height = 38, fontSize = 9, backgroundColor = { 35, 32, 48, 245 },
         borderColor = PREVIEW.border, borderWidth = { 1, 3, 3, 1 }, borderRadius = 0,
-        boxShadow = PREVIEW.shadow, fontWeight = "bold",
+        boxShadow = PREVIEW.shadow, fontWeight = "bold", flexShrink = 1,
     })
     self.previewExitButton:SetVisible(false)
 
     self.previewModeStrip = UI.Panel {
-        height = 46, padding = 2, gap = 3, flexDirection = "row", alignItems = "center",
+        height = 42, padding = 2, gap = 3, flexDirection = "row", alignItems = "center", flexShrink = 1,
         backgroundColor = PREVIEW.dark, borderColor = PREVIEW.border,
         borderWidth = 2, borderRadius = 0,
         children = { self.thirdPreviewButton, self.firstPreviewButton },
     }
     self.previewBar = UI.Panel {
-        height = 56, padding = { 6, 7 }, gap = 8, flexDirection = "row", alignItems = "center",
+        height = 50, padding = { 5, 6 }, gap = 6, flexDirection = "row", alignItems = "center",
         backgroundColor = PREVIEW.surface, borderColor = PREVIEW.border,
         borderWidth = { 1, 3, 3, 1 }, borderRadius = 0, backdropBlur = 12,
         boxShadow = PREVIEW.shadow,
         children = {
-            UI.Panel { width = 64, paddingLeft = 6, paddingRight = 8, gap = 3,
+            UI.Panel { width = 52, paddingLeft = 5, paddingRight = 6, gap = 2, flexShrink = 1,
                 borderRightWidth = 1, borderColor = PREVIEW.primaryDark, children = {
-                    Label("视角", 7, PREVIEW.primary, { fontWeight = "bold", letterSpacing = 1 }),
-                    Label("预览", 12, PREVIEW.text, { fontWeight = "bold" }),
+                    Label("视角", 6.5, PREVIEW.primary, { fontWeight = "bold", letterSpacing = 1 }),
+                    Label("预览", 10, PREVIEW.text, { fontWeight = "bold" }),
                 }
             },
             self.previewModeStrip, self.previewExitButton,
         }
     }
     self.previewBarAnchor = UI.Panel {
-        position = "absolute", left = 0, right = 0, bottom = 48, height = 56,
+        position = "absolute", left = 0, right = 0, bottom = 84, height = 50,
         alignItems = "center", pointerEvents = "box-none", children = { self.previewBar },
     }
 
@@ -488,7 +497,7 @@ function ControlPanel.new(callbacks, initial)
                     self.previewModeLabel, self.previewViewHint,
                 }
             },
-            UI.Panel { position = "absolute", left = 0, right = 0, bottom = 82,
+            UI.Panel { position = "absolute", left = 0, right = 0, bottom = 76,
                 alignItems = "center", pointerEvents = "box-none", children = {
                     UI.Panel { padding = { 7, 12 }, gap = 3, alignItems = "center",
                         backgroundColor = PREVIEW.dark, borderColor = PREVIEW.border,
@@ -641,10 +650,11 @@ function ControlPanel.new(callbacks, initial)
             } },
     } }
     self.customSettingModal = OriginalModal {
-        size = "md", dialogWidth = 620, dialogMaxHeight = 100000,
-        closeOnOverlay = true, closeOnEscape = true, showCloseButton = false,
+        size = "md", dialogWidth = 500, dialogMaxHeight = 100000,
+        anchor = "right", anchorMargin = 18, fillHeight = true, verticalMargin = 18,
+        closeOnOverlay = false, closeOnEscape = true, showCloseButton = false,
         contentPadding = 18, contentGap = 12, footerPadding = { 14, 18 }, footerBorderWidth = 1,
-        borderRadius = 14, backgroundColor = { 17, 20, 29, 248 }, backdropColor = { 3, 5, 10, 184 },
+        borderRadius = 14, backgroundColor = { 17, 20, 29, 248 }, backdropColor = { 0, 0, 0, 0 },
         borderColor = { 52, 58, 77, 255 }, borderWidth = 1,
         footerBorderColor = { 40, 46, 64, 255 },
         boxShadow = { { x = 0, y = 24, blur = 80, spread = 0, color = { 0, 0, 0, 215 } } },
@@ -699,28 +709,121 @@ function ControlPanel.new(callbacks, initial)
         placeholder = "给 AI 的配色描述，例如：冷峻月光下的紫灰石材，少量高饱和洋红发光符文…",
     }
     self.paletteColorValues = {}
+    self.paletteConfirmedColors = {}
+    self.paletteDefaultColors = {}
+    self.paletteColorDraftDirty = {}
     self.paletteColorPickers = {}
+    self.palettePickerOpenColors = {}
     self.paletteColorUpdating = false
+    self.paletteLastPreviewAt = 0
     self.paletteAIState = PaletteAIProvider.STATUS.IDLE
     local paletteColorPresets = {
         "#E8E8E8", "#B0B0B0", "#5FD1C7", "#56B8D0",
         "#E0B657", "#E85D62", "#A783E8", "#FF8F70",
     }
     local paletteColorEditors = {}
+    local controlPanel = self
     for _, field in ipairs(PaletteData.COLOR_FIELDS) do
         local colorField = field
         local picker = UI.ColorPicker {
             width = "100%", size = "sm", color = "#FFFFFF",
-            showAlpha = false, showInput = true, showPresets = true,
+            height = 30, padding = 6, swatchSize = 24,
+            showAlpha = false, showInput = false, showIcon = false, showPresets = true,
+            fieldTextColor = { 0, 0, 0, 0 },
             presets = paletteColorPresets,
             onChange = function(_, value)
                 if self.paletteColorUpdating then return end
                 local color = PaletteData.ParseColor(value and value.hex)
                 if not color then return end
                 self.paletteColorValues[colorField] = color
+                self.paletteColorDraftDirty[colorField] =
+                    color ~= self.paletteConfirmedColors[colorField]
                 self:SyncPaletteDataFromColorPickers()
+                self:RequestPalettePreview(false)
             end,
         }
+        local pickerOpen = picker.Open
+        function picker:Open()
+            controlPanel.palettePickerOpenColors[colorField] =
+                PaletteData.ParseColor(self:GetHex())
+            pickerOpen(self)
+        end
+        local pickerRenderPopup = picker.RenderPopup
+        function picker:RenderPopup(nvg)
+            pickerRenderPopup(self, nvg)
+            local popup = self.popupBounds_
+            if not popup then return end
+            local popupBottom = popup.y + popup.h
+            local footerHeight = 34
+            -- Add a real footer below the picker content, like UE's color dialog.
+            nvgBeginPath(nvg)
+            nvgRect(nvg, popup.x, popupBottom - 1, popup.w, footerHeight + 1)
+            nvgFillColor(nvg, nvgRGBA(17, 20, 29, 255))
+            nvgFill(nvg)
+            nvgBeginPath(nvg)
+            nvgMoveTo(nvg, popup.x, popupBottom - 1)
+            nvgLineTo(nvg, popup.x + popup.w, popupBottom - 1)
+            nvgStrokeColor(nvg, nvgRGBA(52, 58, 77, 255))
+            nvgStrokeWidth(nvg, 1)
+            nvgStroke(nvg)
+            popup.h = popup.h + footerHeight
+
+            local confirmW, closeW, restoreW, buttonH, buttonGap = 46, 46, 62, 22, 4
+            local buttonY = popupBottom + 5
+            local restoreX = popup.x + popup.w - 16 - restoreW
+            local closeX = restoreX - buttonGap - closeW
+            local confirmX = closeX - buttonGap - confirmW
+            self.confirmBounds_ = { x = confirmX, y = buttonY, w = confirmW, h = buttonH }
+            self.closeBounds_ = { x = closeX, y = buttonY, w = closeW, h = buttonH }
+            self.restoreBounds_ = { x = restoreX, y = buttonY, w = restoreW, h = buttonH }
+
+            local function DrawButton(bounds, label, fill, border)
+                nvgBeginPath(nvg)
+                nvgRoundedRect(nvg, bounds.x, bounds.y, bounds.w, bounds.h, 5)
+                nvgFillColor(nvg, nvgRGBA(fill[1], fill[2], fill[3], fill[4]))
+                nvgFill(nvg)
+                nvgStrokeColor(nvg, nvgRGBA(border[1], border[2], border[3], border[4]))
+                nvgStrokeWidth(nvg, 1)
+                nvgStroke(nvg)
+                nvgFontFace(nvg, "sans")
+                nvgFontSize(nvg, 9)
+                nvgFillColor(nvg, nvgRGBA(235, 240, 245, 255))
+                nvgTextAlign(nvg, NVG_ALIGN_CENTER + NVG_ALIGN_MIDDLE)
+                nvgText(nvg, bounds.x + bounds.w * 0.5, bounds.y + bounds.h * 0.5, label)
+            end
+
+            DrawButton(self.confirmBounds_, "确认", { 22, 61, 57, 245 }, { 63, 208, 187, 255 })
+            DrawButton(self.closeBounds_, "关闭", { 28, 32, 45, 245 }, { 82, 91, 112, 255 })
+            DrawButton(self.restoreBounds_, "恢复默认", { 28, 32, 45, 245 }, { 82, 91, 112, 255 })
+        end
+        local pickerPointerDown = picker.OnPointerDown
+        function picker:OnPointerDown(event)
+            if self.isOpen_ and event then
+                if self:PointInBounds(event.x, event.y, self.confirmBounds_) then
+                    controlPanel:ConfirmPaletteColor(colorField)
+                    self:Close()
+                    return true
+                end
+                if self:PointInBounds(event.x, event.y, self.closeBounds_) then
+                    controlPanel:CancelPaletteColor(colorField)
+                    self:Close()
+                    return true
+                end
+                if self:PointInBounds(event.x, event.y, self.restoreBounds_) then
+                    controlPanel:RestorePaletteColor(colorField)
+                    self:Close()
+                    return true
+                end
+                local inInput = self.inputBounds_ and self:PointInBounds(event.x, event.y, self.inputBounds_)
+                local inPopup = self.popupBounds_ and self:PointInBounds(event.x, event.y, self.popupBounds_)
+                if not inInput and not inPopup then
+                    controlPanel:CancelPaletteColor(colorField)
+                    self:Close()
+                    return true
+                end
+            end
+            return pickerPointerDown(self, event)
+        end
         -- Keep an open picker from swallowing clicks intended for the modal footer.
         local pickerHitTest = picker.HitTest
         function picker:HitTest(x, y)
@@ -739,21 +842,26 @@ function ControlPanel.new(callbacks, initial)
                 and not self:PointInBounds(event.x, event.y, self.inputBounds_) then
                 self:Close()
             end
+            controlPanel:RequestPalettePreview(true)
         end
         self.paletteColorPickers[colorField] = picker
         paletteColorEditors[#paletteColorEditors + 1] = UI.Panel {
-            width = "48%", gap = 2, flexShrink = 0,
-            children = { Label(PaletteData.FIELD_LABELS[colorField], 9, C.dim), picker },
+            -- Four compact columns keep all eight swatches visible in the modal.
+            width = "23%", gap = 2, flexShrink = 0,
+            children = {
+                Label(PaletteData.FIELD_LABELS[colorField], 9, C.dim, { whiteSpace = "nowrap" }),
+                picker,
+            },
         }
     end
     self.paletteColorEditor = UI.Panel {
-        width = "100%", flexDirection = "row", flexWrap = "wrap", gap = 6,
+        width = "100%", flexDirection = "row", flexWrap = "wrap", gap = 5,
         children = paletteColorEditors,
     }
-    self.paletteAIGenerateButton = SmallButton("AI 生成", function()
+    self.paletteAIGenerateButton = SmallButton("生成", function()
         self:GeneratePaletteWithAI()
     end, {
-        width = 86, height = 28, fontSize = 10, variant = "primary",
+        width = 72, height = 28, fontSize = 10, variant = "primary",
         backgroundColor = { 38, 54, 76, 255 }, borderColor = { 75, 119, 163, 255 },
         textColor = { 192, 221, 247, 255 },
     })
@@ -768,14 +876,21 @@ function ControlPanel.new(callbacks, initial)
         onChange = function(_, value) self:SyncPaletteColorPickersFromData(value) end,
     }
     self.paletteError = Label("", 10, C.danger, { whiteSpace = "normal" })
-    self.paletteDeleteButton = SmallButton("删除配色", function() self:ConfirmDeleteCustomPalette() end, {
-        width = 88, variant = "danger",
+    self.paletteRestoreButton = SmallButton("复原", function()
+        self:RestorePaletteColors()
+    end, {
+        width = 72, textColor = C.teal, borderColor = { 51, 83, 77, 255 },
     })
     self.paletteModal = OriginalModal {
-        size = "lg", dialogWidth = 620, dialogMaxHeight = 700,
-        closeOnOverlay = true, closeOnEscape = true, showCloseButton = false,
+        size = "lg", dialogWidth = 500, dialogMaxHeight = 100000,
+        anchor = "right", anchorMargin = 18, fillHeight = true, verticalMargin = 18,
+        closeOnOverlay = false, closeOnEscape = true, showCloseButton = false,
         contentPadding = 18, contentGap = 9, footerPadding = { 14, 18 }, footerBorderWidth = 1,
-        borderRadius = 14, backgroundColor = { 17, 20, 29, 248 }, backdropColor = { 3, 5, 10, 184 },
+        borderRadius = 14, backgroundColor = { 17, 20, 29, 248 }, backdropColor = { 0, 0, 0, 0 },
+        onClose = function()
+            self:ClosePaletteColorPickers()
+            if self.callbacks.onPaletteModalClosed then self.callbacks.onPaletteModalClosed() end
+        end,
         borderColor = { 52, 58, 77, 255 }, borderWidth = 1,
         footerBorderColor = { 40, 46, 64, 255 },
         boxShadow = { { x = 0, y = 24, blur = 80, spread = 0, color = { 0, 0, 0, 215 } } },
@@ -788,39 +903,32 @@ function ControlPanel.new(callbacks, initial)
                     width = 34, height = 34, fontSize = 18, backgroundColor = { 20, 24, 35, 255 },
                 }),
             }, { alignItems = "center" }),
-            UI.Panel { width = "100%", padding = { 9, 11 }, backgroundColor = { 12, 20, 24, 255 },
-                borderColor = { 43, 68, 65, 255 }, borderWidth = 1, borderRadius = 8, children = {
-                    Label("配色只覆盖地面、墙体、结构、织物与发光物的颜色；灯光、雾效和 PBR 参数沿用基础色调。", 10,
-                        { 154, 184, 177, 255 }, { whiteSpace = "normal", lineHeight = 1.45 }),
+            UI.Panel { width = "100%", padding = { 10, 12 }, gap = 8,
+                backgroundColor = { 13, 17, 26, 255 }, borderColor = C.line, borderWidth = 1, borderRadius = 8,
+                children = {
+                    Row({
+                        FieldLabel("配色名称", "保存时使用"), self.paletteRestoreButton,
+                    }, { alignItems = "center", gap = 8 }),
+                    self.paletteNameField,
+                    Label("色卡调色", 11, C.text, { fontWeight = "bold" }),
+                    self.paletteColorEditor,
+                    self.paletteError,
                 } },
-            FieldLabel("配色名称", "必填"), self.paletteNameField,
-            FieldLabel("适用题材", "决定基础材质"), self.paletteBaseSettingDropdown,
-            FieldLabel("配色分类", "默认可跨题材使用"), self.paletteGroupDropdown,
-            FieldLabel("AI 配色描述", "服务接入后生成"), self.palettePromptField,
-            Row({ self.paletteAIGenerateButton, self.paletteAIHint }, { alignItems = "center", gap = 8 }),
-            Label("色卡调色", 11, C.text, { fontWeight = "bold" }),
-            self.paletteColorEditor,
-            UI.Panel { width = "100%", height = 1, backgroundColor = { 40, 46, 64, 255 } },
-            Row({
-                Label("AI 配色数据", 11, C.text, { fontWeight = "bold", flexGrow = 1 }),
-                SmallButton("复制 AI 指令", function() self:CopyPaletteAIPrompt() end, {
-                    width = 92, height = 27, fontSize = 9, textColor = { 195, 171, 235, 255 },
-                    borderColor = { 72, 57, 92, 255 },
-                }),
-                SmallButton("填入当前配色模板", function() self:FillPaletteTemplate() end, {
-                    width = 126, height = 27, fontSize = 9, textColor = C.teal,
-                    borderColor = { 51, 83, 77, 255 },
-                }),
-            }, { alignItems = "center" }),
-            Label("固定 JSON 字段：floor / corridor / wall / pillar / accentObject / cloth / flame / flameCore",
-                9, C.dim, { whiteSpace = "normal" }),
-            self.paletteDataField, self.paletteError,
+            UI.Panel { width = "100%", padding = { 8, 10 }, gap = 6,
+                backgroundColor = { 12, 16, 24, 255 }, borderColor = C.line, borderWidth = 1, borderRadius = 8,
+                children = {
+                    Row({
+                        Label("AI 配色", 11, C.text, { flexGrow = 1, fontWeight = "bold" }),
+                        self.paletteAIGenerateButton,
+                    }, { alignItems = "center" }),
+                    self.palettePromptField,
+                } },
         },
     }
     self.paletteModal:SetFooter(Row({
-        self.paletteDeleteButton, UI.Panel { flexGrow = 1 },
-        SmallButton("保存并使用", function() self:ApplyCustomPalette() end, {
-            width = 108, variant = "primary", backgroundColor = C.teal, borderColor = C.teal,
+        UI.Panel { flexGrow = 1 },
+        SmallButton("保存", function() self:ApplyCustomPalette() end, {
+            width = 84, variant = "primary", backgroundColor = C.teal, borderColor = C.teal,
             textColor = { 8, 24, 22, 255 }, fontWeight = "bold",
         }),
     }, { alignItems = "center", gap = 8 }))
@@ -894,10 +1002,11 @@ function ControlPanel.new(callbacks, initial)
         width = 82, variant = "danger",
     })
     self.roomGroupModal = OriginalModal {
-        size = "md", dialogWidth = 560, dialogMaxHeight = 100000,
-        closeOnOverlay = true, closeOnEscape = true, showCloseButton = false,
+        size = "md", dialogWidth = 460, dialogMaxHeight = 100000,
+        anchor = "right", anchorMargin = 18, fillHeight = true, verticalMargin = 18,
+        closeOnOverlay = false, closeOnEscape = true, showCloseButton = false,
         contentPadding = 18, contentGap = 12, footerPadding = { 14, 18 }, footerBorderWidth = 1,
-        borderRadius = 14, backgroundColor = { 17, 20, 29, 248 }, backdropColor = { 3, 5, 10, 184 },
+        borderRadius = 14, backgroundColor = { 17, 20, 29, 248 }, backdropColor = { 0, 0, 0, 0 },
         borderColor = { 52, 58, 77, 255 }, borderWidth = 1,
         footerBorderColor = { 40, 46, 64, 255 },
         boxShadow = { { x = 0, y = 24, blur = 80, spread = 0, color = { 0, 0, 0, 215 } } },
@@ -930,7 +1039,7 @@ function ControlPanel.new(callbacks, initial)
         size = "sm", dialogWidth = 460, dialogMaxHeight = 560,
         closeOnOverlay = true, closeOnEscape = true, showCloseButton = false,
         contentPadding = 16, contentGap = 10, footerPadding = { 12, 16 }, footerBorderWidth = 1,
-        borderRadius = 12, backgroundColor = { 17, 20, 29, 250 }, backdropColor = { 3, 5, 10, 190 },
+        borderRadius = 12, backgroundColor = { 17, 20, 29, 250 }, backdropColor = { 0, 0, 0, 0 },
         borderColor = { 52, 58, 77, 255 }, borderWidth = 1, footerBorderColor = { 40, 46, 64, 255 },
         children = {
             Row({
@@ -1337,11 +1446,11 @@ function ControlPanel:GeneratePaletteWithAI()
             return
         end
         self.paletteDataField:SetValue(encoded)
-        self:SyncPaletteColorPickers(colors)
+        self:SyncPaletteColorPickers(colors, false)
         self.paletteAIState = PaletteAIProvider.STATUS.SUCCESS
         self.paletteAIHint:SetText("AI 配色已回填，可继续用色卡微调后保存")
         self.paletteError:SetText("")
-        self:SetStatus("AI 配色已生成；确认色卡后点击保存并使用")
+        self:SetStatus("AI 配色已生成；确认色卡后点击保存")
     end
 
     local callback = self.callbacks.onPaletteAIGenerate
@@ -1359,14 +1468,19 @@ function ControlPanel:GeneratePaletteWithAI()
     end
 end
 
-function ControlPanel:SyncPaletteColorPickers(colors)
+function ControlPanel:SyncPaletteColorPickers(colors, commit)
     if type(colors) ~= "table" then return end
     self.paletteColorValues = {}
+    self.paletteColorDraftDirty = {}
+    if commit ~= false then self.paletteConfirmedColors = {} end
     self.paletteColorUpdating = true
     for _, field in ipairs(PaletteData.COLOR_FIELDS) do
         local color = PaletteData.ParseColor(colors[field])
         if color then
             self.paletteColorValues[field] = color
+            if commit ~= false then self.paletteConfirmedColors[field] = color end
+            self.paletteColorDraftDirty[field] =
+                color ~= self.paletteConfirmedColors[field]
             local picker = self.paletteColorPickers[field]
             if picker then picker:SetHex(string.format("#%06X", color)) end
         end
@@ -1389,10 +1503,79 @@ function ControlPanel:SyncPaletteDataFromColorPickers()
     self.paletteColorUpdating = false
 end
 
-function ControlPanel:SyncPaletteColorPickersFromData(raw)
+function ControlPanel:SyncPaletteConfirmedData()
+    local encoded = PaletteData.EncodeAIData(self.paletteConfirmedColors)
+    if encoded == "" then return false end
+    self.paletteColorUpdating = true
+    self.paletteDataField:SetValue(encoded)
+    self.paletteColorUpdating = false
+    return true
+end
+
+function ControlPanel:SyncPaletteColorPickersFromData(raw, commit)
     if self.paletteColorUpdating then return end
     local colors = PaletteData.DecodeAIData(raw)
-    if colors then self:SyncPaletteColorPickers(colors) end
+    if colors then self:SyncPaletteColorPickers(colors, commit) end
+end
+
+function ControlPanel:ConfirmPaletteColor(field)
+    local color = self.paletteColorValues[field]
+    if not color then return false end
+    self.paletteConfirmedColors[field] = color
+    self.paletteColorDraftDirty[field] = false
+    self:SyncPaletteConfirmedData()
+    self:SetStatus((PaletteData.FIELD_LABELS[field] or field) .. "颜色已确认，可保存")
+    return true
+end
+
+function ControlPanel:CancelPaletteColor(field)
+    local color = self.palettePickerOpenColors[field]
+    if not color then return false end
+    self.paletteColorUpdating = true
+    self.paletteColorValues[field] = color
+    self.paletteColorDraftDirty[field] = color ~= self.paletteConfirmedColors[field]
+    local picker = self.paletteColorPickers[field]
+    if picker then picker:SetHex(string.format("#%06X", color)) end
+    self.paletteColorUpdating = false
+    self:SyncPaletteDataFromColorPickers()
+    self:RequestPalettePreview(true)
+    return true
+end
+
+function ControlPanel:RestorePaletteColor(field)
+    local color = self.paletteDefaultColors[field]
+    if not color then return false end
+    self.paletteColorUpdating = true
+    self.paletteColorValues[field] = color
+    self.paletteColorDraftDirty[field] = color ~= self.paletteConfirmedColors[field]
+    local picker = self.paletteColorPickers[field]
+    if picker then picker:SetHex(string.format("#%06X", color)) end
+    self.paletteColorUpdating = false
+    self:SyncPaletteDataFromColorPickers()
+    self:RequestPalettePreview(true)
+    self:SetStatus((PaletteData.FIELD_LABELS[field] or field) .. "已恢复默认颜色，请确认")
+    return true
+end
+
+function ControlPanel:RequestPalettePreview(force)
+    if not self.paletteModal or not self.paletteModal:IsOpen() then return end
+    local colors = {}
+    for _, field in ipairs(PaletteData.COLOR_FIELDS) do
+        local color = self.paletteColorValues[field]
+        if not color then return end
+        colors[field] = color
+    end
+    local now = os.clock()
+    if not force and now - (self.paletteLastPreviewAt or 0) < PALETTE_PREVIEW_THROTTLE_SECONDS then
+        return
+    end
+    self.paletteLastPreviewAt = now
+    if self.callbacks.onPaletteColorPreview then
+        self.callbacks.onPaletteColorPreview(
+            colors,
+            self.paletteBaseSettingDropdown:GetValue() or "dungeon",
+            self.paletteBasePaletteKey)
+    end
 end
 
 function ControlPanel:FillPaletteTemplate(themeKey)
@@ -1410,11 +1593,32 @@ function ControlPanel:FillPaletteTemplate(themeKey)
 end
 
 function ControlPanel:OpenCustomPaletteModal(item, sourcePaletteKey)
+    if not self:PrepareRightModal("palette", self.paletteModal,
+        function() self:OpenCustomPaletteModal(item, sourcePaletteKey) end) then return end
+    local state = self.currentState or {}
+    if item and sourcePaletteKey and sourcePaletteKey ~= state.themeKey then
+        local targetSetting = item.baseSettingKey or state.settingKey
+        if targetSetting ~= state.settingKey and self.callbacks.onSetting then
+            local settingOk, settingReason = self.callbacks.onSetting(targetSetting)
+            if settingOk == false then
+                self:SetStatus(settingReason or "无法应用配色所属题材")
+                return
+            end
+            state = self.currentState or state
+        end
+        if self.callbacks.onTheme then
+            local themeOk, themeReason = self.callbacks.onTheme(sourcePaletteKey)
+            if themeOk == false then
+                self:SetStatus(themeReason or "无法先应用要编辑的配色")
+                return
+            end
+            state = self.currentState or state
+        end
+    end
     self.editingPaletteId = item and item.id or nil
     self.paletteModalTitle:SetText(item and "编辑自定义配色" or "添加自定义配色")
     self.paletteNameField:SetValue(item and item.label or "")
     self.palettePromptField:SetValue(item and item.prompt or "")
-    local state = self.currentState or {}
     local settingKey = item and item.baseSettingKey or state.settingKey or "dungeon"
     local paletteGroup = item and item.paletteGroup or "theme"
     self.paletteBaseSettingDropdown:SetValue(settingKey)
@@ -1451,13 +1655,23 @@ function ControlPanel:OpenCustomPaletteModal(item, sourcePaletteKey)
     else
         self:FillPaletteTemplate(self.paletteTemplateThemeKey)
     end
-    self.paletteDeleteButton:SetVisible(item ~= nil)
+    self.paletteOriginalData = self.paletteDataField:GetValue()
+    local defaultColors = PaletteData.DecodeAIData(self.paletteOriginalData)
+    self.paletteDefaultColors = defaultColors or {}
+    self.paletteSnapshot = {
+        label = Trim(self.paletteNameField:GetValue()),
+        prompt = Trim(self.palettePromptField:GetValue()),
+        baseSettingKey = self.paletteBaseSettingDropdown:GetValue() or "dungeon",
+        paletteGroup = self.paletteGroupDropdown:GetValue() or "theme",
+    }
     self.paletteAIState = PaletteAIProvider.STATUS.IDLE
     self.paletteAIGenerateButton:SetDisabled(false)
     self.paletteAIHint:SetText("服务接入后自动回填；当前可复制指令给外部 AI")
     self.paletteError:SetText("")
     print("[ControlPanel] open custom palette modal mode=" .. (item and "edit" or "new"))
     self.paletteModal:Open()
+    self.activeRightModal = { kind = "palette", modal = self.paletteModal }
+    self:RequestPalettePreview(true)
 end
 
 function ControlPanel:ClosePaletteColorPickers()
@@ -1466,26 +1680,51 @@ function ControlPanel:ClosePaletteColorPickers()
     end
 end
 
+function ControlPanel:RestorePaletteColors()
+    local original = Trim(self.paletteOriginalData)
+    if original == "" then
+        self.paletteError:SetText("没有可复原的初始配色。")
+        return false
+    end
+    self:ClosePaletteColorPickers()
+    self.paletteColorUpdating = true
+    self.paletteDataField:SetValue(original)
+    self.paletteColorUpdating = false
+    self:SyncPaletteColorPickersFromData(original, false)
+    self.paletteAIState = PaletteAIProvider.STATUS.IDLE
+    self.paletteError:SetText("")
+    self:RequestPalettePreview(true)
+    self:SetStatus("配色已复原，可继续调整或保存")
+    return true
+end
+
 function ControlPanel:ApplyCustomPalette()
     self:ClosePaletteColorPickers()
     local label = Trim(self.paletteNameField:GetValue())
     if label == "" then
         self.paletteError:SetText("请先填写配色名称。")
         self:SetStatus("保存失败：请先填写配色名称")
-        return
+        return false
     end
     for _, item in ipairs((self.currentState or {}).customPalettes or {}) do
         if item.id ~= self.editingPaletteId and string.lower(Trim(item.label)) == string.lower(label) then
             self.paletteError:SetText("已经存在同名配色，请换一个名称。")
             self:SetStatus("保存失败：已经存在同名配色")
-            return
+            return false
         end
     end
-    local colors, reason = PaletteData.DecodeAIData(self.paletteDataField:GetValue())
+    for _, field in ipairs(PaletteData.COLOR_FIELDS) do
+        if self.paletteColorDraftDirty[field] then
+            self.paletteError:SetText("请先点击每个已调整色卡下方的“确认”。")
+            self:SetStatus("保存失败：仍有色卡处于预览状态")
+            return false
+        end
+    end
+    local colors, reason = PaletteData.NormalizeColors(self.paletteConfirmedColors)
     if not colors then
-        self.paletteError:SetText(reason or "AI 配色数据无效。")
+        self.paletteError:SetText(reason or "已确认的配色数据无效。")
         self:SetStatus("保存失败：配色数据未通过校验")
-        return
+        return false
     end
     local settingKey = self.paletteBaseSettingDropdown:GetValue() or "dungeon"
     local paletteGroup = self.paletteGroupDropdown:GetValue() == "default" and "default" or "theme"
@@ -1512,16 +1751,17 @@ function ControlPanel:ApplyCustomPalette()
         self.paletteError:SetText(message)
         self:SetStatus(message)
         print("[ControlPanel] custom palette save error=" .. tostring(ok))
-        return
+        return false
     end
     if ok == false then
         local message = saveReason or "自定义配色保存失败。"
         self.paletteError:SetText(message)
         self:SetStatus(message)
-        return
+        return false
     end
     print("[ControlPanel] custom palette saved label=" .. label)
     self.paletteModal:Close()
+    return true
 end
 
 function ControlPanel:ConfirmDeleteCustomPalette(target)
@@ -1672,7 +1912,107 @@ function ControlPanel:RefreshCustomSettingPlan()
     return self:UpdateCustomSettingPlan(payload)
 end
 
+function ControlPanel:RightModalIsDirty(kind)
+    if kind == "custom" then
+        local snapshot = self.customSettingSnapshot
+        if not snapshot then return false end
+        return Trim(self.customNameField:GetValue()) ~= snapshot.label
+            or (self.customBaseSettingDropdown:GetValue() or "dungeon") ~= snapshot.baseSettingKey
+            or Trim(self.customFloorHeightField:GetValue()) ~= snapshot.floorHeight
+            or Trim(self.customPromptField:GetValue()) ~= snapshot.prompt
+            or (self.customImagePath or "") ~= snapshot.imagePath
+            or (self.customImageFileName or "") ~= snapshot.imageName
+    elseif kind == "palette" then
+        local snapshot = self.paletteSnapshot
+        if not snapshot then return false end
+        if Trim(self.paletteNameField:GetValue()) ~= snapshot.label
+            or Trim(self.palettePromptField:GetValue()) ~= snapshot.prompt
+            or (self.paletteBaseSettingDropdown:GetValue() or "dungeon") ~= snapshot.baseSettingKey
+            or (self.paletteGroupDropdown:GetValue() or "theme") ~= snapshot.paletteGroup then
+            return true
+        end
+        for _, field in ipairs(PaletteData.COLOR_FIELDS) do
+            if self.paletteColorDraftDirty[field]
+                or self.paletteConfirmedColors[field] ~= self.paletteDefaultColors[field] then
+                return true
+            end
+        end
+        return false
+    elseif kind == "room" then
+        local snapshot = self.roomGroupSnapshot
+        if not snapshot then return false end
+        return Trim(self.roomGroupNameField:GetValue()) ~= snapshot.name
+            or Trim(self.roomGroupPromptField:GetValue()) ~= snapshot.prompt
+            or tostring(self.roomGroupColorHex or "") ~= snapshot.color
+            or (self.roomGroupImagePath or "") ~= snapshot.imagePath
+            or (self.roomGroupImageFileName or "") ~= snapshot.imageName
+    end
+    return false
+end
+
+function ControlPanel:DiscardRightModal(kind)
+    if kind == "palette" then
+        self:ClosePaletteColorPickers()
+    end
+    local entry = self.activeRightModal
+    if entry and entry.modal then entry.modal:Close() end
+    self.activeRightModal = nil
+end
+
+function ControlPanel:SaveRightModal(kind)
+    if kind == "custom" then
+        return self:ApplyCustomSetting("draft") == true
+    elseif kind == "palette" then
+        return self:ApplyCustomPalette() == true
+    elseif kind == "room" then
+        return self:ApplyRoomGroup() == true
+    end
+    return false
+end
+
+function ControlPanel:PrepareRightModal(kind, modal, reopen)
+    local active = self.activeRightModal
+    if active and active.modal and not active.modal:IsOpen() then
+        self.activeRightModal = nil
+        active = nil
+    end
+    if not active or active.kind == kind then
+        return active == nil
+    end
+    if self.rightModalSwitchPending then return false end
+    if not self:RightModalIsDirty(active.kind) then
+        active.modal:Close()
+        self.activeRightModal = nil
+        reopen()
+        return false
+    end
+
+    self.rightModalSwitchPending = true
+    UI.Modal.Confirm {
+        title = "未保存的编辑",
+        message = "当前右侧编辑框有未保存内容，要先保存吗？",
+        confirmText = "保存",
+        cancelText = "丢弃",
+        onConfirm = function()
+            self.rightModalSwitchPending = false
+            if self:SaveRightModal(active.kind) then
+                active.modal:Close()
+                self.activeRightModal = nil
+                reopen()
+            end
+        end,
+        onCancel = function()
+            self.rightModalSwitchPending = false
+            self:DiscardRightModal(active.kind)
+            reopen()
+        end,
+    }
+    return false
+end
+
 function ControlPanel:OpenCustomSettingModal(item)
+    if not self:PrepareRightModal("custom", self.customSettingModal,
+        function() self:OpenCustomSettingModal(item) end) then return end
     self:CloseCustomSettingContextMenu()
     self.referenceImagePasteKind = nil
     self.editingCustomId = item and item.id or nil
@@ -1691,8 +2031,17 @@ function ControlPanel:OpenCustomSettingModal(item)
     self:RefreshCustomFloorHeightHint()
     self.customSettingError:SetText("")
     self:RefreshCustomSettingPlan()
+    self.customSettingSnapshot = {
+        label = Trim(self.customNameField:GetValue()),
+        baseSettingKey = self.customBaseSettingDropdown:GetValue() or "dungeon",
+        floorHeight = Trim(self.customFloorHeightField:GetValue()),
+        prompt = Trim(self.customPromptField:GetValue()),
+        imagePath = self.customImagePath or "",
+        imageName = self.customImageFileName or "",
+    }
     print("[ControlPanel] open custom setting modal mode=" .. (item and "edit" or "new"))
     self.customSettingModal:Open()
+    self.activeRightModal = { kind = "custom", modal = self.customSettingModal }
 end
 
 function ControlPanel:ApplyCustomSetting(mode)
@@ -1700,16 +2049,20 @@ function ControlPanel:ApplyCustomSetting(mode)
     -- Require full content (name + description/reference image) for both save
     -- and generate, so incomplete topics cannot be saved.
     local payload = self:ValidateCustomSetting(true)
-    if not payload then return end
-    if mode == "generate" and not self:UpdateCustomSettingPlan(payload) then return end
+    if not payload then return false end
+    if mode == "generate" and not self:UpdateCustomSettingPlan(payload) then return false end
     self.customDraftButton:SetDisabled(true)
     self.customGenerateButton:SetDisabled(true)
     local ok, reason = self.callbacks.onCustomSettingSave(payload, mode)
     self.customDraftButton:SetDisabled(false)
     self.customGenerateButton:SetDisabled(self.customPlanMode == nil or payload.label == "")
-    if ok == false then self.customSettingError:SetText(reason or "题材保存失败，请重试。"); return end
+    if ok == false then
+        self.customSettingError:SetText(reason or "题材保存失败，请重试。")
+        return false
+    end
     print(string.format("[ControlPanel] custom setting %s label=%s", mode, payload.label))
     self.customSettingModal:Close()
+    return true
 end
 
 function ControlPanel:CloseContextMenu()
@@ -1809,6 +2162,8 @@ function ControlPanel:FindRoomGroup(id)
 end
 
 function ControlPanel:OpenRoomGroupModal(item)
+    if not self:PrepareRightModal("room", self.roomGroupModal,
+        function() self:OpenRoomGroupModal(item) end) then return end
     self.referenceImagePasteKind = nil
     self.editingRoomGroupId = item and item.id or nil
     self.roomGroupModalTitle:SetText(item and "编辑房间" or "添加房间")
@@ -1824,8 +2179,16 @@ function ControlPanel:OpenRoomGroupModal(item)
     HighlightField(self.roomGroupNameField, false)
     HighlightField(self.roomGroupPromptField, false)
     self.roomGroupError:SetText("")
+    self.roomGroupSnapshot = {
+        name = Trim(self.roomGroupNameField:GetValue()),
+        prompt = Trim(self.roomGroupPromptField:GetValue()),
+        color = tostring(self.roomGroupColorHex or ""),
+        imagePath = self.roomGroupImagePath or "",
+        imageName = self.roomGroupImageFileName or "",
+    }
     print("[ControlPanel] open room group modal mode=" .. (item and "edit" or "new"))
     self.roomGroupModal:Open()
+    self.activeRightModal = { kind = "room", modal = self.roomGroupModal }
 end
 
 function ControlPanel:ApplyRoomGroup()
@@ -1840,12 +2203,12 @@ function ControlPanel:ApplyRoomGroup()
     if name == "" then
         self.roomGroupError:SetText("请填写房间名称。")
         HighlightField(self.roomGroupNameField, true)
-        return
+        return false
     end
     if prompt == "" and not self.roomGroupImagePath then
         self.roomGroupError:SetText("请至少填写提示词或添加一张参考图。")
         HighlightField(self.roomGroupPromptField, true)
-        return
+        return false
     end
     for _, item in ipairs((self.currentState or {}).roomGroups or {}) do
         if item.id ~= self.editingRoomGroupId
@@ -1853,7 +2216,7 @@ function ControlPanel:ApplyRoomGroup()
             and string.lower(Trim(item.name)) == string.lower(name) then
             self.roomGroupError:SetText("已有同名房间，请换一个名称。")
             HighlightField(self.roomGroupNameField, true)
-            return
+            return false
         end
     end
     local ok, reason = self.callbacks.onRoomGroupSave({
@@ -1861,9 +2224,13 @@ function ControlPanel:ApplyRoomGroup()
         imagePath = self.roomGroupImagePath, imageName = self.roomGroupImageFileName,
         color = RoomGroupColors.Parse(self.roomGroupColorHex),
     })
-    if ok == false then self.roomGroupError:SetText(reason or "房间保存失败，请重试。"); return end
+    if ok == false then
+        self.roomGroupError:SetText(reason or "房间保存失败，请重试。")
+        return false
+    end
     print("[ControlPanel] room group saved name=" .. name)
     self.roomGroupModal:Close()
+    return true
 end
 
 function ControlPanel:ConfirmDeleteRoomGroup(target)
@@ -2193,11 +2560,11 @@ function ControlPanel:SetEditorActive(active, mode)
         borderColor = activeMode == "3d" and C.accent or C.line,
     })
     if activeMode == "3d" then
-        self.hints:SetText(HINT_EDIT_3D)
+        self.hintText:SetText(HINT_EDIT_3D)
     elseif activeMode == "2d" then
-        self.hints:SetText(HINT_EDIT_2D)
+        self.hintText:SetText(HINT_EDIT_2D)
     else
-        self.hints:SetText(HINT_OVERVIEW)
+        self.hintText:SetText(HINT_OVERVIEW)
     end
 end
 function ControlPanel:OpenRoomGroupAssignment()
@@ -2233,7 +2600,7 @@ function ControlPanel:SetPreviewActive(active, mode)
     self.editorButtons:SetVisible(not active)
     self.previewExitButton:SetVisible(active)
     self.previewHud:SetVisible(active)
-    self.previewBarAnchor:SetStyle({ bottom = active and 18 or 48 })
+    self.previewBarAnchor:SetStyle({ bottom = active and 18 or 84 })
     if active then self:SetPreviewMode(mode or "third") else self.previewCrosshair:SetVisible(false) end
 end
 function ControlPanel:SetStatus(text) self.stats:SetText(text) end

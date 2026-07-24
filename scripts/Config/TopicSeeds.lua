@@ -4,13 +4,19 @@ local TopicSeeds = {
     SCHEMA_VERSION = 1,
     SOURCE = "seed-theme-v1",
     DEFAULT_ID = "theme-dungeon",
-    order = { "theme-dungeon", "theme-hospital", "theme-school" },
+    order = { "theme-dungeon", "theme-temple", "theme-hospital", "theme-school" },
 }
 
 TopicSeeds.records = {
     ["theme-dungeon"] = {
         id = "theme-dungeon", label = "遗迹", prompt = "石质建筑与地下空间",
         baseSettingKey = "dungeon", floorHeight = MultiFloor.FLOOR_HEIGHT,
+        packStatus = "ready", generationMode = "generic", plannerSource = TopicSeeds.SOURCE,
+    },
+    ["theme-temple"] = {
+        id = "theme-temple", label = "神殿遗迹",
+        prompt = "觉醒的远古神殿：符文法阵、神辉光柱、悬浮水晶、断墙与守护者巨像",
+        baseSettingKey = "temple", floorHeight = MultiFloor.FLOOR_HEIGHT,
         packStatus = "ready", generationMode = "generic", plannerSource = TopicSeeds.SOURCE,
     },
     ["theme-hospital"] = {
@@ -27,6 +33,7 @@ TopicSeeds.records = {
 
 local IDS_BY_SETTING = {
     dungeon = "theme-dungeon",
+    temple = "theme-temple",
     hospital = "theme-hospital",
     school = "theme-school",
 }

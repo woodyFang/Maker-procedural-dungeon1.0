@@ -902,17 +902,77 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
         local function DecorateDungeonRoom(room)
             -- Ruins room layout now runs on the generic RoomLayout patterns; the
             -- prop kinds are ruins DATA, the placement mechanics are shared.
+            -- Signature set pieces come from the profile as data too, so plain
+            -- 遗迹 (no roomSetPieces) keeps its original dressing while 神殿遗迹
+            -- layers guardians, obelisks, arch ruins and crystal clusters on top.
+            local setPieces = profile.roomSetPieces or {}
             if room.type == ROOM_TYPES.ENTRANCE then
                 RoomLayout.focal(room, rng, { kind = "ring", rot = 0, tries = 24 }, layoutPlace)
             elseif room.type == ROOM_TYPES.BOSS then
+                -- The guardian claims its cell on the low-Y edge first (facing
+                -- the room centre); anchor and brazier ring then fill around it
+                -- through the same occupancy checks.
+                local guardian = setPieces.bossGuardian
+                if guardian then
+                    local guardY = math.ceil(room.cy - room.h * 0.5) + (guardian.edgeInset or 2)
+                    if not AddPropAt(room, guardian.kind, room.cx, guardY, 0, guardian.scale or 1.25) then
+                        AddProp(room, guardian.kind, { rot = 0, scale = guardian.scale or 1.2, tries = 40 })
+                    end
+                end
                 RoomLayout.ring(room, rng, {
                     kind = "brazier", count = 6, angleSpan = 1,
                     anchor = "bossCrystal", anchorScale = 1.15,
                 }, layoutPlace)
             elseif room.type == ROOM_TYPES.TREASURE then
                 RoomLayout.focal(room, rng, { kind = "chest", tries = 24 }, layoutPlace)
+                if setPieces.treasureFocal then
+                    RoomLayout.focal(room, rng, {
+                        kind = setPieces.treasureFocal.kind, count = setPieces.treasureFocal.count,
+                        scaleMin = setPieces.treasureFocal.scaleMin,
+                        scaleMax = setPieces.treasureFocal.scaleMax, tries = 30,
+                    }, layoutPlace)
+                end
+                if setPieces.treasureGold then
+                    RoomLayout.focal(room, rng, {
+                        kind = setPieces.treasureGold.kind, count = setPieces.treasureGold.count,
+                        scaleMin = setPieces.treasureGold.scaleMin,
+                        scaleMax = setPieces.treasureGold.scaleMax, tries = 30,
+                    }, layoutPlace)
+                end
             elseif room.type == ROOM_TYPES.SHRINE then
                 RoomLayout.focal(room, rng, { kind = "shrineCrystal", tries = 24 }, layoutPlace)
+                if setPieces.shrineFocal then
+                    RoomLayout.focal(room, rng, {
+                        kind = setPieces.shrineFocal.kind, count = setPieces.shrineFocal.count,
+                        scaleMin = setPieces.shrineFocal.scaleMin,
+                        scaleMax = setPieces.shrineFocal.scaleMax, tries = 30,
+                    }, layoutPlace)
+                end
+            elseif room.type == ROOM_TYPES.ELITE and setPieces.eliteRing
+                and math.min(room.w, room.h) >= (setPieces.eliteRing.minDim or 8) then
+                RoomLayout.ring(room, rng, {
+                    kind = setPieces.eliteRing.kind, count = setPieces.eliteRing.count or 4,
+                    radius = math.min(room.w, room.h) * 0.5 - (setPieces.eliteRing.radiusInset or 2.5),
+                    scaleMin = setPieces.eliteRing.scaleMin, scaleMax = setPieces.eliteRing.scaleMax,
+                    rot = 0,
+                }, layoutPlace)
+            end
+
+            if room.type == ROOM_TYPES.COMBAT and not room.grave and not room.lake then
+                local arch = setPieces.combatArch
+                if arch and math.min(room.w, room.h) >= (arch.minDim or 12)
+                    and rng:Chance(arch.chance or 0.4) then
+                    RoomLayout.focal(room, rng, {
+                        kind = arch.kind, scaleMin = arch.scaleMin, scaleMax = arch.scaleMax, tries = 30,
+                    }, layoutPlace)
+                end
+                local broken = setPieces.combatBroken
+                if broken and math.min(room.w, room.h) >= (broken.minDim or 8) then
+                    RoomLayout.focal(room, rng, {
+                        kind = broken.kind, count = rng:Chance(broken.chance or 0.55) and 2 or 1,
+                        scaleMin = broken.scaleMin, scaleMax = broken.scaleMax, tries = 26,
+                    }, layoutPlace)
+                end
             end
 
             if (room.type == ROOM_TYPES.COMBAT or room.type == ROOM_TYPES.ELITE or room.type == ROOM_TYPES.BOSS)
@@ -979,6 +1039,11 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
                     if not DecorateRoomGroup(room) then DecorateHospitalRoom(room) end
                 elseif ThemePacks.Get(settingKey) then
                     DecorateThemePackRoom(room, ThemePacks.Get(settingKey))
+                elseif settingKey == "temple" then
+                    -- Named temple rooms own their signature composition. Keep
+                    -- the profile decorator as a compatibility fallback for
+                    -- older saves that do not yet contain seed room groups.
+                    if not DecorateRoomGroup(room) then DecorateDungeonRoom(room) end
                 else
                     DecorateDungeonRoom(room)
                 end

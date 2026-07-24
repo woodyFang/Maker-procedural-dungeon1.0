@@ -5,14 +5,18 @@ local Themes = {}
 Themes.settings = {
     dungeon = { key = "dungeon", label = "遗迹", description = "石质建筑与地下空间",
         themePalettes = {} },
+    temple = { key = "temple", label = "神殿遗迹", description = "觉醒的远古神殿：符文、神辉与浮晶",
+        themePalettes = { "templeGold", "templeMagma", "templeFrost", "templeGrim", "templeVine" } },
     hospital = { key = "hospital", label = "医院", description = "现代医疗建筑与设施",
         themePalettes = { "sterile", "abandoned", "emergency" } },
     school = { key = "school", label = "学校", description = "教室、图书馆与校园设施",
         themePalettes = { "schoolDay", "schoolClassic", "schoolEvening" } },
 }
 Themes.defaultPalettes = { "ancient", "molten", "frost", "grim", "verdant" }
-Themes.settingOrder = { "dungeon", "hospital", "school" }
-Themes.order = { "ancient", "molten", "frost", "grim", "verdant", "sterile", "abandoned", "emergency",
+Themes.settingOrder = { "dungeon", "temple", "hospital", "school" }
+Themes.order = { "ancient", "molten", "frost", "grim", "verdant",
+    "templeGold", "templeMagma", "templeFrost", "templeGrim", "templeVine",
+    "sterile", "abandoned", "emergency",
     "schoolDay", "schoolClassic", "schoolEvening" }
 
 local function Theme(key, label, accent, background, sky, ground, ambient, sun, sunIntensity,
@@ -38,6 +42,19 @@ Themes.grim = Theme("grim", "暗绿", 0x9fe66a, 0x070a07, 0x2c4030, 0x070a06, 0.
     0x7c8276, 0x62685c, 0x4f5549, 0x5c6254, 0x41602c, 0x8fe05a, 0xe9ffd0)
 Themes.verdant = Theme("verdant", "青绿", 0x59d68f, 0x060c09, 0x2f5a46, 0x08120c, 0.6, 0xd8f0c8, 0.8,
     0x848e7e, 0x6a7560, 0x556050, 0x606c5c, 0x2fa38a, 0x62e0a8, 0xe6fff0)
+
+-- 神殿遗迹（temple）：遗迹 2.0 炫技题材的五套专属色调。结构基色沿用对应
+-- 遗迹色系（保持中性结构规则），差异集中在雾、火光、池与 fx 数据。
+Themes.templeGold = Theme("templeGold", "苍金", 0xf0a848, 0x07080d, 0x33405c, 0x0a0b10, 0.55, 0xffe2b8, 0.90,
+    0x9a9284, 0x7d766a, 0x6b665c, 0x7a7466, 0xe8b34a, 0xffa640, 0xffe9b8)
+Themes.templeMagma = Theme("templeMagma", "熔火", 0xff8642, 0x0c0605, 0x6b3419, 0x160503, 0.55, 0xffd9b0, 0.5,
+    0x7a685c, 0x614f44, 0x503e34, 0x5e4a3e, 0xff5a1f, 0xff7a1e, 0xffe9b0)
+Themes.templeFrost = Theme("templeFrost", "冰髓", 0x7fd4ff, 0x060a12, 0x3a5a80, 0x0a0e18, 0.5, 0xcfe4ff, 0.82,
+    0x93a0b2, 0x78848f, 0x60708a, 0x70809a, 0xbfe4ff, 0x86d9ff, 0xe8f7ff)
+Themes.templeGrim = Theme("templeGrim", "幽冥", 0x9fe66a, 0x070a07, 0x2c4030, 0x070a06, 0.52, 0xbfd8b0, 0.45,
+    0x7c8276, 0x62685c, 0x4f5549, 0x5c6254, 0x41602c, 0x8dff5a, 0xe9ffd0)
+Themes.templeVine = Theme("templeVine", "秘藤", 0x59d68f, 0x060c09, 0x2f5a46, 0x08120c, 0.6, 0xd8f0c8, 0.8,
+    0x848e7e, 0x6a7560, 0x556050, 0x606c5c, 0x2fa38a, 0x62e0a8, 0xe6fff0)
 Themes.sterile = Theme("sterile", "冷白", 0x5fd1c7, 0x05090a, 0x6f8f8a, 0x050909, 0.42, 0xb7d6cf, 0.48,
     0x7d8884, 0x697572, 0x5b6662, 0x66716d, 0x5fd1c7, 0x5fd1c7, 0xcffaf3)
 Themes.abandoned = Theme("abandoned", "灰绿", 0x79b65f, 0x050807, 0x47654d, 0x050806, 0.44, 0xa9c39b, 0.5,
@@ -51,9 +68,16 @@ Themes.schoolClassic = Theme("schoolClassic", "学院绿", 0x356f52, 0x121713, 0
 Themes.schoolEvening = Theme("schoolEvening", "放学橙", 0xe0a545, 0x11151b, 0x5e6d7a, 0x17191f, 0.36, 0xc9b39a, 0.42,
     0x707d81, 0x667279, 0x828c8b, 0x737f7f, 0xe0a545, 0xc7a16c, 0xcbb58d)
 
--- Rendering values are kept byte-for-byte with the Three.js palette specs.
--- The compact constructor above supplies UI-friendly defaults; this table
--- restores fields used by procedural generation and model colouring.
+-- Rendering values for the five DEFAULT palettes are kept byte-for-byte with
+-- the Three.js palette specs. The temple palettes below them belong to the
+-- 神殿遗迹 setting and were designed around the AtmosphereFX layer: every one
+-- enables bloom, carries a particle field, and declares its signature
+-- effects in `fx`:
+--   godRays    { count, color, alpha }  divine light columns over key rooms
+--   runeColor  emissive tint for rune circles / obelisk glyphs / guardian eyes
+--   orbitColor emissive tint for orbiting shards and floating crystals
+--   wisps      { color, perRoom, height } rising soul lights over grave rooms
+--   pulse      { min, max, speed } global emissive breathing envelope
 local exact = {
     ancient = { fog = 0x07080d, fogDensity = 0.0021, cap = 0x757b88, debris = { 0x4c515e, 0x60584a },
         cloth = 0x7d2c26, torchLight = { 0xff8c3a, 1.5, 9.5 }, particles = { kind = 0, color = 0xaab4cc, n = 110 } },
@@ -73,6 +97,42 @@ local exact = {
         cloth = 0x1f5038, torchLight = { 0x4ad98e, 1.3, 9 },
         pools = { mode = 2, colA = 0x0c3532, colB = 0x2fa38a, glow = 0.6, amount = 0.05, pits = 1 },
         roots = true, shafts = true, particles = { kind = 4, color = 0x8fe6b8, n = 200 } },
+    templeGold = { fog = 0x080a12, fogDensity = 0.0024, cap = 0x757b88, debris = { 0x4c515e, 0x60584a },
+        cloth = 0x8a2f26, torchLight = { 0xff9a3a, 1.45, 9 },
+        particles = { kind = 0, color = 0xd9c48f, n = 110 }, bloom = true,
+        fx = { emissiveScale = 0.52, godRays = { count = 4, color = 0xffd9a0, alpha = 0.07 },
+            runeColor = 0xffd27a, orbitColor = 0xffd27a,
+            pulse = { min = 0.95, max = 1.08, speed = 1.1 } } },
+    templeMagma = { fog = 0x1c0b04, fogDensity = 0.0031, cap = 0x6b5546, debris = { 0x4a382e, 0x60462f },
+        cloth = 0x7d2416, torchLight = { 0xff6a1e, 1.55, 9.5 },
+        pools = { mode = 0, colA = 0x2b0d05, colB = 0xff5a1f, glow = 1.35, amount = 0.17, pits = 2 },
+        particles = { kind = 1, color = 0xffa050, n = 170 }, bloom = true,
+        fx = { emissiveScale = 0.48, runeColor = 0xff7a2e, orbitColor = 0xff9a4a,
+            pulse = { min = 0.91, max = 1.14, speed = 0.8 } } },
+    templeFrost = { fog = 0x0b1522, fogDensity = 0.0026, cap = 0x8194ac, debris = { 0x55617a, 0x6d7a90 },
+        cloth = 0x2b4d70, torchLight = { 0x6fc4ff, 1.25, 8.5 },
+        pools = { mode = 1, colA = 0x4a86c0, colB = 0xbfe4ff, glow = 0.48, amount = 0 },
+        lakes = true, icicles = true,
+        particles = { kind = 2, color = 0xeaf6ff, n = 150 }, bloom = true,
+        fx = { emissiveScale = 0.50, godRays = { count = 3, color = 0x9fd8ff, alpha = 0.055 },
+            runeColor = 0x9fe0ff, orbitColor = 0xbfe9ff,
+            pulse = { min = 0.95, max = 1.07, speed = 0.65 } } },
+    templeGrim = { fog = 0x0a130a, fogDensity = 0.0033, cap = 0x666c5e, debris = { 0x4a4f44, 0x5e5c48 },
+        cloth = 0x33461f, torchLight = { 0x77d94a, 1.25, 8.5 },
+        pools = { mode = 3, colA = 0x0a1207, colB = 0x41602c, glow = 0.52, amount = 0.04, pits = 1 },
+        graveyards = true, bones = true,
+        particles = { kind = 3, color = 0xa8ff70, n = 110 }, bloom = true,
+        fx = { emissiveScale = 0.48, runeColor = 0x8dff5a, orbitColor = 0x9fe66a,
+            wisps = { color = 0xb6ff8a, perRoom = 2, height = 2.0 },
+            pulse = { min = 0.92, max = 1.10, speed = 0.95 } } },
+    templeVine = { fog = 0x091510, fogDensity = 0.0025, cap = 0x6e7a66, debris = { 0x49543f, 0x5c644c },
+        cloth = 0x1f5038, torchLight = { 0x4ad98e, 1.25, 8.5 },
+        pools = { mode = 2, colA = 0x0c3532, colB = 0x2fa38a, glow = 0.50, amount = 0.04, pits = 1 },
+        roots = true, shafts = true,
+        particles = { kind = 4, color = 0xd8ff8a, n = 140 }, bloom = true,
+        fx = { emissiveScale = 0.50, godRays = { count = 4, color = 0xcfeaa0, alpha = 0.075 },
+            runeColor = 0x54e0a0, orbitColor = 0x7dffc0,
+            pulse = { min = 0.94, max = 1.09, speed = 0.9 } } },
     sterile = { fog = 0x071011, fogDensity = 0.0025, floor = 0x6f7975, corridor = 0x626d69,
         ambient = 0.48, sunIntensity = 0.58,
         wall = 0x56615d, cap = 0x78837f, pillar = 0x5d6865, debris = { 0x434b49, 0x747f7b },
@@ -214,6 +274,7 @@ function Themes.GetSetting(key) return Themes.settings[key] or Themes.settings.d
 
 local DEFAULT_THEME_BY_SETTING = {
     dungeon = "ancient",
+    temple = "templeGold",
     hospital = "sterile",
     school = "schoolDay",
 }

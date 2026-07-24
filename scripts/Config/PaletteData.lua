@@ -102,6 +102,18 @@ function PaletteData.CreateRuntimeTheme(record, baseTheme)
         theme.pools.colB = colors.accentObject
     end
     if type(theme.particles) == "table" then theme.particles.color = colors.flameCore end
+    -- AtmosphereFX colors follow the palette: runes/glyphs use the glow color,
+    -- orbitals/floating crystals the highlight, god rays a lifted glow tint.
+    if type(theme.fx) == "table" then
+        theme.fx.runeColor = colors.flame
+        theme.fx.orbitColor = colors.flameCore
+        if type(theme.fx.godRays) == "table" then
+            theme.fx.godRays.color = MixColor(colors.flame, 0xffffff, 0.35)
+        end
+        if type(theme.fx.wisps) == "table" then
+            theme.fx.wisps.color = colors.flameCore
+        end
+    end
     return theme
 end
 

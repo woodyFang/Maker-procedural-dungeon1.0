@@ -198,8 +198,10 @@ local function DrawStairs(editor, vg, viewport)
     for index, link in ipairs(editor.links) do
         local connector = link.connector
         local roomA, roomB = editor.rooms[link.a], editor.rooms[link.b]
-        if (editor:GetViewMode() == "2d" or index == editor.selectedLink)
-            and connector and roomA and roomB and roomA.floor ~= roomB.floor
+        -- Every stair touching the current floor renders in this NanoVG layer,
+        -- above corridors and room overlays; 3D overlay boxes alone sit below
+        -- the corridor canvas and get covered.
+        if connector and roomA and roomB and roomA.floor ~= roomB.floor
             and (roomA.floor == editor.floor or roomB.floor == editor.floor) then
             local segments, platform = StairEditing.VisualSegments(connector)
             local scale = viewport:PixelsPerGrid(editor,

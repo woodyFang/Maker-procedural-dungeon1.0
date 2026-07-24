@@ -143,4 +143,51 @@ function RoomLayout.focal(room, rng, spec, place)
     end
 end
 
+-- One or a few focal props held against a room edge. This is useful for a
+-- guardian, throne, altar or stage that should frame the room without
+-- consuming the central combat lane. Placement still goes through `place.at`.
+-- side: south/north/west/east; edgeInset is measured from the inner bounds.
+function RoomLayout.edgeFocal(room, rng, spec, place)
+    local x0, x1, y0, y1 = Bounds(room, spec.margin)
+    local side = spec.side or "south"
+    local inset = math.max(0, math.floor(spec.edgeInset or 0))
+    local rot = spec.rot
+    local edgeX, edgeY, horizontal
+    if side == "north" then
+        edgeY, horizontal, rot = y1 - inset, true, rot or math.pi
+    elseif side == "west" then
+        edgeX, horizontal, rot = x0 + inset, false, rot or -math.pi * 0.5
+    elseif side == "east" then
+        edgeX, horizontal, rot = x1 - inset, false, rot or math.pi * 0.5
+    else
+        edgeY, horizontal, rot = y0 + inset, true, rot or 0
+    end
+
+    local values = {}
+    if horizontal then
+        local center = math.floor((x0 + x1) * 0.5 + 0.5)
+        values[#values + 1] = center
+        for offset = 1, math.max(center - x0, x1 - center) do
+            if center - offset >= x0 then values[#values + 1] = center - offset end
+            if center + offset <= x1 then values[#values + 1] = center + offset end
+        end
+        for _, x in ipairs(values) do
+            local scale = spec.scale or (spec.scaleMin and Scale(rng, spec)) or 1
+            if place.at(room, spec.kind, x, edgeY, rot, scale) then return 1 end
+        end
+    else
+        local center = math.floor((y0 + y1) * 0.5 + 0.5)
+        values[#values + 1] = center
+        for offset = 1, math.max(center - y0, y1 - center) do
+            if center - offset >= y0 then values[#values + 1] = center - offset end
+            if center + offset <= y1 then values[#values + 1] = center + offset end
+        end
+        for _, y in ipairs(values) do
+            local scale = spec.scale or (spec.scaleMin and Scale(rng, spec)) or 1
+            if place.at(room, spec.kind, edgeX, y, rot, scale) then return 1 end
+        end
+    end
+    return 0
+end
+
 return RoomLayout

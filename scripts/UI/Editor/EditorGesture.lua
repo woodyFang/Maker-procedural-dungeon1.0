@@ -189,6 +189,9 @@ function EditorGesture.Finish(editor, mousePosition)
                 h = Clamp(math.floor(maxY - minY + 0.5), 5, 24),
                 floor = editor.floor,
             }
+            -- Drawn rooms start disconnected; keep them valid as secret rooms
+            -- until a path connects them (which clears the flag).
+            editor:MarkDisconnectedRoomsSecret()
             editor.selected = #editor.rooms
             editor:NotifySelection()
             editor.draw = nil

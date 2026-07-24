@@ -3,6 +3,7 @@ local ProceduralModelCache = require("Rendering.ProceduralModelCache")
 local PropBlueprints = require("Rendering.PropBlueprints")
 local ExactGeometryBatcher = require("Rendering.ExactGeometryBatcher")
 local StairRenderPlan = require("Rendering.StairRenderPlan")
+local AtmosphereFX = require("Rendering.AtmosphereFX")
 local Random = require("Generation.Random")
 local MultiFloor = require("Generation.MultiFloor")
 local EditorSelectionHighlight = require("Rendering.EditorSelectionHighlight")
@@ -203,6 +204,7 @@ function NativeDungeonRenderer:Clear()
     self.dynamicLights = {}
     self.animation = nil
     self.selectionRoot = nil
+    self.atmosphere = nil
 end
 
 function NativeDungeonRenderer:RefreshEditorSelection()
@@ -724,7 +726,7 @@ function NativeDungeonRenderer:Build(dungeon, themeKey, options)
             object = object, showTime = showTime or timeline.total, shown = false,
         }
     end
-    local theme = Themes.Resolve(settingKey, themeKey)
+    local theme = options.previewTheme or Themes.Resolve(settingKey, themeKey)
     local root = self.scene:CreateChild("GeneratedDungeon")
     self.root = root
 
@@ -766,7 +768,7 @@ function NativeDungeonRenderer:Build(dungeon, themeKey, options)
                 propLightCount = propLightCount + 1
                 self:AddPointLight(root, "PropLight-" .. layer.floor .. "-" .. propLightCount,
                     Vector3(x, baseY + 1.0 * verticalScale, z), HexColor(theme.accentObject, 1.0), 2.4, 6.2,
-                    settingKey == "dungeon")
+                    settingKey == "dungeon" or settingKey == "temple")
             end
         end
         for _, spawn in ipairs(layer.spawns) do
@@ -789,6 +791,22 @@ function NativeDungeonRenderer:Build(dungeon, themeKey, options)
     self.batchCount = self.batchCount + exactBatches
     if options.roomGroupsVisible then
         self:AddRoomGroupHighlights(root, dungeon, FloorVisible, options.roomGroups)
+    end
+
+    -- Dynamic atmosphere layer (ruins particles, god rays, gates, sigils).
+    -- Built after Flush so the shared emissive materials exist for the pulse.
+    self.atmosphere = AtmosphereFX.Build({
+        parent = root, dungeon = dungeon, theme = theme, settingKey = settingKey,
+        modelCache = self.modelCache, floorVisible = FloorVisible,
+        floorSpacing = self.floorSpacing,
+        worldPosition = function(gridX, gridY, floor, localY)
+            return self:WorldPosition(dungeon, gridX, gridY, floor, localY)
+        end,
+        emissiveEntries = exact:GetEmissiveEntries(),
+        revealTime = animate and timeline.atmosphere.start or 0,
+    })
+    if self.atmosphere then
+        self.instanceCount = self.instanceCount + self.atmosphere.nodeCount
     end
 
     local stairs = {}
@@ -865,7 +883,8 @@ function NativeDungeonRenderer:Build(dungeon, themeKey, options)
                     connector.fromFloor, anchor.elevation)
                 self:AddPointLight(root, "StairLight-" .. connector.id .. "-" .. index,
                     Vector3(lx, ly, lz), HexColor(stairLightSpec[1], 1.0),
-                    stairLightSpec[2], stairLightSpec[3], settingKey == "dungeon")
+                    stairLightSpec[2], stairLightSpec[3],
+                    settingKey == "dungeon" or settingKey == "temple")
             end
         end
     end
@@ -953,6 +972,7 @@ function NativeDungeonRenderer:Update(timeStep)
         end
         entry.light.brightness = entry.base * flicker * lightRamp
     end
+    if self.atmosphere then AtmosphereFX.Update(self.atmosphere, timeStep) end
     if self.animation then
         local animation = self.animation
         local updateMs = (os.clock() - updateStarted) * 1000

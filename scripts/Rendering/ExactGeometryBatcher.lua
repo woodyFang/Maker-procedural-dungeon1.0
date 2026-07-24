@@ -6,6 +6,7 @@ local Bridge = require("Rendering.GeometryBridge")
 local MaterialRules = require("Rendering.ProceduralMaterialRules")
 local ThemeToneRules = require("Rendering.ThemeToneRules")
 local ThemePacks = require("Config.ThemePacks")
+local EnvironmentProfiles = require("Config.EnvironmentProfiles")
 
 local materialRulesValid, materialRulesError = MaterialRules.Validate()
 assert(materialRulesValid, materialRulesError)
@@ -52,6 +53,10 @@ local function MakeMaterials()
         wall = Bridge.Material(profiles.dungeonWall),
         cap = Bridge.Material(profiles.dungeonCap),
         stone = Bridge.Material(profiles.stone),
+        templeFloor = Bridge.Material(profiles.templeFloor),
+        templeWall = Bridge.Material(profiles.templeWall),
+        templeCap = Bridge.Material(profiles.templeCap),
+        gild = Bridge.Material(profiles.gild),
         hospitalFloor = Bridge.Material(profiles.hospitalFloor),
         hospitalWall = Bridge.Material(profiles.hospitalWall),
         hospitalTrim = Bridge.Material(profiles.hospitalTrim),
@@ -76,11 +81,22 @@ function ExactGeometryBatcher.new(dungeon, theme, settingKey)
         local valid, reason = ThemePacks.Validate(pack, Geometry.GEO, MaterialRules.PROFILES)
         assert(valid, reason)
     end
+    local profile = EnvironmentProfiles.Resolve(settingKey)
+    local structureKit = (pack and pack.structure) or profile.structure
     return setmetatable({
         dungeon = dungeon,
         theme = theme,
         settingKey = settingKey,
         pack = pack,
+        profile = profile,
+        -- Flame style comes with the structure kit: the temple burns arcane
+        -- orbs where the ruins burn cone flames.
+        flameGeo = structureKit and structureKit.flameGeometry or "flame",
+        flameCoreGeo = structureKit and structureKit.flameCoreGeometry or "flameCore",
+        -- Props listed here keep only their static base in the merged batches;
+        -- the AtmosphereFX layer owns the moving part (spinning gate rings,
+        -- floating shrine crystal). Empty for settings without an atmosphere.
+        animatedProps = profile.atmosphere and profile.atmosphere.animatedProps or {},
         hospital = settingKey == "hospital",
         school = settingKey == "school",
         materials = MakeMaterials(),
@@ -152,14 +168,15 @@ function ExactGeometryBatcher:GetEmissiveMaterial(color)
     local key = color or 0xffffff
     local material = self.emissiveMaterials[key]
     if not material then
+        local emissiveScale = self.theme.fx and self.theme.fx.emissiveScale or 1.0
         material = Bridge.EmissiveMaterial({
             color = 0xffffff,
             emissiveColor = key,
-            emissiveStrength = 1.65,
+            emissiveStrength = 1.65 * emissiveScale,
             roughness = 0.32,
             metalness = 0.0,
             transparent = true,
-            opacity = 0.94,
+            opacity = 0.86,
             side = 2,
         })
         self.emissiveMaterials[key] = material
@@ -198,14 +215,36 @@ local function IsDoorWallCut(layer, x, y, width, height)
         or (IsDoor(x, y + 1) and IsFloor(x, y - 1))
 end
 
+local FOUR_DIRECTIONS = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
+
+local function IsDoorAdjacent(layer, x, y, width, height)
+    for _, direction in ipairs(FOUR_DIRECTIONS) do
+        local nx, ny = x + direction[1], y + direction[2]
+        if nx >= 0 and ny >= 0 and nx < width and ny < height
+            and layer.doorway[Index(nx, ny, width)] then
+            return true
+        end
+    end
+    return false
+end
+
 function ExactGeometryBatcher:QueueStructure(layer, floorSpacing)
     local width, height = self.dungeon.width, self.dungeon.height
-    local structure = self.pack and self.pack.structure or nil
+    -- Structure kits come from a ThemePack, or (for built-in settings without
+    -- a pack, e.g. 神殿遗迹) from the environment profile as plain data.
+    local structure = (self.pack and self.pack.structure) or self.profile.structure
     local rng = Random.new((self.dungeon.seed ~ 0x9e3779b9) + layer.floor * 0x45d9f3b)
     local tone = ThemeToneRules.Resolve(self.settingKey)
     local mossMask = {}
+    -- Wall cells carrying a mounted fixture (torch, banner, icicle, roots…)
+    -- must keep their full height, otherwise the fixture floats over a stub.
+    local mountedWallMask = {}
+    for _, torch in ipairs(layer.torches) do
+        mountedWallMask[Index(torch.x, torch.y, width)] = true
+    end
     for _, prop in ipairs(layer.props) do
         if prop.kind == "moss" then mossMask[Index(prop.x, prop.y, width)] = true end
+        if prop.dx or prop.dy then mountedWallMask[Index(prop.x, prop.y, width)] = true end
     end
 
     for y = 0, height - 1 do
@@ -256,6 +295,15 @@ function ExactGeometryBatcher:QueueStructure(layer, floorSpacing)
                     or (self.hospital and "hospitalFloor" or "floor")
                 local floorMaterial = structure and structure.floorMaterial
                     or (self.hospital and "hospitalFloor" or "floor")
+                -- Paving accents: a kit may swap in a relief slab on a fixed
+                -- lattice (processional rosettes), and lay a faint glowing
+                -- rune inlay inside rooms only — both pure data.
+                if structure and structure.floorAccentGeometry then
+                    local every = structure.floorAccentEvery or 2
+                    if x % every == 0 and y % every == 0 then
+                        floorGeometry = structure.floorAccentGeometry
+                    end
+                end
                 self:Add("floorSeal", floorMaterial, {
                     x = worldX, y = baseY, z = worldZ,
                     color = MultiplyColor(color, GeometryRules.FLOOR_SEAL_COLOR_FACTOR),
@@ -265,6 +313,15 @@ function ExactGeometryBatcher:QueueStructure(layer, floorSpacing)
                         y = baseY + rng:Float(GeometryRules.FLOOR_Y_JITTER_MIN, GeometryRules.FLOOR_Y_JITTER_MAX),
                         z = worldZ, color = color,
                     })
+                local inlay = structure and structure.floorInlay
+                if inlay and rid > 0 and not layer.corridor[c]
+                    and x % (inlay.every or 3) == 1 and y % (inlay.every or 3) == 1 then
+                    self:Add(inlay.geometry, "glow", {
+                        x = worldX, y = baseY, z = worldZ,
+                        color = LerpColor(self:FxColor(inlay.colorField or "runeColor"),
+                            0x000000, inlay.dim or 0.45),
+                    })
+                end
             elseif tile == TILE_WALL and not IsDoorWallCut(layer, x, y, width, height) then
                 -- Double-height stair walls span two storeys as one seamless wall.
                 -- The tall wall is drawn from the lower floor; the upper floor's
@@ -291,10 +348,30 @@ function ExactGeometryBatcher:QueueStructure(layer, floorSpacing)
                     or (self.hospital and "hospitalWall" or "wall")
                 local wallGeometry = structure and structure.wallGeometry
                     or (self.hospital and "hospitalWall" or "wall")
+                -- Curtain-and-pier rhythm: (x + y) % N == 0 lands an engaged
+                -- column at an even interval along any straight wall run,
+                -- horizontal or vertical, with brick panels in between.
+                if structure and structure.wallAccentGeometry
+                    and (x + y) % (structure.wallAccentEvery or 3) == 0 then
+                    wallGeometry = structure.wallAccentGeometry
+                    wallColor = MultiplyColor(wallColor, structure.wallAccentGain or 1.0)
+                end
                 local capGeometry = structure and structure.capGeometry
                     or (self.hospital and "hospitalWallCap" or "wallCap")
                 local capMaterial = structure and structure.capMaterial
                     or (self.hospital and "hospitalTrim" or "cap")
+                -- Structural weathering: a small fraction of plain walls
+                -- collapse to a stub with rubble on the break. Stair walls,
+                -- doorway frames and fixture-bearing cells always stay whole.
+                local ruin = self.profile.structureRuin
+                local ruinFactor = nil
+                if ruin and not doubleMask and not mountedWallMask[c]
+                    and not (layer.stairWallMask and layer.stairWallMask[c])
+                    and rng:Chance(ruin.brokenWallChance or 0)
+                    and not IsDoorAdjacent(layer, x, y, width, height) then
+                    ruinFactor = rng:Float(ruin.heightMin or 0.32, ruin.heightMax or 0.60)
+                    wallHeight = wallHeight * ruinFactor
+                end
                 if not skipDoubleUpper then
                     self:Add("wallFootSeal", wallMaterial, {
                         x = worldX, y = baseY, z = worldZ, color = wallColor,
@@ -306,9 +383,19 @@ function ExactGeometryBatcher:QueueStructure(layer, floorSpacing)
                             sy = wallHeight + doubleExtra + GeometryRules.WALL_FLOOR_VERTICAL_OVERLAP,
                             color = wallColor,
                         })
-                    self:Add(capGeometry, capMaterial, {
-                            x = worldX, y = baseY + wallHeight + doubleExtra, z = worldZ, color = capColor,
-                        })
+                    if ruinFactor then
+                        if rng:Chance(ruin.rubbleChance or 0.7) then
+                            self:Add("debrisB", "stone", {
+                                x = worldX, y = baseY + wallHeight, z = worldZ,
+                                scale = rng:Float(0.9, 1.4), ry = rng:Float(0, math.pi * 2),
+                                color = MultiplyColor(wallColor, 0.82),
+                            })
+                        end
+                    else
+                        self:Add(capGeometry, capMaterial, {
+                                x = worldX, y = baseY + wallHeight + doubleExtra, z = worldZ, color = capColor,
+                            })
+                    end
                 end
             end
         end
@@ -339,6 +426,12 @@ local PROP_SPEC = {
     floorArrow = { "floorArrow", "glow", 0x5fd1c7 },
     surgeryTable = { "surgeryTable", "hospitalWall", 0xcfd8d4 },
     pillar = { "pillar", "stone" }, debris = { "debrisA", "stone" },
+    brokenPillar = { "brokenPillar", "stone" }, archRuin = { "archRuin", "stone" },
+    templeUrn = { "templeUrn", "stone", 0x9a8668 },
+    goldPile = { "goldPile", "gild", 0xe8c46a },
+    -- Waymarks are readable by shape and gilt metal; they are intentionally
+    -- not emissive so the corridor does not become a runway of lights.
+    pathRune = { "pathRune", "gild" },
     grave = { "grave", "stone" }, sarco = { "sarco", "stone" },
     candle = { "candle", "stone", 0xd8cba8 },
     icicle = { "icicle", "ice", 0xbfe2ff }, shardIce = { "shard", "ice", 0xcfeaff },
@@ -354,6 +447,15 @@ local WALL_PROPS = {
     wallPanel = { "wallPanel", "stone", 0xb8c7c0, 1.20 },
     hospitalSign = { "hospitalSign", "glow", 0xff3b35, 1.50 },
 }
+
+-- Palette FX colors with a stable fallback so packs/custom palettes without an
+-- fx block still render the new ruins props.
+function ExactGeometryBatcher:FxColor(field, fallback)
+    local fx = self.theme.fx
+    local value = fx and fx[field]
+    if type(value) == "number" then return value end
+    return fallback or self.theme.accentObject
+end
 
 function ExactGeometryBatcher:QueueProp(layer, prop, floorSpacing, rng)
     local x, baseY, z = self:WorldPosition(prop.x, prop.y, layer.floor, floorSpacing, 0)
@@ -388,14 +490,31 @@ function ExactGeometryBatcher:QueueProp(layer, prop, floorSpacing, rng)
     if spec then
         local geometryKey = spec[1]
         if prop.kind == "debris" then geometryKey = ({ "debrisA", "debrisB", "debrisC" })[(prop.v or 0) + 1] end
-        local color = spec[3] or self.theme.pillar
+        -- Per-kind style swaps from the environment profile (神殿遗迹 fluted
+        -- columns etc.) — geometry and color only, placement stays shared.
+        local style = self.profile.propStyle and self.profile.propStyle[prop.kind]
+        if style and style.geometry then geometryKey = style.geometry end
+        local color = (style and style.color) or spec[3] or self.theme.pillar
         if prop.kind == "debris" then
             local colors = self.theme.debris or { self.theme.wall, self.theme.pillar }
             color = LerpColor(colors[1], colors[2], rng:Raw())
         elseif prop.kind == "moss" then color = LerpColor(0x3f6b3a, 0x5a8a4a, rng:Raw())
-        elseif prop.kind == "crack" then color = prop.ice and 0x9fd8ff or 0xff6a28 end
+        elseif prop.kind == "crack" then
+            -- Pool-edge cracks glow with the liquid seeping below them, so a
+            -- grim pool leaks ghost green while a molten pool leaks lava.
+            color = prop.ice and 0x9fd8ff
+                or (self.theme.pools and LerpColor(self.theme.pools.colB, 0xffffff, 0.30) or 0xff6a28)
+        elseif prop.kind == "pathRune" then
+            color = LerpColor(self:FxColor("runeColor"), 0x000000, 0.30)
+        end
         if prop.kind == "pillar" then scale = scale * 1.15; rot = rng:Int(0, 3) * math.pi * 0.5 end
         self:Add(geometryKey, spec[2], { x = x, y = baseY, z = z, scale = scale, ry = rot, color = color })
+        if style and style.trimGeometry then
+            self:Add(style.trimGeometry, style.trimMaterial or "gild", {
+                x = x, y = baseY, z = z, scale = scale, ry = rot,
+                color = style.trimColor or 0xd8b46a,
+            })
+        end
 
         if prop.kind == "hospitalBed" then
             self:Add("bannerCloth", "cloth", { x=x, y=baseY+0.6, z=z, sx=scale*1.08, sy=scale*0.66, sz=scale, ry=rot, color=0xc0cec7 })
@@ -422,7 +541,7 @@ function ExactGeometryBatcher:QueueProp(layer, prop, floorSpacing, rng)
         elseif prop.kind == "bioBin" then
             self:Add("emblem","glow",{x=x,y=baseY+0.60*scale,z=z+0.25,scale=scale*1.1,ry=rot,color=0x1f1a12})
         elseif prop.kind == "candle" then
-            self:Add("flameCore", "glow", { x=x, y=baseY+0.19*scale, z=z, scale=0.55, color=self.theme.flameCore })
+            self:Add(self.flameCoreGeo, "glow", { x=x, y=baseY+0.19*scale, z=z, scale=0.55, color=self.theme.flameCore })
         end
         return false
     end
@@ -431,31 +550,72 @@ function ExactGeometryBatcher:QueueProp(layer, prop, floorSpacing, rng)
         self:Add("chestBody", "stone", { x=x,y=baseY,z=z,ry=rot,color=0x8a5a2c })
         self:Add("chestTrim", "trim", { x=x,y=baseY,z=z,ry=rot,color=0xc8a24a })
         self:Add("chestSeam", "glow", { x=x,y=baseY,z=z,ry=rot,color=0xffd27a })
+    elseif prop.kind == "templeMedallion" then
+        -- Wall plaque: gilt double ring with a dimly glowing sigil core.
+        local dx, dy = prop.dx or 0, prop.dy or 1
+        local mx, mz, mry = x + dx * 0.55, z + dy * 0.55, math.atan(dx, dy)
+        self:Add("templeMedallion", "gild", { x=mx, y=baseY+1.52, z=mz,
+            scale=scale, ry=mry, color=0xd8b46a })
+        self:Add("templeMedallionCore", "glow", { x=mx+dx*0.012, y=baseY+1.52, z=mz+dy*0.012,
+            scale=scale, ry=mry, color=LerpColor(self:FxColor("runeColor"), 0x000000, 0.35) })
+    elseif prop.kind == "obelisk" then
+        self:Add("obelisk", "stone", { x=x, y=baseY, z=z, scale=scale, ry=rot,
+            color=LerpColor(self.theme.pillar, 0x1c2028, 0.22) })
+        self:Add("obeliskCollar", "gild", { x=x, y=baseY, z=z, scale=scale, ry=rot,
+            color=0xd8b46a })
+        self:Add("obeliskRune", "glow", { x=x, y=baseY, z=z, scale=scale, ry=rot,
+            color=self:FxColor("runeColor") })
+    elseif prop.kind == "guardianStatue" then
+        self:Add("guardianStatue", "stone", { x=x, y=baseY, z=z, scale=scale, ry=rot,
+            color=LerpColor(self.theme.wall, 0x14181e, 0.30) })
+        self:Add("guardianEyes", "glow", { x=x, y=baseY, z=z, scale=scale, ry=rot,
+            color=self:FxColor("runeColor") })
+    elseif prop.kind == "crystalCluster" then
+        self:Add("crystalRocks", "stone", { x=x, y=baseY, z=z, scale=scale, ry=rot,
+            color=LerpColor(self.theme.wall, 0x0e1216, 0.30) })
+        self:Add("crystalCluster", "glow", { x=x, y=baseY, z=z, scale=scale, ry=rot,
+            color=self:FxColor("orbitColor", 0x8fbcff) })
     elseif prop.kind == "shrineCrystal" then
         self:Add("plinth", "stone", { x=x,y=baseY,z=z,ry=rot,color=LerpColor(self.theme.pillar,0xffffff,0.12) })
-        self:Add("crystal", "glow", { x=x,y=baseY+1.4,z=z,scale=1.05,ry=rot,color=0x8fbcff })
+        if not self.animatedProps.shrineCrystal then
+            self:Add("crystal", "glow", { x=x,y=baseY+1.4,z=z,scale=1.05,ry=rot,color=0x8fbcff })
+        end
         for k = 0, 3 do
             local angle = k * math.pi * 0.5 + math.pi * 0.25
             local cx, cz = x + math.cos(angle) * 0.36, z + math.sin(angle) * 0.36
             self:Add("candle", "stone", { x=cx,y=baseY+0.5,z=cz,scale=0.8,color=0xd8cba8 })
-            self:Add("flameCore", "glow", { x=cx,y=baseY+0.65,z=cz,scale=0.5,color=self.theme.flameCore })
+            self:Add(self.flameCoreGeo, "glow", { x=cx,y=baseY+0.65,z=cz,scale=0.5,color=self.theme.flameCore })
         end
     elseif prop.kind == "ring" then
         self:Add("platform", "stone", { x=x,y=baseY-0.02,z=z,color=LerpColor(self.theme.floor,0xffffff,0.1) })
-        self:Add("ring", "glow", { x=x,y=baseY+0.16,z=z,color=0x3fd0bb })
         self:Add("pillar", "stone", { x=x-1.45,y=baseY+0.1,z=z,scale=0.72,color=self.theme.pillar })
         self:Add("pillar", "stone", { x=x+1.45,y=baseY+0.1,z=z,scale=0.72,color=self.theme.pillar })
-        self:Add("portal", "glow", { x=x,y=baseY+0.12,z=z,color=0x3fd0bb,alpha=0.75 })
+        if not self.animatedProps.ring then
+            self:Add("ring", "glow", { x=x,y=baseY+0.16,z=z,color=0x3fd0bb })
+            self:Add("portal", "glow", { x=x,y=baseY+0.12,z=z,color=0x3fd0bb,alpha=0.75 })
+        end
     elseif prop.kind == "bossCrystal" then
-        self:Add("bossShard", "glow", { x=x,y=baseY,z=z,scale=1.15,ry=rot,color=0xff4636 })
-        self:Add("bossShard", "glow", { x=x+0.55,y=baseY,z=z-0.42,sx=0.6,sy=0.75,sz=0.6,ry=rot+1.2,color=0xff6a45 })
-        local rocks = {{-0.62,0.42,0.75,0.8,2.1,0x4a3336},{0.75,0.55,0.55,0.6,3.6,0x51383a},{-0.5,-0.62,0.5,0.55,4.9,0x452f31}}
-        for _, rock in ipairs(rocks) do self:Add("bossShard", "stone", {x=x+rock[1],y=baseY,z=z+rock[2],sx=rock[3],sy=rock[4],sz=rock[3],ry=rot+rock[5],color=rock[6]}) end
+        local style = self.profile.propStyle and self.profile.propStyle.bossCrystal
+        if style then
+            -- Temple boss centrepiece: stepped dais + levitated crystal
+            -- monolith, keeping the boss-red identity without spike shards.
+            self:Add(style.core or "templeBossCore", "stone", { x=x, y=baseY, z=z, ry=rot,
+                color=LerpColor(self.theme.wall, 0x14181e, 0.30) })
+            self:Add(style.crystal or "templeBossCrystal", "glow", { x=x, y=baseY, z=z, ry=rot,
+                color=0xff4636 })
+        else
+            self:Add("bossShard", "glow", { x=x,y=baseY,z=z,scale=1.15,ry=rot,color=0xff4636 })
+            self:Add("bossShard", "glow", { x=x+0.55,y=baseY,z=z-0.42,sx=0.6,sy=0.75,sz=0.6,ry=rot+1.2,color=0xff6a45 })
+            local rocks = {{-0.62,0.42,0.75,0.8,2.1,0x4a3336},{0.75,0.55,0.55,0.6,3.6,0x51383a},{-0.5,-0.62,0.5,0.55,4.9,0x452f31}}
+            for _, rock in ipairs(rocks) do self:Add("bossShard", "stone", {x=x+rock[1],y=baseY,z=z+rock[2],sx=rock[3],sy=rock[4],sz=rock[3],ry=rot+rock[5],color=rock[6]}) end
+        end
     elseif prop.kind == "brazier" then
-        self:Add("brazier", "trim", {x=x,y=baseY,z=z,ry=rng:Float(0,math.pi*2),color=0x3a3f4a})
+        local style = self.profile.propStyle and self.profile.propStyle.brazier
+        self:Add(style and style.geometry or "brazier", style and style.material or "trim",
+            {x=x,y=baseY,z=z,ry=rng:Float(0,math.pi*2),color=style and style.color or 0x3a3f4a})
         self:Add("coals", "glow", {x=x,y=baseY,z=z,color=0xff7a30})
-        self:Add("flame", "glow", {x=x,y=baseY+0.62,z=z,scale=1.35,color=self.theme.flame})
-        self:Add("flameCore", "glow", {x=x,y=baseY+0.66,z=z,scale=1.3,color=self.theme.flameCore})
+        self:Add(self.flameGeo, "glow", {x=x,y=baseY+0.62,z=z,scale=1.35,color=self.theme.flame})
+        self:Add(self.flameCoreGeo, "glow", {x=x,y=baseY+0.66,z=z,scale=1.3,color=self.theme.flameCore})
         return true
     elseif prop.kind == "banner" then
         local dx, dy = prop.dx or 0, prop.dy or 1
@@ -463,6 +623,16 @@ function ExactGeometryBatcher:QueueProp(layer, prop, floorSpacing, rng)
         self:Add("bannerRod","trim",{x=bx,y=baseY+1.98,z=bz,ry=ry,color=0x6a5a3a})
         self:Add("bannerCloth","cloth",{x=bx+dx*0.03,y=baseY+1.96,z=bz+dy*0.03,ry=ry,color=self.theme.cloth})
         self:Add("emblem","glow",{x=bx+dx*0.06,y=baseY+1.6,z=bz+dy*0.06,ry=ry,color=self.theme.accentObject})
+    elseif prop.kind == "templeBanner" then
+        -- Processional tapestry: gilt rod with finials, a long swallow-tail
+        -- cloth and a large rune emblem at its heart.
+        local dx, dy = prop.dx or 0, prop.dy or 1
+        local bx, bz, ry = x + dx * 0.54, z + dy * 0.54, math.atan(dx, dy)
+        self:Add("templeBannerRod", "gild", { x=bx, y=baseY+2.02, z=bz, ry=ry, color=0xd8b46a })
+        self:Add("templeBannerCloth", "cloth",
+            { x=bx+dx*0.03, y=baseY+2.00, z=bz+dy*0.03, ry=ry, color=self.theme.cloth })
+        self:Add("emblem", "glow", { x=bx+dx*0.06, y=baseY+1.42, z=bz+dy*0.06, ry=ry,
+            scale=1.5, color=self:FxColor("runeColor") })
     end
     return false
 end
@@ -472,9 +642,25 @@ function ExactGeometryBatcher:QueueTorch(layer, torch, floorSpacing)
     self.activeBaseY = baseY
     local dx, dy = torch.dx or 0, torch.dy or 1
     local mountX, mountZ, ry = x + dx * 0.5, z + dy * 0.5, math.atan(dx, dy)
-    self:Add("torch", "trim", { x=mountX,y=baseY+1.02,z=mountZ,ry=ry,color=0x4a4038 })
-    self:Add("flame", "glow", { x=mountX+dx*0.16,y=baseY+1.5,z=mountZ+dy*0.16,scale=1.2,color=self.theme.flame })
-    self:Add("flameCore", "glow", { x=mountX+dx*0.16,y=baseY+1.53,z=mountZ+dy*0.16,scale=1.2,color=self.theme.flameCore })
+    local structure = (self.pack and self.pack.structure) or self.profile.structure
+    local torchGeometry = structure and structure.torchGeometry or "torch"
+    local torchMaterial = structure and structure.torchMaterial or "trim"
+    local torchColor = structure and structure.torchColor or 0x4a4038
+    self:Add(torchGeometry, torchMaterial, { x=mountX,y=baseY+1.02,z=mountZ,ry=ry,color=torchColor })
+    -- A kit may enclose its light in fixture glass (hanging lantern) instead
+    -- of the open flame pair; the glass also anchors the point light.
+    local glowSpec = structure and structure.torchGlow
+    if glowSpec then
+        local out = glowSpec.out or 0.16
+        self:Add(glowSpec.geometry, "glow", {
+            x = mountX + dx * out, y = baseY + (glowSpec.height or 1.5),
+            z = mountZ + dy * out, ry = ry,
+            scale = glowSpec.scale or 1, color = self.theme.flame,
+        })
+        return mountX + dx * out, baseY + (glowSpec.height or 1.5) * self.verticalScale, mountZ + dy * out
+    end
+    self:Add(self.flameGeo, "glow", { x=mountX+dx*0.16,y=baseY+1.5,z=mountZ+dy*0.16,scale=1.2,color=self.theme.flame })
+    self:Add(self.flameCoreGeo, "glow", { x=mountX+dx*0.16,y=baseY+1.53,z=mountZ+dy*0.16,scale=1.2,color=self.theme.flameCore })
     return mountX + dx * 0.16, baseY + 1.53 * self.verticalScale, mountZ + dy * 0.16
 end
 
@@ -482,7 +668,7 @@ function ExactGeometryBatcher:QueueSpawn(layer, spawn, floorSpacing, rng)
     local x, baseY, z = self:WorldPosition(spawn.x, spawn.y, layer.floor, floorSpacing, 0)
     self.activeBaseY = baseY
     local tier, rot = math.max(1, math.min(3, spawn.tier or 1)), rng:Float(0, math.pi * 2)
-    local spawnVisual = self.pack and self.pack.spawnVisual
+    local spawnVisual = (self.pack and self.pack.spawnVisual) or self.profile.spawnVisual
     if spawnVisual then
         self:Add(spawnVisual.geometry, spawnVisual.material, {
             x = x,
@@ -514,7 +700,7 @@ function ExactGeometryBatcher:QueueArch(layer, arch, floorSpacing)
     local x, baseY, z = self:WorldPosition(gridX, gridY, layer.floor, floorSpacing, 0)
     self.activeBaseY = baseY
     local half = (arch.len or 2) * 0.5 + 0.15
-    local structure = self.pack and self.pack.structure or nil
+    local structure = (self.pack and self.pack.structure) or self.profile.structure
     local tone = ThemeToneRules.Resolve(self.settingKey)
     local color = ThemeToneRules.ResolveDoorColor(self.theme, tone)
     local post = structure and structure.doorPostGeometry
@@ -557,6 +743,9 @@ local ATMOSPHERE_BUILD = {
     bossGlow = true, wallLight = true, hospitalSign = true, deptSign = true,
     floorCross = true, floorStripe = true, cleanZone = true, floorArrow = true,
     liquidCell = true, portal = true,
+    templeFlame = true, templeFlameCore = true, templeSpawn = true,
+    templeFloorInlay = true, templeBossCrystal = true, obeliskRune = true,
+    templeLanternGlass = true, templeMedallionCore = true, pathRune = true,
 }
 
 local function AverageBuildOrder(instances)
@@ -614,6 +803,17 @@ function ExactGeometryBatcher:Flush(parent, stagingConfig)
         self.batchCount = self.batchCount + 1
     end
     return self.instanceCount, self.batchCount, self.stagedEntries
+end
+
+-- The AtmosphereFX layer breathes the shared emissive materials. Entries pair
+-- each material with the authored color so the pulse can rescale from a fixed
+-- base instead of compounding frame over frame.
+function ExactGeometryBatcher:GetEmissiveEntries()
+    local entries = {}
+    for color, material in pairs(self.emissiveMaterials) do
+        entries[#entries + 1] = { color = color, material = material }
+    end
+    return entries
 end
 
 return ExactGeometryBatcher

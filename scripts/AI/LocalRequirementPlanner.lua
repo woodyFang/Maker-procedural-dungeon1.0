@@ -10,14 +10,24 @@ local TopicSeeds = require("Config.TopicSeeds")
 
 local function CopyRules(rules)
     local result = {}
+    local extraKeys = {
+        "layout", "step", "rowStep", "colStep", "margin", "max", "rot", "centered",
+        "skipCenter", "stepThreshold", "stepBig", "stepSmall", "radius", "angleSpan",
+        "angleJitter", "anchor", "anchorScale", "anchorMinDim", "anchorRot", "anchorRotAxis",
+        "tries", "side", "edgeInset",
+    }
     for _, rule in ipairs(rules or {}) do
-        result[#result + 1] = {
+        local copied = {
             kind = rule.kind,
             count = rule.count or 1,
             chance = rule.chance == nil and 1 or rule.chance,
             scaleMin = rule.scaleMin or 0.92,
             scaleMax = rule.scaleMax or rule.scaleMin or 1.0,
         }
+        for _, key in ipairs(extraKeys) do
+            if rule[key] ~= nil then copied[key] = rule[key] end
+        end
+        result[#result + 1] = copied
     end
     return result
 end

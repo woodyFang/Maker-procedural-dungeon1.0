@@ -538,6 +538,9 @@ end
 function LayoutEditor:AddRoomAt(gridX, gridY)
     self.rooms[#self.rooms + 1] = { cx = Snap(gridX), cy = Snap(gridY), w = 12, h = 9,
         floor = self.floor, locked = false }
+    -- New rooms have no path; mark disconnected rooms secret so the rebuild
+    -- passes reachability validation instead of rolling the edit back.
+    self:MarkDisconnectedRoomsSecret()
     self.selected, self.selectedLink = #self.rooms, nil
     self:NotifySelection(); self:Commit()
 end
@@ -773,6 +776,7 @@ function LayoutEditor:LegacyUpdate(_)
                     h = Clamp(math.floor((y2 - y1) / self.scale + 0.5), 5, 24), floor = self.floor,
                 }
                 self.rooms[#self.rooms + 1] = room
+                self:MarkDisconnectedRoomsSecret()
                 self.selected = #self.rooms
                 self:NotifySelection()
                 self:Commit()
