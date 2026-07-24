@@ -70,10 +70,10 @@ local ENVIRONMENTS = {
 
 function DungeonApp.new()
     return setmetatable({
-        seed = 1337, floorCount = 2, floorHeight = MultiFloor.FLOOR_HEIGHT,
+        seed = 1337, floorCount = 1, floorHeight = MultiFloor.FLOOR_HEIGHT,
         currentFloor = 0, floorViewMode = "neighbors",
         settingKey = "dungeon", themeKey = "ancient",
-        roomCounts = { 21, 21 }, loopRates = { 15, 15 }, decorDensities = { 60, 60 },
+        roomCounts = { 10 }, loopRates = { 15 }, decorDensities = { 60 },
         customSettings = TopicSeeds.Ensure({}), roomGroups = {}, customPalettes = {},
         nextCustomSettingId = 1, nextRoomGroupId = 1, nextCustomPaletteId = 1,
         activeCustomSettingId = TopicSeeds.DEFAULT_ID, customSettingName = "遗迹", activeFixedThemeId = nil,
@@ -1001,6 +1001,13 @@ function DungeonApp:Start()
             self.panel:SetPreviewActive(active, mode)
             if not active then self:RestoreOverview() end
         end,
+        onFloorChange = function(floor)
+            if self.currentFloor == floor then return end
+            self.currentFloor = floor
+            self.floorViewMode = "current"
+            self:RebuildView()
+            self:RefreshPanel()
+        end,
     })
     self.eventObject:SubscribeToEvent("Update", function(_, _, eventData) self:HandleUpdate(eventData:GetFloat("TimeStep")) end)
     self:Generate(false, true)
@@ -1192,7 +1199,7 @@ end
 
 function DungeonApp:AddFloor(luaIndex)
     local source = math.max(1, math.min(self.floorCount, self.currentFloor + 1))
-    table.insert(self.roomCounts, luaIndex, self.roomCounts[source] or 21)
+    table.insert(self.roomCounts, luaIndex, self.roomCounts[source] or 10)
     table.insert(self.loopRates, luaIndex, self.loopRates[source] or 15)
     table.insert(self.decorDensities, luaIndex, self.decorDensities[source] or 60)
     self.floorCount = self.floorCount + 1; self.currentFloor = luaIndex - 1

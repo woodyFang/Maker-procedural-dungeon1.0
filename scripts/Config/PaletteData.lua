@@ -93,6 +93,9 @@ function PaletteData.CreateRuntimeTheme(record, baseTheme)
     theme.customPaletteId = record.id
     for _, field in ipairs(PaletteData.COLOR_FIELDS) do theme[field] = colors[field] end
     theme.accent = colors.accentObject
+    -- Keep temple's secondary fabric stripe coherent when a custom palette
+    -- clones a built-in theme; it must not retain the base palette's color.
+    theme.clothAccent = MixColor(colors.accentObject, colors.cloth, 0.35)
     theme.cap = MixColor(colors.wall, 0xffffff, 0.16)
     theme.debris = { MixColor(colors.wall, 0x000000, 0.24), MixColor(colors.corridor, 0x000000, 0.12) }
     local oldTorch = type(baseTheme.torchLight) == "table" and baseTheme.torchLight or { colors.flame, 1.0, 9.0 }

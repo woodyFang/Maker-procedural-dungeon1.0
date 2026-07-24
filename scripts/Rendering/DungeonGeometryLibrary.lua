@@ -380,6 +380,21 @@ G.templeBannerCloth = D(ShapeGeometry({
     Vector2(-0.185, 0), Vector2(0.185, 0), Vector2(0.185, -0.92),
     Vector2(0, -1.12), Vector2(-0.185, -0.92),
 }))
+-- Rich fabric accents: a low runner under the entrance portal, a gilt edge,
+-- and a contrasting central stripe. These are cloth/metal materials, never
+-- another emissive floor grid.
+G.templeCarpet = M({
+    X(BoxGeometry(1.36, 0.035, 3.30), 0, 0.018, 0),
+})
+G.templeCarpetBorder = M({
+    X(BoxGeometry(1.48, 0.045, 0.075), 0, 0.044, -1.62),
+    X(BoxGeometry(1.48, 0.045, 0.075), 0, 0.044, 1.62),
+    X(BoxGeometry(0.075, 0.045, 3.15), -0.70, 0.044, 0),
+    X(BoxGeometry(0.075, 0.045, 3.15), 0.70, 0.044, 0),
+})
+G.templeCarpetStripe = M({
+    X(BoxGeometry(0.18, 0.048, 3.06), 0, 0.048, 0),
+})
 -- Arcane flame orbs replace the cone flames on every temple fire (sconces,
 -- cauldrons, candles): a soft outer teardrop and a hot inner bead.
 G.templeFlame = M({ X(SphereGeometry(0.115, 10, 8), 0, 0.17, 0, 0, 0, 0, 1, 1.32, 1) })
@@ -546,10 +561,17 @@ G.mriScanner = M({
     X(ChamferBox(1.55, 0.18, 0.42, 0.035), 0.28, 0.42, 0),
     X(ChamferBox(0.68, 0.08, 0.32, 0.02), 0.78, 0.56, 0),
 })
+-- Wall sconce: a compact vertical fixture with a recessed backplate, a short
+-- projecting bracket, a faceted lamp head and a front lens. All pieces share
+-- the glow batch so hospital and school packs keep their existing material
+-- contract; the depth gives the emissive face a readable silhouette instead of
+-- flattening into the old horizontal light bar.
 G.wallLight = M({
-    X(ChamferBox(0.82, 0.08, 0.05, 0.012), 0, 0, 0),
-    X(ChamferBox(0.14, 0.1, 0.06, 0.01), -0.46, 0, 0),
-    X(ChamferBox(0.14, 0.1, 0.06, 0.01), 0.46, 0, 0),
+    X(ChamferBox(0.42, 0.46, 0.06, 0.035), 0, 0, -0.06),
+    X(ChamferBox(0.12, 0.09, 0.20, 0.018), 0, 0.20, 0.02),
+    X(CylinderGeometry(0.22, 0.22, 0.12, 12), 0, 0.24, 0.16, math.pi * 0.5, 0, 0),
+    X(TorusGeometry(0.19, 0.025, 8, 16), 0, 0.24, 0.225, math.pi * 0.5, 0, 0),
+    X(CircleGeometry(0.18, 16), 0, 0.24, 0.235, math.pi * 0.5, 0, 0),
 })
 G.oxygenTank = M({
     X(CylinderGeometry(0.12, 0.12, 0.68, 12), -0.08, 0.34, 0),

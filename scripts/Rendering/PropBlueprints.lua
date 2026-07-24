@@ -291,10 +291,14 @@ local BLUEPRINTS = {
         P("roundedBox", "cloth", 0.28, 0.42, 0, 1.55, 0.18, 0.42),
         P("roundedBox", "white", 0.78, 0.56, 0, 0.68, 0.08, 0.32),
     } },
+    -- Wall sconce kept in sync with GEO.wallLight: a vertical backplate,
+    -- projecting bracket, round lamp head, rim and front lens.
     wallLight = { mount = "wall", parts = {
-        P("roundedBox", "glow", 0, 0, 0, 0.82, 0.08, 0.05),
-        P("roundedBox", "metal", -0.46, 0, 0, 0.14, 0.10, 0.06),
-        P("roundedBox", "metal", 0.46, 0, 0, 0.14, 0.10, 0.06),
+        P("roundedBox", "glow", 0, 0.23, -0.03, 0.42, 0.46, 0.06),
+        P("roundedBox", "glow", 0, 0.20, 0.02, 0.12, 0.09, 0.20),
+        P("cylinder", "glow", 0, 0.24, 0.16, 0.22, 0.12, 0.22, 90, 0, 0),
+        P("torus", "glow", 0, 0.24, 0.225, 0.19, 0.025, 0.19, 90, 0, 0),
+        P("disc", "glow", 0, 0.24, 0.235, 0.36, 0.36, 1, 90, 0, 0),
     }, light = { color = "glow", y = 0, z = -0.20, brightness = 1.4, range = 3.5 } },
     oxygenTank = { parts = {
         P("cylinder", "teal", -0.08, 0.34, 0, 0.24, 0.68, 0.24),
@@ -392,7 +396,13 @@ local BLUEPRINTS = {
         P("box", "schoolAccent", -0.25, -0.02, -0.03, 0.30, 0.38, 0.06),
     } },
     schoolClock = { mount = "wall", parts = { P("cylinder", "schoolTrim", 0, 0, 0, 0.44, 0.04, 0.44, 90, 0, 0) } },
-    schoolWallLight = { mount = "wall", parts = { P("roundedBox", "glow", 0, 0, 0, 0.82, 0.08, 0.05) } },
+    schoolWallLight = { mount = "wall", parts = {
+        P("roundedBox", "glow", 0, 0.23, -0.03, 0.42, 0.46, 0.06),
+        P("roundedBox", "glow", 0, 0.20, 0.02, 0.12, 0.09, 0.20),
+        P("cylinder", "glow", 0, 0.24, 0.16, 0.22, 0.12, 0.22, 90, 0, 0),
+        P("torus", "glow", 0, 0.24, 0.225, 0.19, 0.025, 0.19, 90, 0, 0),
+        P("disc", "glow", 0, 0.24, 0.235, 0.36, 0.36, 1, 90, 0, 0),
+    } },
     hospitalDoorPost = { parts = { P("roundedBox", "metal", 0, 0.78, 0, 0.16, 1.55, 0.16) } },
     hospitalDoorLintel = { parts = { P("roundedBox", "metal", 0, 1.52, 0, 1.0, 0.16, 0.22) } },
     deptSign = { mount = "wall", parts = {

@@ -8,6 +8,7 @@ local MaterialRules = require("Rendering.ProceduralMaterialRules")
 local ThemeToneRules = require("Rendering.ThemeToneRules")
 local EnvironmentProfiles = require("Config.EnvironmentProfiles")
 local PropBlueprints = require("Rendering.PropBlueprints")
+local DungeonGeometry = require("Rendering.DungeonGeometryLibrary")
 local CustomizationStore = require("Config.CustomizationStore")
 local ThemePacks = require("Config.ThemePacks")
 local GenericThemeRules = require("Config.GenericThemeRules")
@@ -300,9 +301,24 @@ local function TestMultiFloorSeeds()
                 "upper stair endpoint is not reserved")
             Check(connector.audit and connector.audit.pass,
                 "generated connector did not pass its per-stair spatial audit")
+            local elevationsByCell = {}
+            local minElevation, maxElevation = math.huge, -math.huge
+            for _, item in ipairs(connector.sweptClearanceCells or {}) do
+                elevationsByCell[item.cell] = item
+                minElevation = math.min(minElevation, item.treadElevation)
+                maxElevation = math.max(maxElevation, item.treadElevation)
+                Check(item.treadElevation >= -StairContract.EPSILON
+                        and item.treadElevation <= connector.rise + StairContract.EPSILON,
+                    "stair tread elevation escaped connector rise")
+            end
+            Check(minElevation >= -StairContract.EPSILON and maxElevation <= connector.rise + StairContract.EPSILON,
+                "stair swept clearance has no valid elevation range")
             for _, openingCell in ipairs(connector.openingCells) do
                 Check(lowerLayer.stairMask[openingCell], "lower stair shaft is missing")
                 Check(upperLayer.slabOpening[openingCell], "upper slab opening is missing")
+                Check(elevationsByCell[openingCell]
+                        and elevationsByCell[openingCell].intersectsUpperSlab,
+                    "upper opening is not backed by a swept tread record")
             end
         end
     end
@@ -388,6 +404,29 @@ local function TestHospitalPropMigration()
     Check(kinds.floorStripe or kinds.floorArrow, "hospital generated no corridor markings")
 end
 
+local function TestWallLightShapeContract()
+    local geometry = DungeonGeometry.GEO.wallLight
+    Check(geometry and geometry.count > 0, "wallLight geometry is missing")
+
+    local blueprint = PropBlueprints.Get("wallLight")
+    Check(blueprint and blueprint.mount == "wall", "wallLight blueprint lost its wall mount")
+    local parts = {}
+    for _, part in ipairs(blueprint.parts) do parts[part.model] = true end
+    Check(parts.roundedBox and parts.cylinder and parts.torus and parts.disc,
+        "wallLight blueprint did not keep the backplate, round head, rim and lens")
+
+    local schoolBlueprint = PropBlueprints.Get("schoolWallLight")
+    Check(schoolBlueprint and schoolBlueprint.mount == "wall"
+            and #schoolBlueprint.parts == #blueprint.parts,
+        "school wall light did not keep the redesigned silhouette")
+
+    local pack = ThemePacks.Get("school")
+    Check(pack.props.schoolWallLight.geometry == "wallLight"
+            and pack.props.schoolWallLight.material == "glow"
+            and pack.props.schoolWallLight.emitsLight == true,
+        "school wall light contract no longer targets the emissive wallLight geometry")
+end
+
 local TEMPLE_SET_PIECES = {
     obelisk = true, guardianStatue = true, crystalCluster = true,
     archRuin = true, brokenPillar = true, templeBanner = true,
@@ -443,6 +482,19 @@ local function TestTempleSettingCoverage()
     local profile = EnvironmentProfiles.Resolve("temple")
     Check(type(profile.atmosphere) == "table" and type(profile.structureRuin) == "table",
         "temple profile is missing its showcase layers")
+    Check(profile.structure.floorInlay.material == "gild"
+            and profile.spawnVisual.material == "gild",
+        "temple floor matrix and spawn markers must use non-emissive gilt")
+    Check(profile.atmosphere.runeCircles.roomTypes.boss
+            and not profile.atmosphere.runeCircles.roomTypes.shrine,
+        "temple shrine floor must not receive a second emissive rune circle")
+    Check(DungeonGeometry.GEO.templeCarpet and DungeonGeometry.GEO.templeCarpetBorder
+            and DungeonGeometry.GEO.templeCarpetStripe,
+        "temple color richness kit is missing carpet geometry")
+    for _, paletteKey in ipairs({ "templeGold", "templeMagma", "templeFrost", "templeGrim", "templeVine" }) do
+        Check(type(Themes.Get(paletteKey).clothAccent) == "number",
+            "temple palette is missing a fabric accent color: " .. paletteKey)
+    end
     Check(EnvironmentProfiles.Resolve("dungeon").atmosphere == nil,
         "plain dungeon profile must not carry the temple atmosphere")
 end
@@ -1474,6 +1526,7 @@ function GenerationTests.Run()
         { "beyond recommended floors", TestBeyondRecommendedFloorCount },
         { "six-floor shaft regression", TestSixFloorShaftRegression },
         { "hospital prop migration", TestHospitalPropMigration },
+        { "wall light shape", TestWallLightShapeContract },
         { "dungeon prop blueprints", TestDungeonPropBlueprintCoverage },
         { "temple setting coverage", TestTempleSettingCoverage },
         { "school ThemePack stability", TestSchoolThemePackStability },

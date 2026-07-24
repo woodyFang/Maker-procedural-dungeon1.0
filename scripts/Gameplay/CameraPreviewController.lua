@@ -8,16 +8,19 @@ local TRANSITION_SECONDS = 0.72
 local WALK_SPEED = 3.2
 local RUN_SPEED = 4.8
 local THIRD_DISTANCE = 12.5
--- Diablo-style action-RPG framing: a steep ~55° look-down angle keeps the
--- floor layout readable and stops near-side walls from hiding the character.
+-- Diablo-style action-RPG framing: a ~50° look-down angle keeps the floor
+-- readable while giving the character a less elevated third-person view.
 -- The pitch window allows slight adjustment without leaving that framing.
-local THIRD_PITCH = 0.96
+local THIRD_PITCH = math.rad(50)
 local THIRD_PITCH_MIN = 0.78
 local THIRD_PITCH_MAX = 1.22
 local THIRD_DISTANCE_MIN = 9
 local THIRD_DISTANCE_MAX = 20
 local FIRST_PERSON_EYE_HEIGHT = 0.92
 local SAMPLE_RADIUS = 0.26
+local MAX_SURFACE_DISCONTINUITY = 0.65
+local MOVEMENT_SUBSTEP = 0.20
+local STAIR_EPSILON = 0.001
 
 local function Clamp(value, low, high)
     return math.max(low, math.min(high, value))
@@ -100,7 +103,7 @@ function CameraPreviewController:CreateCharacter()
     self.character = self.root:CreateChild("PreviewCharacter")
     self.thirdPersonRoot = self.character:CreateChild("ThirdPersonVisual")
     self.visual = self.thirdPersonRoot:CreateChild("CharacterVisual")
-    self.visual.scale = Vector3(0.68, 0.68, 0.68)
+    self.visual.scale = Vector3(0.74, 0.74, 0.74)
     self.visual.rotation = Quaternion(180, Vector3.UP)
 
     local model = function(key, fallback)
@@ -112,6 +115,7 @@ function CameraPreviewController:CreateCharacter()
     local skin = CreateMaterial(0xb78368, 0.68, 0.10)
     local steel = CreateMaterial(0xbac9da, 0.18, 0.92)
     local gold = CreateMaterial(0xc6812c, 0.32, 0.78)
+    local heraldry = CreateMaterial(0x8e2430, 0.62, 0.18)
     local glow = CreateMaterial(0x35d9ff, 0.28, 0.08, 0x35d9ff)
     local glowWarm = CreateMaterial(0xff6333, 0.30, 0.12, 0xff4a24)
     cloth.cullMode = CULL_NONE
@@ -119,82 +123,141 @@ function CameraPreviewController:CreateCharacter()
     self.rig = self.visual:CreateChild("ArmorRig")
     self.rig.position = Vector3(0, 0.04, 0)
 
-    -- Layered silhouette: heavy torso, raised collar, trim plates and a glowing
-    -- chest core give the demo character a readable shape from the high orbit.
-    AddPart(self.rig, "Torso", model("roundedBox"), Vector3(0, 0.82, 0),
-        Vector3(0.72, 0.94, 0.50), armor)
-    AddPart(self.rig, "ChestPlate", model("roundedBox"), Vector3(0, 0.97, -0.29),
-        Vector3(0.56, 0.58, 0.13), armorEdge)
-    AddPart(self.rig, "ChestInset", model("box"), Vector3(0, 0.98, -0.40),
-        Vector3(0.36, 0.34, 0.045), armor)
-    self.core = AddPart(self.rig, "ChestCore", model("octahedron"), Vector3(0, 1.01, -0.47),
-        Vector3(0.16, 0.26, 0.10), glow)
-    AddPart(self.rig, "WaistGuard", model("roundedBox"), Vector3(0, 0.47, 0),
-        Vector3(0.64, 0.20, 0.44), armorEdge)
-    AddPart(self.rig, "WaistSeal", model("torus"), Vector3(0, 0.56, 0),
-        Vector3(0.52, 0.08, 0.38), gold)
+    -- Human silhouette: broad chest, narrow abdomen and armored pelvis.
+    AddPart(self.rig, "Pelvis", model("roundedBox"), Vector3(0, 0.52, 0),
+        Vector3(0.62, 0.24, 0.46), armorEdge)
+    AddPart(self.rig, "Abdomen", model("roundedBox"), Vector3(0, 0.72, 0),
+        Vector3(0.50, 0.30, 0.37), armor)
+    AddPart(self.rig, "Chest", model("roundedBox"), Vector3(0, 0.98, 0),
+        Vector3(0.76, 0.46, 0.50), armor)
+    AddPart(self.rig, "ChestPlate", model("roundedBox"), Vector3(0, 1.02, -0.29),
+        Vector3(0.59, 0.50, 0.12), armorEdge)
+    AddPart(self.rig, "ChestInset", model("box"), Vector3(0, 1.02, -0.40),
+        Vector3(0.38, 0.29, 0.045), armor)
+    self.core = AddPart(self.rig, "ChestCore", model("octahedron"), Vector3(0, 1.03, -0.47),
+        Vector3(0.16, 0.25, 0.10), glow)
+    AddPart(self.rig, "WaistSeal", model("torus"), Vector3(0, 0.59, 0),
+        Vector3(0.50, 0.08, 0.38), gold)
+    AddPart(self.rig, "Collar", model("torus"), Vector3(0, 1.23, 0),
+        Vector3(0.47, 0.08, 0.38), gold)
 
-    -- Head and helmet stack, with a bright crown that makes the character
-    -- legible even when the dungeon walls occupy most of the frame.
-    AddPart(self.rig, "Head", model("sphere", "Models/Sphere.mdl"), Vector3(0, 1.58, 0),
+    -- Rounded great-helm silhouette: no cone tip, only a low crest ridge.
+    AddPart(self.rig, "Head", model("sphere", "Models/Sphere.mdl"), Vector3(0, 1.57, 0),
         Vector3(0.36, 0.38, 0.34), skin)
-    AddPart(self.rig, "Helmet", model("cone", "Models/Cone.mdl"), Vector3(0, 1.79, 0),
-        Vector3(0.45, 0.38, 0.42), armor)
-    AddPart(self.rig, "Visor", model("roundedBox"), Vector3(0, 1.68, -0.31),
-        Vector3(0.32, 0.09, 0.08), steel)
-    AddPart(self.rig, "CrownGem", model("octahedron"), Vector3(0, 2.08, 0),
-        Vector3(0.13, 0.28, 0.13), glowWarm)
+    AddPart(self.rig, "HelmetDome", model("sphere", "Models/Sphere.mdl"), Vector3(0, 1.79, 0),
+        Vector3(0.45, 0.34, 0.42), armor)
+    AddPart(self.rig, "HelmetBrim", model("cylinder", "Models/Cylinder.mdl"), Vector3(0, 1.69, 0),
+        Vector3(0.48, 0.10, 0.45), armorEdge)
+    AddPart(self.rig, "Visor", model("roundedBox"), Vector3(0, 1.70, -0.31),
+        Vector3(0.33, 0.09, 0.08), steel)
+    AddPart(self.rig, "Crest", model("roundedBox"), Vector3(0, 1.98, 0.04),
+        Vector3(0.07, 0.10, 0.28), gold)
+    AddPart(self.rig, "CrestGem", model("octahedron"), Vector3(0, 1.91, -0.28),
+        Vector3(0.09, 0.12, 0.07), glowWarm)
 
-    -- Shoulder pivots and articulated limbs are separate nodes so their
-    -- motion reads as an intentional armored figure rather than a single blob.
+    -- Shoulder pivots now carry actual upper arms, elbows, gauntlets and hands.
     self.shoulderL = self.rig:CreateChild("ShoulderL")
-    self.shoulderL.position = Vector3(-0.57, 1.22, 0)
-    AddPart(self.shoulderL, "Plate", model("roundedBox"), Vector3(0, 0, 0),
-        Vector3(0.38, 0.22, 0.48), armorEdge, Quaternion(-10, Vector3.FORWARD))
-    AddPart(self.shoulderL, "Shard", model("icosahedron"), Vector3(-0.04, 0.15, 0),
-        Vector3(0.17, 0.32, 0.17), glow)
+    self.shoulderL.position = Vector3(-0.57, 1.20, 0)
+    AddPart(self.shoulderL, "Pauldron", model("roundedBox"), Vector3(0, 0.02, 0),
+        Vector3(0.43, 0.22, 0.52), armorEdge, Quaternion(-8, Vector3.FORWARD))
+    AddPart(self.shoulderL, "ShoulderRivet", model("sphere", "Models/Sphere.mdl"),
+        Vector3(-0.12, 0.10, -0.12), Vector3(0.10, 0.10, 0.10), gold)
+    AddPart(self.shoulderL, "UpperArm", model("roundedBox"), Vector3(0, -0.19, 0.02),
+        Vector3(0.18, 0.36, 0.20), armor)
+    self.elbowL = self.shoulderL:CreateChild("ElbowL")
+    self.elbowL.position = Vector3(0, -0.39, -0.02)
+    AddPart(self.elbowL, "ElbowJoint", model("sphere", "Models/Sphere.mdl"),
+        Vector3(0, 0, -0.03), Vector3(0.14, 0.14, 0.14), armorEdge)
+    AddPart(self.elbowL, "Forearm", model("roundedBox"), Vector3(0, -0.17, -0.07),
+        Vector3(0.16, 0.32, 0.18), armor)
+    self.handL = self.elbowL:CreateChild("GauntletL")
+    self.handL.position = Vector3(0, -0.36, -0.11)
+    AddPart(self.handL, "Gauntlet", model("roundedBox"), Vector3(0, 0, 0),
+        Vector3(0.22, 0.18, 0.24), steel)
+
     self.shoulderR = self.rig:CreateChild("ShoulderR")
-    self.shoulderR.position = Vector3(0.57, 1.22, 0)
-    AddPart(self.shoulderR, "Plate", model("roundedBox"), Vector3(0, 0, 0),
-        Vector3(0.38, 0.22, 0.48), armorEdge, Quaternion(10, Vector3.FORWARD))
-    AddPart(self.shoulderR, "Shard", model("icosahedron"), Vector3(0.04, 0.15, 0),
-        Vector3(0.17, 0.32, 0.17), glow)
+    self.shoulderR.position = Vector3(0.57, 1.20, 0)
+    AddPart(self.shoulderR, "Pauldron", model("roundedBox"), Vector3(0, 0.02, 0),
+        Vector3(0.43, 0.22, 0.52), armorEdge, Quaternion(8, Vector3.FORWARD))
+    AddPart(self.shoulderR, "ShoulderRivet", model("sphere", "Models/Sphere.mdl"),
+        Vector3(0.12, 0.10, -0.12), Vector3(0.10, 0.10, 0.10), gold)
+    AddPart(self.shoulderR, "UpperArm", model("roundedBox"), Vector3(0, -0.19, 0.02),
+        Vector3(0.18, 0.36, 0.20), armor)
+    self.elbowR = self.shoulderR:CreateChild("ElbowR")
+    self.elbowR.position = Vector3(0, -0.39, -0.02)
+    AddPart(self.elbowR, "ElbowJoint", model("sphere", "Models/Sphere.mdl"),
+        Vector3(0, 0, -0.03), Vector3(0.14, 0.14, 0.14), armorEdge)
+    AddPart(self.elbowR, "Forearm", model("roundedBox"), Vector3(0, -0.17, -0.07),
+        Vector3(0.16, 0.32, 0.18), armor)
+    self.handR = self.elbowR:CreateChild("GauntletR")
+    self.handR.position = Vector3(0, -0.36, -0.11)
+    AddPart(self.handR, "Gauntlet", model("roundedBox"), Vector3(0, 0, 0),
+        Vector3(0.22, 0.18, 0.24), steel)
 
+    -- Articulated legs: thigh, knee, shin and boot instead of one long greave.
     self.legL = self.rig:CreateChild("LegL")
-    self.legL.position = Vector3(-0.24, 0.55, 0)
-    AddPart(self.legL, "Greave", model("roundedBox"), Vector3(0, -0.33, 0),
-        Vector3(0.24, 0.62, 0.27), armor)
-    AddPart(self.legL, "Knee", model("octahedron"), Vector3(0, -0.03, -0.16),
-        Vector3(0.17, 0.16, 0.12), armorEdge)
-    AddPart(self.legL, "Boot", model("roundedBox"), Vector3(0, -0.68, -0.10),
-        Vector3(0.28, 0.16, 0.42), steel)
-    self.legR = self.rig:CreateChild("LegR")
-    self.legR.position = Vector3(0.24, 0.55, 0)
-    AddPart(self.legR, "Greave", model("roundedBox"), Vector3(0, -0.33, 0),
-        Vector3(0.24, 0.62, 0.27), armor)
-    AddPart(self.legR, "Knee", model("octahedron"), Vector3(0, -0.03, -0.16),
-        Vector3(0.17, 0.16, 0.12), armorEdge)
-    AddPart(self.legR, "Boot", model("roundedBox"), Vector3(0, -0.68, -0.10),
-        Vector3(0.28, 0.16, 0.42), steel)
+    self.legL.position = Vector3(-0.19, 0.76, 0)
+    AddPart(self.legL, "Thigh", model("roundedBox"), Vector3(0, -0.16, 0),
+        Vector3(0.30, 0.34, 0.31), armor)
+    self.kneeL = self.legL:CreateChild("KneeL")
+    self.kneeL.position = Vector3(0, -0.35, -0.02)
+    AddPart(self.kneeL, "KneeCap", model("sphere", "Models/Sphere.mdl"), Vector3(0, 0, -0.04),
+        Vector3(0.18, 0.16, 0.14), armorEdge)
+    local shinL = self.kneeL:CreateChild("ShinL")
+    AddPart(shinL, "Shin", model("roundedBox"), Vector3(0, -0.18, 0),
+        Vector3(0.25, 0.36, 0.27), armor)
+    AddPart(shinL, "Boot", model("roundedBox"), Vector3(0, -0.16, -0.10),
+        Vector3(0.30, 0.16, 0.42), steel)
 
-    self.weapon = self.rig:CreateChild("EnergyBlade")
-    self.weapon.position = Vector3(0.72, 0.82, 0.05)
-    self.weapon.rotation = Quaternion(-12, Vector3.FORWARD)
+    self.legR = self.rig:CreateChild("LegR")
+    self.legR.position = Vector3(0.19, 0.76, 0)
+    AddPart(self.legR, "Thigh", model("roundedBox"), Vector3(0, -0.16, 0),
+        Vector3(0.30, 0.34, 0.31), armor)
+    self.kneeR = self.legR:CreateChild("KneeR")
+    self.kneeR.position = Vector3(0, -0.35, -0.02)
+    AddPart(self.kneeR, "KneeCap", model("sphere", "Models/Sphere.mdl"), Vector3(0, 0, -0.04),
+        Vector3(0.18, 0.16, 0.14), armorEdge)
+    local shinR = self.kneeR:CreateChild("ShinR")
+    AddPart(shinR, "Shin", model("roundedBox"), Vector3(0, -0.18, 0),
+        Vector3(0.25, 0.36, 0.27), armor)
+    AddPart(shinR, "Boot", model("roundedBox"), Vector3(0, -0.16, -0.10),
+        Vector3(0.30, 0.16, 0.42), steel)
+
+    -- Right hand holds the sword instead of leaving it floating beside the rig.
+    self.weapon = self.handR:CreateChild("KnightSword")
+    self.weapon.position = Vector3(0, -0.08, 0.03)
+    self.weapon.rotation = Quaternion(-8, Vector3.FORWARD)
     AddPart(self.weapon, "Guard", model("roundedBox"), Vector3(0, 0, 0),
-        Vector3(0.38, 0.07, 0.11), gold)
+        Vector3(0.38, 0.07, 0.12), gold)
     AddPart(self.weapon, "Grip", model("cylinder", "Models/Cylinder.mdl"), Vector3(0, -0.18, 0),
         Vector3(0.08, 0.28, 0.08), armor)
     AddPart(self.weapon, "Blade", model("box", "Models/Box.mdl"), Vector3(0, 0.44, 0),
-        Vector3(0.09, 0.70, 0.16), steel)
-    AddPart(self.weapon, "BladeCore", model("box", "Models/Box.mdl"), Vector3(0, 0.44, -0.09),
-        Vector3(0.035, 0.60, 0.035), glowWarm)
+        Vector3(0.14, 0.70, 0.10), steel)
+    AddPart(self.weapon, "BladeCore", model("box", "Models/Box.mdl"), Vector3(0, 0.44, -0.065),
+        Vector3(0.035, 0.61, 0.032), glowWarm)
+
+    -- Left hand carries a layered heater shield with a visible heraldic cross.
+    self.shield = self.handL:CreateChild("HeaterShield")
+    self.shield.position = Vector3(-0.16, -0.02, -0.12)
+    AddPart(self.shield, "ShieldFace", model("roundedBox"), Vector3(0, 0, 0),
+        Vector3(0.08, 0.46, 0.36), armorEdge)
+    AddPart(self.shield, "ShieldTopTrim", model("roundedBox"), Vector3(-0.045, 0.20, -0.02),
+        Vector3(0.05, 0.045, 0.38), gold)
+    AddPart(self.shield, "ShieldBottomTrim", model("roundedBox"), Vector3(-0.045, -0.20, -0.02),
+        Vector3(0.05, 0.045, 0.34), gold)
+    AddPart(self.shield, "ShieldCrossV", model("roundedBox"), Vector3(-0.055, 0, -0.20),
+        Vector3(0.025, 0.22, 0.035), heraldry)
+    AddPart(self.shield, "ShieldCrossH", model("roundedBox"), Vector3(-0.055, 0, -0.20),
+        Vector3(0.025, 0.035, 0.18), heraldry)
+    AddPart(self.shield, "ShieldBoss", model("octahedron"), Vector3(-0.08, 0, -0.23),
+        Vector3(0.10, 0.12, 0.10), gold)
 
     self.cloak = self.rig:CreateChild("Cloak")
-    self.cloak.position = Vector3(0, 1.15, 0.30)
-    AddPart(self.cloak, "CloakCloth", model("bannerCloth"), Vector3(0, -0.48, 0),
-        Vector3(1.30, 1.48, 1), cloth)
+    self.cloak.position = Vector3(0, 1.07, 0.32)
+    AddPart(self.cloak, "CloakCloth", model("bannerCloth"), Vector3(0, -0.52, 0),
+        Vector3(1.48, 1.48, 1), cloth)
     AddPart(self.cloak, "CloakSpine", model("cylinder", "Models/Cylinder.mdl"),
-        Vector3(0, -0.40, 0.05), Vector3(0.06, 0.72, 0.06), gold)
+        Vector3(0, -0.43, 0.05), Vector3(0.06, 0.78, 0.06), gold)
 
     -- A fixed-pitch child lets the parent spin around Y without changing the
     -- ring's floor-parallel orientation.
@@ -235,6 +298,105 @@ function CameraPreviewController:WorldAt(gridX, gridY, floor, localY)
     return Vector3(x, y, z)
 end
 
+function CameraPreviewController:FloorBaseY(gridX, gridY, floor)
+    return self:WorldAt(gridX, gridY, floor, 0).y
+end
+
+function CameraPreviewController:BuildStairSurfaceIndex()
+    self.stairSurfaces = {}
+    self.stairDescents = {}
+    if not self.dungeon then return end
+
+    local function FloorMap(container, floor)
+        container[floor] = container[floor] or {}
+        return container[floor]
+    end
+    local function AddSurface(floor, cell, elevation, connector, kind, isTop)
+        if not cell then return end
+        local map = FloorMap(self.stairSurfaces, floor)
+        if not map[cell] or (kind == "landing" and map[cell].kind ~= "landing") then
+            map[cell] = {
+                elevation = elevation or 0,
+                connector = connector,
+                kind = kind,
+                isTop = isTop == true,
+            }
+        end
+    end
+
+    for _, connector in ipairs(self.dungeon.connectors or {}) do
+        local lowerFloor = connector.fromFloor
+        local upperFloor = connector.toFloor
+        local elevationByCell = {}
+        local maxElevation = -math.huge
+        for _, item in ipairs(connector.sweptClearanceCells or {}) do
+            local elevation = item.treadElevation or 0
+            elevationByCell[item.cell] = elevation
+            maxElevation = math.max(maxElevation, elevation)
+        end
+        for _, item in ipairs(connector.sweptClearanceCells or {}) do
+            local elevation = item.treadElevation or 0
+            AddSurface(lowerFloor, item.cell, elevation, connector, "tread",
+                math.abs(elevation - maxElevation) <= STAIR_EPSILON)
+        end
+        for _, cell in ipairs(connector.lowerLandingCells or {}) do
+            AddSurface(lowerFloor, cell, 0, connector, "landing")
+        end
+        for _, cell in ipairs(connector.upperLandingCells or {}) do
+            AddSurface(upperFloor, cell, 0, connector, "landing")
+        end
+
+        -- The upper layer stores the slab opening as VOID. It is still a valid
+        -- descent entry, but only when the corresponding lower-layer tread is
+        -- present in the connector contract.
+        local descentMap = FloorMap(self.stairDescents, upperFloor)
+        for _, cell in ipairs(connector.openingCells or {}) do
+            local elevation = elevationByCell[cell]
+            if elevation ~= nil then
+                descentMap[cell] = {
+                    lowerFloor = lowerFloor,
+                    elevation = elevation,
+                    connector = connector,
+                    kind = "descent",
+                }
+            end
+        end
+    end
+end
+
+function CameraPreviewController:ResolveCell(gridX, gridY, floor)
+    if not self.dungeon then return false end
+    local layer = self.dungeon.layers[floor + 1]
+    if not layer or gridX < 0 or gridY < 0
+        or gridX >= self.dungeon.width or gridY >= self.dungeon.height then
+        return false
+    end
+    local cell = gridY * self.dungeon.width + gridX + 1
+    local surface = self.stairSurfaces[floor] and self.stairSurfaces[floor][cell]
+    if layer.grid[cell] == TILE_FLOOR then
+        return true, self:FloorBaseY(gridX, gridY, floor) + (surface and surface.elevation or 0), surface
+    end
+
+    local descent = self.stairDescents[floor] and self.stairDescents[floor][cell]
+    if descent then
+        local baseY = self:FloorBaseY(gridX, gridY, descent.lowerFloor)
+        return true, baseY + descent.elevation, descent
+    end
+    return false
+end
+
+function CameraPreviewController:SetFloor(floor)
+    local nextFloor = Clamp(floor or 0, 0, self.dungeon.floorCount - 1)
+    if nextFloor == self.floor then
+        self.layer = self.dungeon.layers[nextFloor + 1]
+        return true
+    end
+    self.floor = nextFloor
+    self.layer = self.dungeon.layers[nextFloor + 1]
+    if self.callbacks.onFloorChange then self.callbacks.onFloorChange(nextFloor) end
+    return true
+end
+
 function CameraPreviewController:FindStart()
     local entrance = self.dungeon.rooms[self.dungeon.entrance]
     local room = entrance and entrance.floor == self.floor and entrance or nil
@@ -262,6 +424,7 @@ function CameraPreviewController:SyncDungeon(dungeon, floor)
     if not dungeon then return end
     self.floor = Clamp(floor or 0, 0, dungeon.floorCount - 1)
     self.layer = dungeon.layers[self.floor + 1]
+    self:BuildStairSurfaceIndex()
     self.character.position = self:FindStart()
     if self:IsActive() then self:SnapCamera() end
 end
@@ -276,29 +439,104 @@ end
 --                o
 --              [back]
 --
--- All five samples must remain on TILE_FLOOR. X and Z are then applied
--- independently so the character slides along walls instead of sticking or
--- cutting diagonally through a corner.
-function CameraPreviewController:IsWalkable(x, z)
-    if not self.layer or not self.dungeon then return false end
+-- All five samples must resolve to a floor or a contract-backed stair surface.
+-- X and Z are then applied independently so the character slides along walls
+-- instead of sticking or cutting diagonally through a corner.
+function CameraPreviewController:EvaluatePositionAtFloor(x, z, floor)
+    if not self.dungeon then return false end
     local samples = {
         { 0, 0 }, { SAMPLE_RADIUS, 0 }, { -SAMPLE_RADIUS, 0 },
         { 0, SAMPLE_RADIUS }, { 0, -SAMPLE_RADIUS },
     }
-    for _, sample in ipairs(samples) do
+    local minY, maxY = math.huge, -math.huge
+    local centerY, centerSurface
+    for index, sample in ipairs(samples) do
         local gx = math.floor(x + sample[1] + self.dungeon.width * 0.5)
         local gy = math.floor(z + sample[2] + self.dungeon.height * 0.5)
-        if gx < 0 or gy < 0 or gx >= self.dungeon.width or gy >= self.dungeon.height then return false end
-        if self.layer.grid[gy * self.dungeon.width + gx + 1] ~= TILE_FLOOR then return false end
+        local valid, surfaceY, surface = self:ResolveCell(gx, gy, floor)
+        if not valid then return false end
+        minY, maxY = math.min(minY, surfaceY), math.max(maxY, surfaceY)
+        if index == 1 then
+            centerY, centerSurface = surfaceY, surface
+        end
     end
+    if maxY - minY > MAX_SURFACE_DISCONTINUITY then return false end
+    return true, centerY, centerSurface
+end
+
+function CameraPreviewController:FindUpperLandingPosition(connector)
+    local floor = connector.toFloor
+    local layer = self.dungeon.layers[floor + 1]
+    if not layer then return nil end
+    local candidates = {}
+    if connector.upper then candidates[#candidates + 1] = connector.upper end
+    for _, cell in ipairs(connector.upperLandingCells or {}) do
+        local zero = cell - 1
+        candidates[#candidates + 1] = {
+            x = zero % self.dungeon.width,
+            y = math.floor(zero / self.dungeon.width),
+        }
+    end
+    for _, candidate in ipairs(candidates) do
+        local cell = candidate.y * self.dungeon.width + candidate.x + 1
+        if layer.grid[cell] == TILE_FLOOR then
+            local world = self:WorldAt(candidate.x, candidate.y, floor, 0)
+            local valid, surfaceY = self:EvaluatePositionAtFloor(world.x, world.z, floor)
+            if valid then return world.x, world.z, surfaceY end
+        end
+    end
+    return nil
+end
+
+function CameraPreviewController:EvaluatePosition(x, z)
+    if not self.layer or not self.dungeon then return false end
+    local valid, surfaceY, surface = self:EvaluatePositionAtFloor(x, z, self.floor)
+    if not valid then return false end
+
+    local nextFloor, connector, targetX, targetZ, targetY
+    if surface and surface.kind == "descent" then
+        nextFloor, connector = surface.lowerFloor, surface.connector
+        targetY = surfaceY
+    elseif surface and surface.kind == "tread" and surface.connector and surface.isTop then
+        nextFloor, connector = surface.connector.toFloor, surface.connector
+        targetX, targetZ, targetY = self:FindUpperLandingPosition(connector)
+        if not targetX then return false end
+    end
+    if nextFloor and nextFloor ~= self.floor then
+        if surface.kind == "descent" then
+            local targetValid = self:EvaluatePositionAtFloor(x, z, nextFloor)
+            if not targetValid then return false end
+        end
+        return true, targetY, nextFloor, targetX or x, targetZ or z, connector
+    end
+    return true, surfaceY, nil, x, z, nil
+end
+
+function CameraPreviewController:IsWalkable(x, z)
+    local valid = self:EvaluatePosition(x, z)
+    return valid == true
+end
+
+function CameraPreviewController:TryMoveTo(x, z)
+    local valid, surfaceY, nextFloor, targetX, targetZ = self:EvaluatePosition(x, z)
+    if not valid then return false end
+    if nextFloor then self:SetFloor(nextFloor) end
+    local position = self.character.position
+    position.x, position.z, position.y = targetX, targetZ, surfaceY
+    self.character.position = position
     return true
 end
 
 function CameraPreviewController:MoveCharacter(dx, dz)
-    local position = self.character.position
-    if self:IsWalkable(position.x + dx, position.z) then position.x = position.x + dx end
-    if self:IsWalkable(position.x, position.z + dz) then position.z = position.z + dz end
-    self.character.position = position
+    local distance = math.sqrt(dx * dx + dz * dz)
+    local steps = math.max(1, math.ceil(distance / MOVEMENT_SUBSTEP))
+    local stepX, stepZ = dx / steps, dz / steps
+    for _ = 1, steps do
+        local position = self.character.position
+        self:TryMoveTo(position.x + stepX, position.z)
+        position = self.character.position
+        self:TryMoveTo(position.x, position.z + stepZ)
+    end
 end
 
 function CameraPreviewController:SyncCharacterVisibility()
@@ -401,9 +639,17 @@ function CameraPreviewController:UpdateCharacterAnimation()
     self.legL.rotation = Quaternion(strideAngle, Vector3.RIGHT)
     self.legR.rotation = Quaternion(-strideAngle, Vector3.RIGHT)
 
+    -- Bend knees and elbows instead of swinging rigid sticks.
+    local kneeL = 8 + math.max(0, stride) * (self.running and 24 or 16)
+    local kneeR = 8 + math.max(0, -stride) * (self.running and 24 or 16)
+    self.kneeL.rotation = Quaternion(kneeL, Vector3.RIGHT)
+    self.kneeR.rotation = Quaternion(kneeR, Vector3.RIGHT)
+
     local shoulderSwing = stride * (self.running and 7 or 4)
     self.shoulderL.rotation = Quaternion(-shoulderSwing, Vector3.FORWARD)
     self.shoulderR.rotation = Quaternion(shoulderSwing, Vector3.FORWARD)
+    self.elbowL.rotation = Quaternion(14 + math.max(0, -stride) * 8, Vector3.RIGHT)
+    self.elbowR.rotation = Quaternion(14 + math.max(0, stride) * 8, Vector3.RIGHT)
     self.rig.rotation = Quaternion(
         (self.moving and math.sin(time * (self.running and 13 or 9)) * (self.running and 4 or 2) or 0),
         Vector3.FORWARD)
@@ -412,12 +658,12 @@ function CameraPreviewController:UpdateCharacterAnimation()
     self.cloak.rotation = Quaternion(
         math.sin(time * 2.1 + 0.7) * (self.moving and (self.running and 13 or 8) or 4),
         Vector3.RIGHT)
-    self.cloak.position = Vector3(0, 1.15 + math.sin(time * 1.7) * 0.018,
-        0.30 + (self.moving and (self.running and 0.07 or 0.04) or 0))
+    self.cloak.position = Vector3(0, 1.07 + math.sin(time * 1.7) * 0.018,
+        0.32 + (self.moving and (self.running and 0.07 or 0.04) or 0))
 
     self.runeSpinner.rotation = Quaternion(math.deg(time * 42), Vector3.UP)
     self.core.scale = Vector3(0.94 + pulse * 0.13, 0.94 + pulse * 0.13, 0.94 + pulse * 0.13)
-    self.weapon.rotation = Quaternion(-12 + math.sin(time * 2.8) * 2.5, Vector3.FORWARD)
+    self.weapon.rotation = Quaternion(-8 + math.sin(time * 2.8) * 2.5, Vector3.FORWARD)
 
     for _, orbiter in ipairs(self.orbiters) do
         local angle = time * (self.running and 1.75 or 1.0) + orbiter.phase

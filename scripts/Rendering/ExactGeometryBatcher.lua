@@ -99,6 +99,7 @@ function ExactGeometryBatcher.new(dungeon, theme, settingKey)
         animatedProps = profile.atmosphere and profile.atmosphere.animatedProps or {},
         hospital = settingKey == "hospital",
         school = settingKey == "school",
+        temple = settingKey == "temple",
         materials = MakeMaterials(),
         emissiveMaterials = {},
         batches = {},
@@ -296,8 +297,8 @@ function ExactGeometryBatcher:QueueStructure(layer, floorSpacing)
                 local floorMaterial = structure and structure.floorMaterial
                     or (self.hospital and "hospitalFloor" or "floor")
                 -- Paving accents: a kit may swap in a relief slab on a fixed
-                -- lattice (processional rosettes), and lay a faint glowing
-                -- rune inlay inside rooms only — both pure data.
+                -- lattice (processional rosettes), and lay a subdued inlay
+                -- inside rooms only — both pure data; the material is profile-driven.
                 if structure and structure.floorAccentGeometry then
                     local every = structure.floorAccentEvery or 2
                     if x % every == 0 and y % every == 0 then
@@ -316,7 +317,7 @@ function ExactGeometryBatcher:QueueStructure(layer, floorSpacing)
                 local inlay = structure and structure.floorInlay
                 if inlay and rid > 0 and not layer.corridor[c]
                     and x % (inlay.every or 3) == 1 and y % (inlay.every or 3) == 1 then
-                    self:Add(inlay.geometry, "glow", {
+                    self:Add(inlay.geometry, inlay.material or "glow", {
                         x = worldX, y = baseY, z = worldZ,
                         color = LerpColor(self:FxColor(inlay.colorField or "runeColor"),
                             0x000000, inlay.dim or 0.45),
@@ -563,8 +564,9 @@ function ExactGeometryBatcher:QueueProp(layer, prop, floorSpacing, rng)
             color=LerpColor(self.theme.pillar, 0x1c2028, 0.22) })
         self:Add("obeliskCollar", "gild", { x=x, y=baseY, z=z, scale=scale, ry=rot,
             color=0xd8b46a })
-        self:Add("obeliskRune", "glow", { x=x, y=baseY, z=z, scale=scale, ry=rot,
-            color=self:FxColor("runeColor") })
+        local runeMaterial = self.temple and "gild" or "glow"
+        self:Add("obeliskRune", runeMaterial, { x=x, y=baseY, z=z, scale=scale, ry=rot,
+            color = self.temple and 0xd8b46a or self:FxColor("runeColor") })
     elseif prop.kind == "guardianStatue" then
         self:Add("guardianStatue", "stone", { x=x, y=baseY, z=z, scale=scale, ry=rot,
             color=LerpColor(self.theme.wall, 0x14181e, 0.30) })
@@ -584,9 +586,27 @@ function ExactGeometryBatcher:QueueProp(layer, prop, floorSpacing, rng)
             local angle = k * math.pi * 0.5 + math.pi * 0.25
             local cx, cz = x + math.cos(angle) * 0.36, z + math.sin(angle) * 0.36
             self:Add("candle", "stone", { x=cx,y=baseY+0.5,z=cz,scale=0.8,color=0xd8cba8 })
-            self:Add(self.flameCoreGeo, "glow", { x=cx,y=baseY+0.65,z=cz,scale=0.5,color=self.theme.flameCore })
+            if not self.temple then
+                self:Add(self.flameCoreGeo, "glow", {
+                    x=cx,y=baseY+0.65,z=cz,scale=0.5,color=self.theme.flameCore,
+                })
+            end
         end
     elseif prop.kind == "ring" then
+        if self.temple then
+            -- A single colored runner enriches the entrance without creating
+            -- another luminous floor pattern.
+            self:Add("templeCarpet", "cloth", {
+                x=x, y=baseY+0.018, z=z, ry=rot, color=self.theme.cloth or 0x7d2c26,
+            })
+            self:Add("templeCarpetBorder", "gild", {
+                x=x, y=baseY+0.018, z=z, ry=rot, color=0xd8b46a,
+            })
+            self:Add("templeCarpetStripe", "cloth", {
+                x=x, y=baseY+0.022, z=z, ry=rot,
+                color=self.theme.clothAccent or self.theme.accentObject,
+            })
+        end
         self:Add("platform", "stone", { x=x,y=baseY-0.02,z=z,color=LerpColor(self.theme.floor,0xffffff,0.1) })
         self:Add("pillar", "stone", { x=x-1.45,y=baseY+0.1,z=z,scale=0.72,color=self.theme.pillar })
         self:Add("pillar", "stone", { x=x+1.45,y=baseY+0.1,z=z,scale=0.72,color=self.theme.pillar })
@@ -631,8 +651,14 @@ function ExactGeometryBatcher:QueueProp(layer, prop, floorSpacing, rng)
         self:Add("templeBannerRod", "gild", { x=bx, y=baseY+2.02, z=bz, ry=ry, color=0xd8b46a })
         self:Add("templeBannerCloth", "cloth",
             { x=bx+dx*0.03, y=baseY+2.00, z=bz+dy*0.03, ry=ry, color=self.theme.cloth })
-        self:Add("emblem", "glow", { x=bx+dx*0.06, y=baseY+1.42, z=bz+dy*0.06, ry=ry,
-            scale=1.5, color=self:FxColor("runeColor") })
+        -- Contrast stripe and gilt emblem add color without turning every flag
+        -- into a glowing wall fixture.
+        self:Add("templeBannerCloth", "cloth",
+            { x=bx+dx*0.048, y=baseY+2.00, z=bz+dy*0.048, ry=ry,
+                sx=0.34, sy=0.82, sz=1.01,
+                color=self.theme.clothAccent or self.theme.accentObject })
+        self:Add("emblem", "gild", { x=bx+dx*0.06, y=baseY+1.42, z=bz+dy*0.06, ry=ry,
+            scale=1.5, color=self.theme.clothAccent or 0xd8b46a })
     end
     return false
 end

@@ -384,11 +384,11 @@ function ControlPanel.new(callbacks, initial)
     self.floorHeightValue = Label("层高 5.00 米", 9, C.dim, { fontWeight = "bold" })
     self.floorDropdown = UI.Dropdown {
         width = "100%", value = 0, maxVisibleItems = 6,
-        options = { { value = 0, label = "第 1 层 · 21 个区域（当前）" }, { value = 1, label = "第 2 层 · 21 个区域" } },
+        options = { { value = 0, label = "第 1 层 · 10 个区域（当前）" }, { value = 1, label = "第 2 层 · 10 个区域" } },
         onChange = function(_, value) callbacks.onFloorSelect(math.floor(value)) end,
     }
-    self.roomValue = Label("21", 11, C.accent, { fontWeight = "bold" })
-    self.roomSlider = UI.Slider { value = 21, min = 6, max = 50, step = 1,
+    self.roomValue = Label("10", 11, C.accent, { fontWeight = "bold" })
+    self.roomSlider = UI.Slider { value = 10, min = 1, max = 50, step = 1,
         onChange = function(_, value) self.roomValue:SetText(tostring(math.floor(value + 0.5))) end,
         onChangeEnd = function(_, value) callbacks.onRoomCount(math.floor(value + 0.5)) end }
     self.loopValue = Label("15%", 11, C.accent, { fontWeight = "bold" })
@@ -2489,7 +2489,7 @@ function ControlPanel:SetState(state)
     self:RebuildPaletteExpandedList(state)
     local options, total = {}, 0
     for floor = 1, state.floorCount do
-        local count = state.roomCounts[floor] or 21
+        local count = state.roomCounts[floor] or 10
         total = total + count
         options[#options + 1] = { value = floor - 1, label = string.format("第 %d 层 · %d 个区域%s", floor, count, floor - 1 == state.currentFloor and "（当前）" or "") }
     end
@@ -2498,7 +2498,7 @@ function ControlPanel:SetState(state)
     self.floorSummary:SetText(string.format("共 %d 层 · %d 区", state.floorCount, total))
     self.floorHeightValue:SetText(string.format("层高 %.2f 米", state.floorHeight or MultiFloor.FLOOR_HEIGHT))
     local idx = state.currentFloor + 1
-    local rooms = state.roomCounts[idx] or 21
+    local rooms = state.roomCounts[idx] or 10
     local loops = state.loopRates[idx] or 15
     local decor = state.decorDensities[idx] or 60
     self.roomSlider:SetValue(rooms); self.roomValue:SetText(tostring(rooms))

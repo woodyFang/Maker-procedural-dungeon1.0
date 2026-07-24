@@ -1348,7 +1348,7 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
 end
 
 local function GenerateAttempt(seed, parameters)
-    local floorCount = math.max(1, math.floor((parameters.floorCount or 2) + 0.5))
+    local floorCount = math.max(1, math.floor((parameters.floorCount or 1) + 0.5))
     local floorHeight = MultiFloor.NormalizeFloorHeight(parameters.floorHeight)
     local emptyScene = parameters.emptyScene == true
     local stableSeed = Random.U32(parameters.stableSeed or seed)
@@ -1364,12 +1364,12 @@ local function GenerateAttempt(seed, parameters)
     else
         for floor = 1, #sourceCounts do roomCounts[floor] = sourceCounts[floor] end
         if #roomCounts == 0 then
-            local total = math.max(6, math.floor((parameters.roomCount or 42) + 0.5))
+            local total = math.max(floorCount, math.floor((parameters.roomCount or 10) + 0.5))
             local base = math.floor(total / floorCount)
             for floor = 1, floorCount do roomCounts[floor] = base end
             for floor = 1, total - base * floorCount do roomCounts[floor] = roomCounts[floor] + 1 end
         end
-        for floor = 1, floorCount do roomCounts[floor] = Clamp(math.floor((roomCounts[floor] or 21) + 0.5), 3, 50) end
+        for floor = 1, floorCount do roomCounts[floor] = Clamp(math.floor((roomCounts[floor] or 10) + 0.5), 1, 50) end
     end
     local loopRates = parameters.loopRatesByFloor or { parameters.loopRate or 0.15 }
     local densities = parameters.decorDensitiesByFloor or { parameters.decorDensity or 0.6 }

@@ -102,13 +102,24 @@ function RoomLayout.ring(room, rng, spec, place)
     local count = spec.count or 6
     local radius = spec.radius or math.max(2.5, math.min(room.w, room.h) * 0.5 - 2)
     local angle0 = spec.angleJitter == false and 0 or rng:Float(0, spec.angleSpan or math.pi * 2)
+    local placed = 0
     for i = 0, count - 1 do
         local angle = angle0 + i * (2 * math.pi / count)
         local x = math.floor(room.cx + math.cos(angle) * radius + 0.5)
         local y = math.floor(room.cy + math.sin(angle) * radius + 0.5)
         local s = spec.scaleMin and Scale(rng, spec) or 1
-        place.at(room, spec.kind, x, y, spec.rot or 0, s)
+        if place.at(room, spec.kind, x, y, spec.rot or 0, s) then placed = placed + 1 end
     end
+    -- A semantic room can be smaller than its preferred ceremonial ring. Keep
+    -- its signature readable with one legal focal prop instead of silently
+    -- producing an empty rule result.
+    if placed == 0 and not spec.anchor then
+        place.prop(room, spec.kind, {
+            rot = spec.rot, scale = spec.scale or (spec.scaleMin and Scale(rng, spec)) or 1,
+            tries = spec.tries or 24,
+        })
+    end
+    return placed
 end
 
 -- Dense sub-grid fill with a per-cell chance. Grave fields, crop rows, seating.

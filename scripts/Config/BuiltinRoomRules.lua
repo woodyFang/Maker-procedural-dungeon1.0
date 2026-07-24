@@ -79,7 +79,7 @@ local TEMPLE_ROOMS = {
         sortOrder = 3, roleKeys = { "elite" }, ruleKey = "elite",
         minCount = 1, minArea = 64,
         propRules = {
-            Rule("obelisk", 6, 1.0, 0.90, 1.04,
+            Rule("obelisk", 4, 1.0, 0.90, 1.04,
                 { layout = "ring", radius = 3.5, angleJitter = false }),
             Rule("crystalCluster", 1, 1.0, 1.0, 1.18, { layout = "focal", tries = 36 }),
             Rule("pillar", 4, 1.0, 0.94, 1.04,
@@ -106,7 +106,7 @@ local TEMPLE_ROOMS = {
         propRules = {
             Rule("guardianStatue", 1, 1.0, 1.18, 1.30,
                 { layout = "edgeFocal", side = "south", edgeInset = 2, rot = 0, tries = 36 }),
-            Rule("brazier", 6, 1.0, 0.92, 1.04,
+            Rule("brazier", 4, 1.0, 0.92, 1.04,
                 { layout = "ring", radius = 3.5, angleJitter = false, anchor = "bossCrystal", anchorScale = 1.12 }),
         },
     },

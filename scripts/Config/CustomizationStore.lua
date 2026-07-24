@@ -6,7 +6,7 @@ local TopicSeeds = require("Config.TopicSeeds")
 
 local CustomizationStore = {}
 
-CustomizationStore.SCHEMA_VERSION = 10
+CustomizationStore.SCHEMA_VERSION = 11
 CustomizationStore.IMAGE_DIRECTORY = "customization-images"
 CustomizationStore.MAX_SOURCE_BYTES = 20 * 1024 * 1024
 CustomizationStore.MAX_IMAGE_BYTES = CustomizationStore.MAX_SOURCE_BYTES
@@ -187,7 +187,7 @@ end
 
 local function IsBuiltinPalette(key)
     for _, settingKey in ipairs(Themes.settingOrder) do
-        for _, paletteKey in ipairs(Themes.GetBuiltinPalettes(settingKey)) do
+        for _, paletteKey in ipairs(Themes.GetBuiltinPalettes(settingKey) or {}) do
             if paletteKey == key then return true end
         end
     end
@@ -206,13 +206,17 @@ local function NormalizePalettes(items)
                 or (explicitGroup == "theme" and "theme"
                 or (Contains(Themes.GetBuiltinDefaultPalettes(), source.basePaletteKey) and "default" or "theme"))
             local settingKey = IsKnownSetting(source.baseSettingKey) and source.baseSettingKey or "dungeon"
-            local builtinPool = paletteGroup == "default"
-                and Themes.GetBuiltinDefaultPalettes() or Themes.GetBuiltinThemePalettes(settingKey)
-            if #builtinPool == 0 then builtinPool = Themes.GetBuiltinDefaultPalettes() end
+            local builtinPool = (paletteGroup == "default"
+                and Themes.GetBuiltinDefaultPalettes() or Themes.GetBuiltinThemePalettes(settingKey)) or {}
+            if #builtinPool == 0 then builtinPool = Themes.GetBuiltinDefaultPalettes() or {} end
             local basePaletteKey = source.basePaletteKey
+            local firstPalette = ""
             local validBase = false
-            for _, key in ipairs(builtinPool) do if key == basePaletteKey then validBase = true; break end end
-            if not validBase then basePaletteKey = builtinPool[1] end
+            for _, key in ipairs(builtinPool) do
+                if firstPalette == "" then firstPalette = key end
+                if key == basePaletteKey then validBase = true; break end
+            end
+            if not validBase then basePaletteKey = firstPalette end
             local colors = PaletteData.NormalizeColors(source.colors)
             if id ~= "" and label ~= "" and not IsBuiltinPalette(id)
                 and colors and not ids[id] and not names[folded] then

@@ -209,7 +209,9 @@ PROFILES.temple = ExtendProfile(PROFILES.dungeon, {
     structure = {
         floorGeometry = "templeFloor", floorMaterial = "templeFloor",
         floorAccentGeometry = "templeFloorRosette", floorAccentEvery = 2,
-        floorInlay = { geometry = "templeFloorInlay", every = 3, colorField = "runeColor", dim = 0.45 },
+        -- The inlay remains readable as a gilt relief, not a glowing floor grid.
+        floorInlay = { geometry = "templeFloorInlay", material = "gild", every = 3,
+            colorField = "runeColor", dim = 0.42 },
         wallGeometry = "templeWall", wallMaterial = "templeWall",
         wallAccentGeometry = "templeWallPier", wallAccentEvery = 3, wallAccentGain = 1.06,
         capGeometry = "templeWallCap", capMaterial = "templeCap",
@@ -234,8 +236,10 @@ PROFILES.temple = ExtendProfile(PROFILES.dungeon, {
     -- Floating-bead tier markers instead of the ruins spike spires.
     spawnVisual = {
         geometry = "templeSpawn",
-        material = "glow",
-        colors = { 0xcf6a3a, 0xe0483e, 0xa678ff },
+        -- Spawn markers are structural gilt beads; avoid another emissive
+        -- matrix on the walkable floor.
+        material = "gild",
+        colors = { 0x8d6738, 0x9b493f, 0x7562a8 },
         scales = { 0.85, 1.0, 1.2 },
     },
     -- Scene-richness overrides: gilt sigil plaques between the lanterns,
@@ -267,7 +271,9 @@ PROFILES.temple = ExtendProfile(PROFILES.dungeon, {
             roomTypes = { entrance = true, shrine = true, boss = true, treasure = true },
             minDim = 6, maxPerFloor = 5,
         },
-        runeCircles = { roomTypes = { boss = true, shrine = true } },
+        -- Keep one ground sigil at the final shrine; ordinary shrine floors
+        -- use stone and gilt inlays instead of another luminous disk.
+        runeCircles = { roomTypes = { boss = true } },
         animatedProps = { ring = true, shrineCrystal = true },
         pulse = { min = 0.88, max = 1.18, speed = 1.1 },
     },
