@@ -5,6 +5,7 @@ local GenericThemeRules = require("Config.GenericThemeRules")
 local RoomGroupColors = require("Config.RoomGroupColors")
 local MultiFloor = require("Generation.MultiFloor")
 local PaletteData = require("Config.PaletteData")
+local PaletteAIProvider = require("AI.PaletteAIProvider")
 local TextArea = require("UI.TextArea")
 local OriginalModal = require("UI.OriginalModal")
 local LocalRequirementPlanner = require("AI.LocalRequirementPlanner")
@@ -18,12 +19,24 @@ local C = {
     accent = { 232, 151, 63, 255 }, teal = { 63, 208, 187, 255 }, danger = { 216, 67, 58, 255 },
 }
 
+local PREVIEW = {
+    surface = { 12, 28, 56, 238 }, dark = { 7, 16, 32, 255 }, border = { 10, 16, 32, 255 },
+    primary = { 31, 162, 255, 255 }, primaryDark = { 13, 126, 230, 255 },
+    text = { 255, 255, 255, 255 }, dim = { 213, 226, 255, 255 }, subdued = { 157, 166, 198, 255 },
+    shadow = { { x = 6, y = 6, blur = 0, spread = 0, color = { 0, 0, 0, 96 } } },
+}
+
 local HINT_OVERVIEW =
-    "相机：WASD/方向键移动，Shift 加速 · 右键自由旋转 · 中键平移 · Alt+左键绕焦点旋转 · 左+右键推进/后退 · 滚轮缩放 · Home/F 复原居中\n编辑：直接点 2D 平面，E 进入 3D 编辑 · R 重新生成 · T 切换色调 · Shift+T 切换题材"
+    "相机（UE 视口习惯）：左键拖拽转向+前后走 · 右键自由环视（按住时滚轮调速）· 左+右键升降平移 · 中键平移 · Alt+左键绕焦点 · Alt+右键推拉 · WASD/方向键移动，Shift 加速 · 滚轮缩放 · Home/F 复原居中\n编辑：直接点 2D 平面，E 进入 3D 编辑 · R 重新生成 · T 切换色调 · Shift+T 切换题材"
 local HINT_EDIT_3D =
     "3D 编辑（正交顶视）：左键编辑房间与通路 · 空白处/Alt+左键 或 中键拖拽平移 · 滚轮缩放（对准光标）· WASD/方向键移动，Shift 加速 · F 焦点居中复原 · E 退出编辑 · Esc 完成"
 local HINT_EDIT_2D =
     "2D 平面编辑：拖动使用轻量预览，松手后同步三维 · 中键/空白处拖拽平移 · 滚轮缩放 · Tab 返回三维 · Esc 完成"
+
+local function Contains(items, value)
+    for _, item in ipairs(items or {}) do if item == value then return true end end
+    return false
+end
 
 local function Label(text, size, color, extra)
     local props = extra or {}
@@ -224,24 +237,25 @@ local function FloorSetting(labelText, valueLabel, slider)
 end
 
 local function PreviewButton(code, title, hint, onClick)
-    local icon = Label(code, 9, C.accent, {
-        width = 29, height = 29, textAlign = "center", verticalAlign = "middle",
-        backgroundColor = { 11, 15, 23, 255 }, borderColor = { 91, 70, 50, 255 },
-        borderWidth = 1, borderRadius = 5,
+    local icon = Label(code, 8, PREVIEW.primary, {
+        width = 24, height = 24, textAlign = "center", verticalAlign = "middle",
+        backgroundColor = PREVIEW.dark, borderColor = PREVIEW.primaryDark,
+        borderWidth = 1, borderRadius = 0, fontWeight = "bold",
     })
-    local button = UI.Button {
-        width = 142, height = 44, padding = 7, gap = 9, flexDirection = "row", alignItems = "center",
-        backgroundColor = { 20, 25, 37, 245 }, borderColor = { 48, 55, 74, 255 },
-        borderWidth = 1, borderRadius = 7, onClick = onClick,
+    return UI.Button {
+        width = 128, height = 42, padding = { 5, 7 }, gap = 7,
+        flexDirection = "row", alignItems = "center",
+        backgroundColor = PREVIEW.surface, borderColor = PREVIEW.border,
+        borderWidth = { 1, 3, 3, 1 }, borderRadius = 0,
+        boxShadow = PREVIEW.shadow, onClick = onClick,
         children = {
             icon,
-            UI.Panel { gap = 3, children = {
-                Label(title, 11, C.text, { fontWeight = "bold" }),
-                Label(hint, 8, { 114, 124, 145, 255 }),
+            UI.Panel { flexGrow = 1, gap = 1, pointerEvents = "none", children = {
+                Label(title, 10, PREVIEW.text, { fontWeight = "bold" }),
+                Label(hint, 8, PREVIEW.dim, { whiteSpace = "nowrap", fontWeight = "bold" }),
             } },
         },
     }
-    return button
 end
 
 local function PaletteSwatch(color, size)
@@ -408,57 +422,81 @@ function ControlPanel.new(callbacks, initial)
             textAlign = "center", whiteSpace = "normal", lineHeight = 1.35,
             backgroundColor = { 11, 14, 23, 220 }, padding = 8, borderRadius = 18 })
 
-    self.thirdPreviewButton = PreviewButton("三", "第三人称", "观察角色与空间",
+    self.thirdPreviewButton = PreviewButton("三", "第三人称", "角色与动线",
         function() callbacks.onPreview("third") end)
-    self.firstPreviewButton = PreviewButton("一", "第一人称", "检查室内尺度",
+    self.firstPreviewButton = PreviewButton("一", "第一人称", "空间与尺度",
         function() callbacks.onPreview("first") end)
-    self.previewExitButton = SmallButton("退出预览  Esc", function() callbacks.onExitPreview() end, {
-        width = 108, height = 44, fontSize = 10, backgroundColor = { 20, 25, 37, 245 },
-        borderColor = { 93, 73, 56, 255 }, borderWidth = 1,
+    self.previewExitButton = SmallButton("退出  Esc", function() callbacks.onExitPreview() end, {
+        width = 88, height = 42, fontSize = 10, backgroundColor = { 35, 32, 48, 245 },
+        borderColor = PREVIEW.border, borderWidth = { 1, 3, 3, 1 }, borderRadius = 0,
+        boxShadow = PREVIEW.shadow, fontWeight = "bold",
     })
     self.previewExitButton:SetVisible(false)
 
+    self.previewModeStrip = UI.Panel {
+        height = 46, padding = 2, gap = 3, flexDirection = "row", alignItems = "center",
+        backgroundColor = PREVIEW.dark, borderColor = PREVIEW.border,
+        borderWidth = 2, borderRadius = 0,
+        children = { self.thirdPreviewButton, self.firstPreviewButton },
+    }
     self.previewBar = UI.Panel {
-        height = 54, padding = 5, gap = 5, flexDirection = "row", alignItems = "center",
-        backgroundColor = { 13, 17, 25, 238 }, borderColor = { 48, 56, 75, 255 },
-        borderWidth = 1, borderRadius = 10, backdropBlur = 12,
-        boxShadow = { { x = 0, y = 12, blur = 34, spread = 0, color = { 0, 0, 0, 180 } } },
+        height = 56, padding = { 6, 7 }, gap = 8, flexDirection = "row", alignItems = "center",
+        backgroundColor = PREVIEW.surface, borderColor = PREVIEW.border,
+        borderWidth = { 1, 3, 3, 1 }, borderRadius = 0, backdropBlur = 12,
+        boxShadow = PREVIEW.shadow,
         children = {
-            UI.Panel { width = 74, paddingLeft = 7, paddingRight = 10, gap = 4,
-                borderRightWidth = 1, borderColor = { 52, 59, 77, 255 }, children = {
-                    Label("视角", 7, { 110, 120, 144, 255 }),
-                    Label("视角预览", 11, C.text, { fontWeight = "bold" }),
+            UI.Panel { width = 64, paddingLeft = 6, paddingRight = 8, gap = 3,
+                borderRightWidth = 1, borderColor = PREVIEW.primaryDark, children = {
+                    Label("视角", 7, PREVIEW.primary, { fontWeight = "bold", letterSpacing = 1 }),
+                    Label("预览", 12, PREVIEW.text, { fontWeight = "bold" }),
                 }
             },
-            self.thirdPreviewButton, self.firstPreviewButton, self.previewExitButton,
+            self.previewModeStrip, self.previewExitButton,
         }
     }
     self.previewBarAnchor = UI.Panel {
-        position = "absolute", left = 0, right = 0, bottom = 48, height = 54,
+        position = "absolute", left = 0, right = 0, bottom = 48, height = 56,
         alignItems = "center", pointerEvents = "box-none", children = { self.previewBar },
     }
 
-    self.previewModeLabel = Label("第三人称预览", 14, C.text, { fontWeight = "bold" })
-    self.previewViewHint = Label("跟随角色观察房间布局与动线", 9, { 142, 152, 170, 255 })
-    self.previewCrosshair = Label("○", 12, { 217, 224, 234, 150 }, {
-        position = "absolute", left = "50%", top = "50%",
+    self.previewModeLabel = Label("第三人称", 16, PREVIEW.text, { fontWeight = "bold" })
+    self.previewViewHint = Label("跟随角色观察房间布局与动线", 9, PREVIEW.dim, { fontWeight = "bold" })
+    self.previewModeBadge = Label("漫游预览", 8, PREVIEW.primary, {
+        padding = { 3, 6 }, backgroundColor = PREVIEW.dark,
+        borderColor = PREVIEW.primaryDark, borderWidth = 1, borderRadius = 0, fontWeight = "bold",
+    })
+    self.previewCrosshair = Label("＋", 19, PREVIEW.text, {
+        position = "absolute", left = "50%", top = "50%", width = 24, height = 24,
+        marginLeft = -12, marginTop = -12, textAlign = "center", verticalAlign = "middle",
+        fontWeight = "bold", textShadow = { offsetX = 0, offsetY = 1, blur = 2, color = { 0, 0, 0, 220 } },
+    })
+    self.previewControlsLabel = Label("WASD 移动  ·  Shift 奔跑  ·  右键环视", 9, PREVIEW.dim, {
+        whiteSpace = "nowrap", fontWeight = "bold",
+    })
+    self.previewHotkeyLabel = Label("1 第三人称   2 第一人称   Esc 返回", 8, PREVIEW.subdued, {
+        whiteSpace = "nowrap", fontWeight = "bold",
     })
     self.previewHud = UI.Panel {
         position = "absolute", left = 0, right = 0, top = 0, bottom = 0, pointerEvents = "box-none",
         children = {
-            UI.Panel { position = "absolute", top = 22, left = 22, minWidth = 238,
-                padding = { 11, 15 }, gap = 5, backgroundColor = { 12, 17, 25, 225 },
-                borderLeftWidth = 2, borderColor = C.accent, children = {
-                    Label("当前视角", 8, { 119, 129, 152, 255 }), self.previewModeLabel, self.previewViewHint,
+            UI.Panel { position = "absolute", top = 20, left = 20, minWidth = 250,
+                padding = { 10, 13 }, gap = 4, backgroundColor = PREVIEW.surface,
+                borderLeftWidth = 3, borderColor = PREVIEW.primary, boxShadow = PREVIEW.shadow,
+                children = {
+                    Row({ Label("当前视角", 8, PREVIEW.primary, { flexGrow = 1, fontWeight = "bold", letterSpacing = 1 }), self.previewModeBadge },
+                        { alignItems = "center" }),
+                    self.previewModeLabel, self.previewViewHint,
                 }
             },
-            UI.Panel { position = "absolute", left = "28%", right = "28%", bottom = 101,
-                padding = { 7, 12 }, borderRadius = 5, backgroundColor = { 10, 14, 21, 205 },
-                borderColor = { 48, 55, 73, 255 }, borderWidth = 1, alignItems = "center",
-                children = { Label(
-                    "WASD 移动角色 · Shift+WASD 奔跑 · 鼠标右键拖拽环视 · 滚轮缩放第三人称镜头 · 1/2 切换视角 · Esc 返回观察",
-                    9, { 143, 152, 170, 255 }, { textAlign = "center", whiteSpace = "normal" }) },
-            },
+            UI.Panel { position = "absolute", left = 0, right = 0, bottom = 82,
+                alignItems = "center", pointerEvents = "box-none", children = {
+                    UI.Panel { padding = { 7, 12 }, gap = 3, alignItems = "center",
+                        backgroundColor = PREVIEW.dark, borderColor = PREVIEW.border,
+                        borderWidth = { 1, 3, 3, 1 }, borderRadius = 0, boxShadow = PREVIEW.shadow,
+                        children = {
+                            self.previewControlsLabel, self.previewHotkeyLabel,
+                        } },
+                } },
             self.previewCrosshair,
         }
     }
@@ -647,17 +685,87 @@ function ControlPanel.new(callbacks, initial)
         width = "100%", value = initial.settingKey or "dungeon", maxVisibleItems = 4,
         options = baseSettingOptions,
     }
+    self.paletteGroupDropdown = UI.Dropdown {
+        width = "100%", value = "theme", maxVisibleItems = 2,
+        options = {
+            { value = "default", label = "默认配色（跨题材通用）" },
+            { value = "theme", label = "题材配色（仅当前题材）" },
+        },
+    }
     self.palettePromptField = TextArea {
         width = "100%", height = 76, value = "", maxLength = 600,
         backgroundColor = { 22, 26, 38, 255 }, borderRadius = 8,
         borderColor = { 52, 58, 77, 255 }, focusedBorderColor = C.accent, fontSize = 12,
         placeholder = "给 AI 的配色描述，例如：冷峻月光下的紫灰石材，少量高饱和洋红发光符文…",
     }
+    self.paletteColorValues = {}
+    self.paletteColorPickers = {}
+    self.paletteColorUpdating = false
+    self.paletteAIState = PaletteAIProvider.STATUS.IDLE
+    local paletteColorPresets = {
+        "#E8E8E8", "#B0B0B0", "#5FD1C7", "#56B8D0",
+        "#E0B657", "#E85D62", "#A783E8", "#FF8F70",
+    }
+    local paletteColorEditors = {}
+    for _, field in ipairs(PaletteData.COLOR_FIELDS) do
+        local colorField = field
+        local picker = UI.ColorPicker {
+            width = "100%", size = "sm", color = "#FFFFFF",
+            showAlpha = false, showInput = true, showPresets = true,
+            presets = paletteColorPresets,
+            onChange = function(_, value)
+                if self.paletteColorUpdating then return end
+                local color = PaletteData.ParseColor(value and value.hex)
+                if not color then return end
+                self.paletteColorValues[colorField] = color
+                self:SyncPaletteDataFromColorPickers()
+            end,
+        }
+        -- Keep an open picker from swallowing clicks intended for the modal footer.
+        local pickerHitTest = picker.HitTest
+        function picker:HitTest(x, y)
+            if self.isOpen_ then
+                local inInput = self.inputBounds_ and self:PointInBounds(x, y, self.inputBounds_)
+                local inPopup = self.popupBounds_ and self:PointInBounds(x, y, self.popupBounds_)
+                return inInput or inPopup
+            end
+            return pickerHitTest(self, x, y)
+        end
+        local pickerPointerUp = picker.OnPointerUp
+        function picker:OnPointerUp(event)
+            local wasOpen = self.isOpen_
+            pickerPointerUp(self, event)
+            if wasOpen and self.isOpen_ and event and self.popupBounds_
+                and not self:PointInBounds(event.x, event.y, self.inputBounds_) then
+                self:Close()
+            end
+        end
+        self.paletteColorPickers[colorField] = picker
+        paletteColorEditors[#paletteColorEditors + 1] = UI.Panel {
+            width = "48%", gap = 2, flexShrink = 0,
+            children = { Label(PaletteData.FIELD_LABELS[colorField], 9, C.dim), picker },
+        }
+    end
+    self.paletteColorEditor = UI.Panel {
+        width = "100%", flexDirection = "row", flexWrap = "wrap", gap = 6,
+        children = paletteColorEditors,
+    }
+    self.paletteAIGenerateButton = SmallButton("AI 生成", function()
+        self:GeneratePaletteWithAI()
+    end, {
+        width = 86, height = 28, fontSize = 10, variant = "primary",
+        backgroundColor = { 38, 54, 76, 255 }, borderColor = { 75, 119, 163, 255 },
+        textColor = { 192, 221, 247, 255 },
+    })
+    self.paletteAIHint = Label("服务接入后自动回填；当前可复制指令给外部 AI", 9, C.dim, {
+        flexGrow = 1, whiteSpace = "normal",
+    })
     self.paletteDataField = TextArea {
         width = "100%", height = 198, value = "", maxLength = 1800,
         backgroundColor = { 12, 16, 24, 255 }, borderRadius = 8,
         borderColor = { 52, 58, 77, 255 }, focusedBorderColor = C.teal, fontSize = 11,
         placeholder = "粘贴 AI 生成的 JSON 配色数据",
+        onChange = function(_, value) self:SyncPaletteColorPickersFromData(value) end,
     }
     self.paletteError = Label("", 10, C.danger, { whiteSpace = "normal" })
     self.paletteDeleteButton = SmallButton("删除配色", function() self:ConfirmDeleteCustomPalette() end, {
@@ -687,7 +795,11 @@ function ControlPanel.new(callbacks, initial)
                 } },
             FieldLabel("配色名称", "必填"), self.paletteNameField,
             FieldLabel("适用题材", "决定基础材质"), self.paletteBaseSettingDropdown,
-            FieldLabel("AI 配色描述", "可复制给 AI"), self.palettePromptField,
+            FieldLabel("配色分类", "默认可跨题材使用"), self.paletteGroupDropdown,
+            FieldLabel("AI 配色描述", "服务接入后生成"), self.palettePromptField,
+            Row({ self.paletteAIGenerateButton, self.paletteAIHint }, { alignItems = "center", gap = 8 }),
+            Label("色卡调色", 11, C.text, { fontWeight = "bold" }),
+            self.paletteColorEditor,
             UI.Panel { width = "100%", height = 1, backgroundColor = { 40, 46, 64, 255 } },
             Row({
                 Label("AI 配色数据", 11, C.text, { fontWeight = "bold", flexGrow = 1 }),
@@ -1162,20 +1274,125 @@ function ControlPanel:CopyPaletteAIPrompt()
         self:FillPaletteTemplate()
         template = self.paletteDataField:GetValue()
     end
-    local prompt = table.concat({
-        "请为程序化 3D 场景生成一组模型材质配色。",
-        "配色名称：" .. (label ~= "" and label or "未命名配色"),
-        "视觉描述：" .. (description ~= "" and description or "在参考配色基础上形成清晰、克制的 PBR 色彩层级"),
-        "只输出一个 JSON 对象，不要 Markdown、解释或额外字段。每个值必须是 #RRGGBB。",
-        "必须保留字段：floor, corridor, wall, pillar, accentObject, cloth, flame, flameCore。",
-        "保证 floor/corridor/wall/pillar 彼此可辨但属于同一材质家族；accentObject 和 flame 提供视觉焦点。",
-        "参考数据：",
-        template,
-    }, "\n")
+    local request = PaletteAIProvider.BuildRequest(
+        description, label, self.paletteBaseSettingDropdown:GetValue() or "dungeon", template)
     ui.useSystemClipboard = true
-    ui:SetClipboardText(prompt)
+    ui:SetClipboardText(request.prompt)
     self:SetStatus("AI 配色生成指令已复制；把 AI 返回的 JSON 粘贴到数据框即可保存")
     print("[ControlPanel] AI palette prompt copied")
+end
+
+function ControlPanel:GeneratePaletteWithAI()
+    if self.paletteAIState == PaletteAIProvider.STATUS.REQUESTING then return end
+    local description = Trim(self.palettePromptField:GetValue())
+    if description == "" then
+        self.paletteAIState = PaletteAIProvider.STATUS.ERROR
+        self.paletteError:SetText("请先填写 AI 配色描述。")
+        self:SetStatus("AI 配色未生成：缺少描述")
+        return
+    end
+
+    local template = self.paletteDataField:GetValue()
+    if Trim(template) == "" then
+        self:FillPaletteTemplate()
+        template = self.paletteDataField:GetValue()
+    end
+    local request = PaletteAIProvider.BuildRequest(
+        description, Trim(self.paletteNameField:GetValue()),
+        self.paletteBaseSettingDropdown:GetValue() or "dungeon", template)
+    self.paletteAIState = PaletteAIProvider.STATUS.REQUESTING
+    self.paletteAIGenerateButton:SetDisabled(true)
+    self.paletteAIHint:SetText("正在等待 AI 服务响应…")
+    self.paletteError:SetText("")
+    self:SetStatus("正在生成 AI 配色…")
+
+    local settled = false
+    local function Finish(rawResponse, reason)
+        if settled then return end
+        settled = true
+        self.paletteAIGenerateButton:SetDisabled(false)
+        if not rawResponse then
+            self.paletteAIState = PaletteAIProvider.STATUS.UNAVAILABLE
+            local message = reason or PaletteAIProvider.UNAVAILABLE_REASON
+            self.paletteAIHint:SetText(message)
+            self.paletteError:SetText(message)
+            self:SetStatus("AI 配色服务暂不可用；可复制指令到外部 AI")
+            return
+        end
+
+        local colors, decodeReason = PaletteAIProvider.DecodeResponse(rawResponse)
+        if not colors then
+            self.paletteAIState = PaletteAIProvider.STATUS.ERROR
+            self.paletteAIHint:SetText("AI 返回内容未通过 8 色字段校验")
+            self.paletteError:SetText(decodeReason or "AI 配色数据无效。")
+            self:SetStatus("AI 配色返回无效，请检查 JSON")
+            return
+        end
+        local encoded, encodeReason = PaletteData.EncodeAIData(colors)
+        if encoded == "" then
+            self.paletteAIState = PaletteAIProvider.STATUS.ERROR
+            self.paletteAIHint:SetText("AI 配色无法编码")
+            self.paletteError:SetText(encodeReason or "AI 配色数据无效。")
+            self:SetStatus("AI 配色生成失败")
+            return
+        end
+        self.paletteDataField:SetValue(encoded)
+        self:SyncPaletteColorPickers(colors)
+        self.paletteAIState = PaletteAIProvider.STATUS.SUCCESS
+        self.paletteAIHint:SetText("AI 配色已回填，可继续用色卡微调后保存")
+        self.paletteError:SetText("")
+        self:SetStatus("AI 配色已生成；确认色卡后点击保存并使用")
+    end
+
+    local callback = self.callbacks.onPaletteAIGenerate
+    if not callback then
+        Finish(nil, PaletteAIProvider.UNAVAILABLE_REASON)
+        return
+    end
+    local accepted, resultOrReason = callback(request, Finish)
+    if accepted == false then
+        Finish(nil, resultOrReason)
+    elseif accepted == nil then
+        Finish(nil, "AI 配色服务没有返回结果。")
+    elseif accepted ~= true then
+        Finish(accepted, resultOrReason)
+    end
+end
+
+function ControlPanel:SyncPaletteColorPickers(colors)
+    if type(colors) ~= "table" then return end
+    self.paletteColorValues = {}
+    self.paletteColorUpdating = true
+    for _, field in ipairs(PaletteData.COLOR_FIELDS) do
+        local color = PaletteData.ParseColor(colors[field])
+        if color then
+            self.paletteColorValues[field] = color
+            local picker = self.paletteColorPickers[field]
+            if picker then picker:SetHex(string.format("#%06X", color)) end
+        end
+    end
+    self.paletteColorUpdating = false
+end
+
+function ControlPanel:SyncPaletteDataFromColorPickers()
+    if self.paletteColorUpdating then return end
+    local colors = {}
+    for _, field in ipairs(PaletteData.COLOR_FIELDS) do
+        local color = self.paletteColorValues[field]
+        if not color then return end
+        colors[field] = color
+    end
+    local encoded = PaletteData.EncodeAIData(colors)
+    if encoded == "" then return end
+    self.paletteColorUpdating = true
+    self.paletteDataField:SetValue(encoded)
+    self.paletteColorUpdating = false
+end
+
+function ControlPanel:SyncPaletteColorPickersFromData(raw)
+    if self.paletteColorUpdating then return end
+    local colors = PaletteData.DecodeAIData(raw)
+    if colors then self:SyncPaletteColorPickers(colors) end
 end
 
 function ControlPanel:FillPaletteTemplate(themeKey)
@@ -1187,63 +1404,122 @@ function ControlPanel:FillPaletteTemplate(themeKey)
         return false
     end
     self.paletteDataField:SetValue(encoded)
+    self:SyncPaletteColorPickersFromData(encoded)
     self.paletteError:SetText("")
     return true
 end
 
-function ControlPanel:OpenCustomPaletteModal(item)
+function ControlPanel:OpenCustomPaletteModal(item, sourcePaletteKey)
     self.editingPaletteId = item and item.id or nil
     self.paletteModalTitle:SetText(item and "编辑自定义配色" or "添加自定义配色")
     self.paletteNameField:SetValue(item and item.label or "")
     self.palettePromptField:SetValue(item and item.prompt or "")
     local state = self.currentState or {}
     local settingKey = item and item.baseSettingKey or state.settingKey or "dungeon"
+    local paletteGroup = item and item.paletteGroup or "theme"
     self.paletteBaseSettingDropdown:SetValue(settingKey)
+    self.paletteGroupDropdown:SetValue(paletteGroup)
 
-    local baseKey = item and item.basePaletteKey or state.themeKey
-    if not baseKey or Themes.IsCustom(baseKey) or not Themes.IsPaletteForSetting(baseKey, settingKey) then
-        baseKey = Themes.GetBuiltinPalettes(settingKey)[1]
+    local baseKey = item and item.basePaletteKey or sourcePaletteKey or state.themeKey
+    local available = paletteGroup == "default"
+        and Themes.GetBuiltinDefaultPalettes() or Themes.GetBuiltinThemePalettes(settingKey)
+    if #available == 0 then available = Themes.GetBuiltinDefaultPalettes() end
+    if not baseKey or Themes.IsCustom(baseKey) or not Contains(available, baseKey) then
+        baseKey = available[1]
+    end
+    if not item and sourcePaletteKey and Trim(self.paletteNameField:GetValue()) == "" then
+        local baseLabel = Themes.Get(baseKey).label or baseKey
+        local candidate, suffix = baseLabel .. "自定义", 2
+        local function IsUsed(name)
+            for _, existing in ipairs((self.currentState or {}).customPalettes or {}) do
+                if string.lower(Trim(existing.label)) == string.lower(name) then return true end
+            end
+            return false
+        end
+        while IsUsed(candidate) do
+            candidate = baseLabel .. "自定义" .. tostring(suffix)
+            suffix = suffix + 1
+        end
+        self.paletteNameField:SetValue(candidate)
     end
     self.paletteBasePaletteKey = baseKey
-    self.paletteTemplateThemeKey = item and item.id or state.themeKey or baseKey
+    self.paletteTemplateThemeKey = item and item.id or sourcePaletteKey or state.themeKey or baseKey
     if item then
         local encoded = PaletteData.EncodeAIData(item.colors)
         self.paletteDataField:SetValue(encoded)
+        self:SyncPaletteColorPickersFromData(encoded)
     else
         self:FillPaletteTemplate(self.paletteTemplateThemeKey)
     end
     self.paletteDeleteButton:SetVisible(item ~= nil)
+    self.paletteAIState = PaletteAIProvider.STATUS.IDLE
+    self.paletteAIGenerateButton:SetDisabled(false)
+    self.paletteAIHint:SetText("服务接入后自动回填；当前可复制指令给外部 AI")
     self.paletteError:SetText("")
     print("[ControlPanel] open custom palette modal mode=" .. (item and "edit" or "new"))
     self.paletteModal:Open()
 end
 
+function ControlPanel:ClosePaletteColorPickers()
+    for _, picker in pairs(self.paletteColorPickers or {}) do
+        if picker.isOpen_ then picker:Close() end
+    end
+end
+
 function ControlPanel:ApplyCustomPalette()
+    self:ClosePaletteColorPickers()
     local label = Trim(self.paletteNameField:GetValue())
-    if label == "" then self.paletteError:SetText("请先填写配色名称。"); return end
+    if label == "" then
+        self.paletteError:SetText("请先填写配色名称。")
+        self:SetStatus("保存失败：请先填写配色名称")
+        return
+    end
     for _, item in ipairs((self.currentState or {}).customPalettes or {}) do
         if item.id ~= self.editingPaletteId and string.lower(Trim(item.label)) == string.lower(label) then
             self.paletteError:SetText("已经存在同名配色，请换一个名称。")
+            self:SetStatus("保存失败：已经存在同名配色")
             return
         end
     end
     local colors, reason = PaletteData.DecodeAIData(self.paletteDataField:GetValue())
-    if not colors then self.paletteError:SetText(reason or "AI 配色数据无效。"); return end
-    local settingKey = self.paletteBaseSettingDropdown:GetValue() or "dungeon"
-    local baseKey = self.paletteBasePaletteKey
-    if not baseKey or not Themes.IsPaletteForSetting(baseKey, settingKey) or Themes.IsCustom(baseKey) then
-        baseKey = Themes.GetBuiltinPalettes(settingKey)[1]
+    if not colors then
+        self.paletteError:SetText(reason or "AI 配色数据无效。")
+        self:SetStatus("保存失败：配色数据未通过校验")
+        return
     end
-    local ok, saveReason = self.callbacks.onCustomPaletteSave({
+    local settingKey = self.paletteBaseSettingDropdown:GetValue() or "dungeon"
+    local paletteGroup = self.paletteGroupDropdown:GetValue() == "default" and "default" or "theme"
+    local baseKey = self.paletteBasePaletteKey
+    local available = paletteGroup == "default"
+        and Themes.GetBuiltinDefaultPalettes() or Themes.GetBuiltinThemePalettes(settingKey)
+    if #available == 0 then available = Themes.GetBuiltinDefaultPalettes() end
+    if not baseKey or Themes.IsCustom(baseKey) or not Contains(available, baseKey) then
+        baseKey = available[1]
+    end
+    local payload = {
         schemaVersion = PaletteData.SCHEMA_VERSION,
         id = self.editingPaletteId,
         label = label,
         prompt = Trim(self.palettePromptField:GetValue()),
+        paletteGroup = paletteGroup,
         baseSettingKey = settingKey,
         basePaletteKey = baseKey,
         colors = colors,
-    })
-    if ok == false then self.paletteError:SetText(saveReason or "自定义配色保存失败。"); return end
+    }
+    local callOk, ok, saveReason = pcall(self.callbacks.onCustomPaletteSave, payload)
+    if not callOk then
+        local message = "保存异常：" .. tostring(ok)
+        self.paletteError:SetText(message)
+        self:SetStatus(message)
+        print("[ControlPanel] custom palette save error=" .. tostring(ok))
+        return
+    end
+    if ok == false then
+        local message = saveReason or "自定义配色保存失败。"
+        self.paletteError:SetText(message)
+        self:SetStatus(message)
+        return
+    end
     print("[ControlPanel] custom palette saved label=" .. label)
     self.paletteModal:Close()
 end
@@ -1497,20 +1773,16 @@ end
 function ControlPanel:OpenPaletteContextMenu(paletteKey, custom, event)
     if not self.customContextMenuLayer then return end
     local menuChildren = {}
-    menuChildren[#menuChildren + 1] = self:ContextMenuButton("使用色调", function()
-        local ok, reason = self.callbacks.onTheme(paletteKey)
-        if ok == false then self:SetStatus(reason or "配色切换失败") end
+    menuChildren[#menuChildren + 1] = self:ContextMenuButton("编辑颜色", function()
+        self:OpenCustomPaletteModal(custom, paletteKey)
     end)
     if custom then
         menuChildren[#menuChildren + 1] = UI.Panel { width = "100%", height = 1, backgroundColor = C.line }
-        menuChildren[#menuChildren + 1] = self:ContextMenuButton("编辑颜色", function()
-            self:OpenCustomPaletteModal(custom)
-        end)
         menuChildren[#menuChildren + 1] = self:ContextMenuButton("删除配色", function()
             self:ConfirmDeleteCustomPalette(custom)
         end, true)
     end
-    local menuHeight = custom and 122 or 42
+    local menuHeight = custom and 88 or 42
     self:ShowContextMenu(event, menuChildren, 150, menuHeight)
     self.contextPaletteId = paletteKey
 end
@@ -1689,7 +1961,7 @@ function ControlPanel:RebuildRoomGroupList(items)
             height = 26, paddingHorizontal = 9,
             flexDirection = "row", alignItems = "center", gap = 4,
             backgroundColor = C.section, borderColor = { 41, 47, 64, 255 },
-            borderWidth = 1, borderRadius = 7,
+            borderWidth = 1, borderRadius = 7, pointerEvents = "box-only",
             onPointerDown = function(event)
                 if event.button == MOUSEB_RIGHT then
                     event:StopPropagation()
@@ -1727,10 +1999,12 @@ function ControlPanel:SetPaletteExpanded(expanded)
     self.paletteToggleTooltip:SetContent(self.paletteExpanded and "收起色调" or "展开色调")
 end
 
-function ControlPanel:RebuildPaletteExpandedList(state)
-    self:CloseContextMenu()
-    self.paletteExpandedList:ClearChildren()
-    for _, key in ipairs(Themes.GetSetting(state.settingKey).palettes) do
+function ControlPanel:RebuildPaletteCards(state, paletteKeys, groupLabel)
+    if #paletteKeys == 0 then return end
+    self.paletteExpandedList:AddChild(Label(groupLabel, 9, C.dim, {
+        width = "100%", fontWeight = "bold", letterSpacing = 1.0,
+    }))
+    for _, key in ipairs(paletteKeys) do
         local paletteKey = key
         local theme = Themes.Get(paletteKey)
         local custom = self:FindCustomPalette(paletteKey)
@@ -1753,9 +2027,9 @@ function ControlPanel:RebuildPaletteExpandedList(state)
         local paletteCard = UI.Panel {
             height = 26, paddingHorizontal = 9, gap = 4,
             flexDirection = "row", alignItems = "center",
-            backgroundColor = active and { 34, 31, 31, 255 } or C.section,
-            borderColor = active and { 139, 91, 52, 255 } or { 41, 47, 64, 255 },
-            borderWidth = 1, borderRadius = 7,
+            backgroundColor = active and { 48, 36, 29, 255 } or C.section,
+            borderColor = active and C.accent or { 41, 47, 64, 255 },
+            borderWidth = active and 2 or 1, borderRadius = 7, pointerEvents = "box-only",
             onPointerDown = function(event)
                 if event.button == MOUSEB_RIGHT then
                     event:StopPropagation()
@@ -1765,6 +2039,7 @@ function ControlPanel:RebuildPaletteExpandedList(state)
             end,
             onClick = function(_, event)
                 if event and event.button == MOUSEB_RIGHT then return end
+                self:CloseContextMenu()
                 local ok, reason = self.callbacks.onTheme(paletteKey)
                 if ok == false then self:SetStatus(reason or "配色切换失败") end
             end,
@@ -1772,6 +2047,14 @@ function ControlPanel:RebuildPaletteExpandedList(state)
         }
         self.paletteExpandedList:AddChild(paletteCard)
     end
+end
+
+function ControlPanel:RebuildPaletteExpandedList(state)
+    self:CloseContextMenu()
+    self.paletteExpandedList:ClearChildren()
+    self:RebuildPaletteCards(state, Themes.GetDefaultPalettes(), "默认配色")
+    self:RebuildPaletteCards(state, Themes.GetThemePalettes(state.settingKey),
+        Themes.GetSetting(state.settingKey).label .. "题材配色")
     self.paletteExpandedList:SetVisible(self.paletteExpanded)
 end
 
@@ -1925,16 +2208,20 @@ end
 
 function ControlPanel:SetPreviewMode(mode)
     local first = mode == "first"
-    self.previewModeLabel:SetText(first and "第一人称预览" or "第三人称预览")
-    self.previewViewHint:SetText(first and "以角色视线高度观察空间细节" or "跟随角色观察房间布局与动线")
+    self.previewModeLabel:SetText(first and "第一人称" or "第三人称")
+    self.previewModeBadge:SetText(first and "空间检查" or "漫游预览")
+    self.previewViewHint:SetText(first and "以角色视线高度检查空间细节与尺度" or "跟随角色观察房间布局与动线")
+    self.previewControlsLabel:SetText(first
+        and "WASD 移动  ·  Shift 奔跑  ·  右键查看细节"
+        or "WASD 移动  ·  Shift 奔跑  ·  右键环视  ·  滚轮拉近")
     self.previewCrosshair:SetVisible(first and self.previewActive)
     self.thirdPreviewButton:SetStyle({
-        backgroundColor = not first and { 48, 36, 29, 250 } or { 20, 25, 37, 245 },
-        borderColor = not first and C.accent or { 48, 55, 74, 255 },
+        backgroundColor = not first and { 20, 78, 139, 250 } or PREVIEW.surface,
+        borderColor = not first and PREVIEW.primary or PREVIEW.border,
     })
     self.firstPreviewButton:SetStyle({
-        backgroundColor = first and { 48, 36, 29, 250 } or { 20, 25, 37, 245 },
-        borderColor = first and C.accent or { 48, 55, 74, 255 },
+        backgroundColor = first and { 20, 78, 139, 250 } or PREVIEW.surface,
+        borderColor = first and PREVIEW.primary or PREVIEW.border,
     })
 end
 

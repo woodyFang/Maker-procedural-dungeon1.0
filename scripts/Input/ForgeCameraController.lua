@@ -65,6 +65,7 @@ function ForgeCameraController.new(cameraNode, camera)
         distance = 170,
         defaultTarget = Vector3(0, 2, 0),
         defaultDistance = 170,
+        flySpeedScale = 1.0,
         enabled = true,
         editViewActive = false,
         editPlaneY = 0,
@@ -78,6 +79,25 @@ end
 function ForgeCameraController.ZoomValue(value, wheelStep, minimum)
     local zoomed = value * math.exp(-wheelStep * ZOOM_RATE)
     return minimum == nil and zoomed or math.max(minimum, zoomed)
+end
+
+function ForgeCameraController.WalkAdvance(yawDegrees, moveY, worldPerPixel)
+    -- UE left-drag walk: pushing the mouse forward (negative moveY) advances
+    -- the camera along its horizontal view heading; pulling back retreats.
+    local yaw = math.rad(yawDegrees)
+    local step = -moveY * worldPerPixel
+    return Vector3(-math.sin(yaw) * step, 0, -math.cos(yaw) * step)
+end
+
+function ForgeCameraController.ScreenPanDelta(yawDegrees, moveX, moveY, worldPerPixel)
+    -- UE both-buttons pan: the camera follows the pointer -- sideways motion
+    -- tracks toward screen-right, a forward push lifts the camera in world Y.
+    local yaw = math.rad(yawDegrees)
+    return Vector3(
+        -math.cos(yaw) * moveX * worldPerPixel,
+        -moveY * worldPerPixel,
+        math.sin(yaw) * moveX * worldPerPixel
+    )
 end
 
 function ForgeCameraController.GrabPanDelta(yawDegrees, moveX, moveY, worldPerPixel)
@@ -391,6 +411,11 @@ function ForgeCameraController:ApplyKeyboardPan(timeStep, orthographic)
         MIN_KEYBOARD_PAN_SPEED,
         MAX_KEYBOARD_PAN_SPEED
     )
+    if not orthographic then
+        -- UE fly-speed dial: adjusted by scrolling while the right button is
+        -- held. The orthographic edit view keeps its fixed pan tuning.
+        speed = speed * (self.flySpeedScale or 1.0)
+    end
     if IsPhysicalKeyDown(KEY_LSHIFT, SCANCODE_LSHIFT)
         or IsPhysicalKeyDown(KEY_RSHIFT, SCANCODE_RSHIFT) then
         speed = speed * FAST_PAN_MULTIPLIER
@@ -466,14 +491,32 @@ end
 
 function ForgeCameraController:Update(timeStep, allowLeftPan, pointerBlocked)
     if not self.enabled then return false end
+    -- The overview call site omits allowLeftPan while the editor passes an
+    -- explicit boolean. Only the overview adopts the UE left-drag walk, so the
+    -- editor's blank-space drag keeps its grab-pan editing affordance.
+    local overviewWalk = allowLeftPan == nil
     if allowLeftPan == nil then allowLeftPan = true end
     local pointerOverUI = pointerBlocked == true or UI.IsPointerOverUI()
     if not IsTextInputFocused() and (input:GetKeyPress(KEY_HOME) or input:GetKeyPress(KEY_F)) then
         self:Reset()
     end
 
+    local move = input.mouseMove
+    local leftDown = allowLeftPan and input:GetMouseButtonDown(MOUSEB_LEFT)
+    local middleDown = input:GetMouseButtonDown(MOUSEB_MIDDLE)
+    local rightDown = input:GetMouseButtonDown(MOUSEB_RIGHT)
+    local shiftDown = input:GetKeyDown(KEY_LSHIFT) or input:GetKeyDown(KEY_RSHIFT)
+    local altDown = input:GetKeyDown(KEY_LALT) or input:GetKeyDown(KEY_RALT)
+
     local wheel = input.mouseMoveWheel
-    if wheel ~= 0 and not pointerOverUI then
+    if wheel ~= 0 and rightDown then
+        -- UE: scrolling while the right button is held retunes the WASD fly
+        -- speed instead of zooming the view.
+        self.flySpeedScale = Clamp(
+            self.flySpeedScale * math.exp((wheel > 0 and 1 or -1) * 0.25),
+            0.125, 8.0)
+        print(string.format("[DungeonForge] camera fly speed x%.2f", self.flySpeedScale))
+    elseif wheel ~= 0 and not pointerOverUI then
         -- Match the original browser's per-wheel-event factor. UrhoX may
         -- aggregate wheel units per frame, so normalize the input first.
         local mousePosition = input.mousePosition
@@ -487,17 +530,23 @@ function ForgeCameraController:Update(timeStep, allowLeftPan, pointerBlocked)
         if self:ApplyPointerAnchor(before, after) then self:Apply() end
     end
 
-    local move = input.mouseMove
-    local leftDown = allowLeftPan and input:GetMouseButtonDown(MOUSEB_LEFT)
-    local middleDown = input:GetMouseButtonDown(MOUSEB_MIDDLE)
-    local rightDown = input:GetMouseButtonDown(MOUSEB_RIGHT)
-    local shiftDown = input:GetKeyDown(KEY_LSHIFT) or input:GetKeyDown(KEY_RSHIFT)
-    local altDown = input:GetKeyDown(KEY_LALT) or input:GetKeyDown(KEY_RALT)
     if (leftDown or middleDown or rightDown) and not pointerOverUI then
         if leftDown and rightDown then
-            -- UE-style dolly: holding both mouse buttons moves the camera
-            -- forward/backward with the vertical mouse motion.
-            self.distance = self.distance * math.exp(move.y * 0.01)
+            -- UE: both buttons pan on the view plane -- a forward push lifts
+            -- the camera in world space, sideways motion tracks left/right.
+            local viewHeight = 2 * self.distance * math.tan(math.rad(45) * 0.5)
+            local worldPerPixel = viewHeight / math.max(1, graphics:GetHeight())
+            local delta = ForgeCameraController.ScreenPanDelta(
+                self.yaw, move.x, move.y, worldPerPixel)
+            self.target = Vector3(
+                self.target.x + delta.x,
+                self.target.y + delta.y,
+                self.target.z + delta.z
+            )
+        elseif rightDown and altDown then
+            -- UE/Maya: Alt+right dollies the camera -- drag right/up moves in,
+            -- left/down backs out.
+            self.distance = self.distance * math.exp(-(move.x - move.y) * 0.005)
         elseif rightDown or (leftDown and shiftDown) then
             -- UE-style free look: rotate in place instead of orbiting around
             -- the cursor or a fixed viewport-center anchor.
@@ -516,6 +565,21 @@ function ForgeCameraController:Update(timeStep, allowLeftPan, pointerBlocked)
                 self.target.y + move.y * viewHeight / math.max(1, graphics:GetHeight()),
                 self.target.z
             )
+        elseif leftDown and overviewWalk then
+            -- UE: a plain left drag walks -- mouse X turns the camera in
+            -- place, mouse Y advances along the horizontal view heading.
+            local cameraPosition = CopyVector3(self.cameraNode.position)
+            self.yaw = self.yaw + move.x * math.deg(0.005)
+            local viewHeight = 2 * self.distance * math.tan(math.rad(45) * 0.5)
+            local worldPerPixel = viewHeight / math.max(1, graphics:GetHeight())
+            local advance = ForgeCameraController.WalkAdvance(
+                self.yaw, move.y, worldPerPixel)
+            cameraPosition = Vector3(
+                cameraPosition.x + advance.x,
+                cameraPosition.y,
+                cameraPosition.z + advance.z
+            )
+            self.target = cameraPosition - CameraOffset(self.yaw, self.pitch, self.distance)
         else
             local viewHeight = 2 * self.distance * math.tan(math.rad(45) * 0.5)
             local worldPerPixel = viewHeight / math.max(1, graphics:GetHeight())

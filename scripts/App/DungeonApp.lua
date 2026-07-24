@@ -16,6 +16,7 @@ local RoomGroupColors = require("Config.RoomGroupColors")
 local DungeonGeometryLibrary = require("Rendering.DungeonGeometryLibrary")
 local ProceduralMaterialRules = require("Rendering.ProceduralMaterialRules")
 local LocalRequirementPlanner = require("AI.LocalRequirementPlanner")
+local PaletteAIProvider = require("AI.PaletteAIProvider")
 local EditorData = require("UI.Editor.EditorData")
 local UI = require("urhox-libs/UI")
 
@@ -125,7 +126,7 @@ function DungeonApp:RestoreTopicSelection(selection)
         self.activeCustomSettingId, self.customSettingName = record.id, record.label
         self.settingKey = Themes.settings[record.baseSettingKey] and record.baseSettingKey or "dungeon"
         self.floorHeight = MultiFloor.NormalizeFloorHeight(record.floorHeight)
-        local palettes = Themes.GetSetting(self.settingKey).palettes
+        local palettes = Themes.GetPalettes(self.settingKey)
         self.themeKey = Themes.IsPaletteForSetting(selection.themeKey, self.settingKey)
             and selection.themeKey or palettes[1]
     end
@@ -169,10 +170,8 @@ function DungeonApp:ApplyCustomizationData(data, preserveTopicSelection)
             self.customSettingName = active.label
             self.settingKey = active.baseSettingKey
             self.floorHeight = MultiFloor.NormalizeFloorHeight(active.floorHeight)
-            local setting = Themes.GetSetting(self.settingKey)
-            local validPalette = false
-            for _, palette in ipairs(setting.palettes) do if palette == self.themeKey then validPalette = true; break end end
-            if not validPalette then self.themeKey = setting.palettes[1] end
+            local validPalette = Themes.IsPaletteForSetting(self.themeKey, self.settingKey)
+            if not validPalette then self.themeKey = Themes.GetPalettes(self.settingKey)[1] end
         else
             local fallback = CustomizationStore.FindById(self.customSettings, TopicSeeds.DEFAULT_ID)
             if fallback then self:UseCustomSetting(fallback) end
@@ -453,7 +452,7 @@ function DungeonApp:UseCustomSetting(record)
     self.activeCustomSettingId, self.customSettingName = record.id, record.label
     self.settingKey = Themes.settings[record.baseSettingKey] and record.baseSettingKey or "dungeon"
     self.floorHeight = MultiFloor.NormalizeFloorHeight(record.floorHeight)
-    local palettes = Themes.GetSetting(self.settingKey).palettes
+    local palettes = Themes.GetPalettes(self.settingKey)
     if not Themes.IsPaletteForSetting(self.themeKey, self.settingKey) then self.themeKey = palettes[1] end
     return true
 end
@@ -491,6 +490,9 @@ function DungeonApp:CreatePanel()
                 self.panel:SetStatus("固定已进入空场景，等待 PCG 规则接入")
             end
             return true
+        end,
+        onPaletteAIGenerate = function(request, done)
+            return PaletteAIProvider.Generate(request, done)
         end,
         onSetting = function(key)
             local record = CustomizationStore.FindById(
@@ -728,7 +730,11 @@ function DungeonApp:CreatePanel()
             end
             local _, replaced = CustomizationStore.UpsertById(self.customPalettes, palette)
             Themes.SetCustomPalettes(self.customPalettes)
-            self.settingKey, self.themeKey = palette.baseSettingKey, palette.id
+            if palette.paletteGroup == "default" then
+                self.themeKey = palette.id
+            else
+                self.settingKey, self.themeKey = palette.baseSettingKey, palette.id
+            end
             local activeTopic = CustomizationStore.FindById(self.customSettings, self.activeCustomSettingId)
             if activeTopic and activeTopic.baseSettingKey ~= self.settingKey then
                 local seedTopic = CustomizationStore.FindById(
@@ -763,7 +769,7 @@ function DungeonApp:CreatePanel()
             if not deleted then return false, "自定义配色不存在。" end
             local wasActive = self.themeKey == id
             Themes.SetCustomPalettes(self.customPalettes)
-            if wasActive then self.themeKey = Themes.GetSetting(self.settingKey).palettes[1] end
+            if wasActive then self.themeKey = Themes.GetPalettes(self.settingKey)[1] end
             self.customizationRevision = self.customizationRevision + 1
             self:RefreshPanel()
             local saved, reason = self:SaveCustomizations(function(success, detail, target)
@@ -1009,7 +1015,7 @@ function DungeonApp:Start()
 end
 
 function DungeonApp:ApplyTheme()
-    local theme = Themes.Get(self.themeKey)
+    local theme = Themes.Resolve(self.settingKey, self.themeKey)
     self:LoadLightingPreset(self.settingKey)
     self.zone.fogColor = HexColor(theme.fog, 1.0)
     self.zone.fogStart, self.zone.fogEnd = 0, 1000
@@ -1364,7 +1370,7 @@ function DungeonApp:HandleUpdate(timeStep)
                 end
                 local nextTopic = ready[nextIndex]
                 self:UseCustomSetting(nextTopic)
-                self.themeKey = Themes.GetSetting(self.settingKey).palettes[1]
+                self.themeKey = Themes.GetPalettes(self.settingKey)[1]
                 self.editorRooms = nil; self:ApplyTheme(); self:Generate(false, false)
             end
         else

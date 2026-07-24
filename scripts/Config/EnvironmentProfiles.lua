@@ -116,13 +116,9 @@ local PROFILES = {
             },
         },
     },
-    -- hospital/school have no themed floor-clutter/emphasis blueprint yet, and the
-    -- ruins props (debris/banner/bones) are forbidden in them by theme purity, so
-    -- those layers stay nil. They DO inherit the generic wall-fixture richness now;
-    -- adding a themed asset later is a data-only edit -- no engine change.
-    -- Hospital fills the SAME generic layers with its OWN existing props: no new
-    -- assets, no ruins models. floorStripe/floorArrow decorate corridors,
-    -- bioBin is depth-gated ward clutter, hospitalSign marks key rooms.
+    -- Every setting below provides its own semantic assets for the same richness
+    -- layers. The generic passes stay identical; only these data choices differ.
+    -- Hospital uses medical equipment and signage, while school uses campus props.
     hospital = {
         structureTone = {
             doorwayGain = 1.14, edgeDarkenStep = 0.11, edgeDarkenMaxWalls = 4,
@@ -131,23 +127,27 @@ local PROFILES = {
             floorVariation = { 0.94, 1.06 }, wallVariation = { 0.90, 1.08 },
             capVariation = { 0.92, 1.10 },
         },
-        emphasis = { kind = "hospitalSign", minSpacing = 4, roleTargets = { elite = 1, boss = 2 } },
-        wallFixtures = { mode = "spaced", channel = "prop", spacing = 4, proximity = 5 },
+        floorScatter = {
+            kind = "medCart", baseChance = 0.018, corridorFactor = 0.28,
+            difficultyBias = false, scaleMin = 0.72, scaleMax = 0.96, variants = 1,
+        },
+        emphasis = { kind = "hospitalSign", minSpacing = 3, roleTargets = { elite = 2, boss = 4 } },
+        wallFixtures = { mode = "spaced", channel = "prop", spacing = 3, proximity = 5 },
         wallDecor = {
-            { kind = "wallLight", chanceBase = 0.55, chanceDensity = 0.14, scaleMin = 0.88, scaleMax = 1.08 },
-            { kind = "wallChart", chanceBase = 0.16, chanceDensity = 0.16, scaleMin = 0.88, scaleMax = 1.08 },
-            { kind = "noticeBoard", chanceBase = 0.12, chanceDensity = 0.12, scaleMin = 0.88, scaleMax = 1.08 },
-            { kind = "clock", chanceBase = 0.08, chanceDensity = 0.08, scaleMin = 0.88, scaleMax = 1.08 },
-            { kind = "hospitalSign", chanceBase = 0.10, chanceDensity = 0.10, scaleMin = 0.88, scaleMax = 1.08 },
+            { kind = "wallLight", chanceBase = 0.78, chanceDensity = 0.16, scaleMin = 0.88, scaleMax = 1.08 },
+            { kind = "wallChart", chanceBase = 0.20, chanceDensity = 0.18, scaleMin = 0.88, scaleMax = 1.08 },
+            { kind = "noticeBoard", chanceBase = 0.16, chanceDensity = 0.14, scaleMin = 0.88, scaleMax = 1.08 },
+            { kind = "clock", chanceBase = 0.12, chanceDensity = 0.10, scaleMin = 0.88, scaleMax = 1.08 },
+            { kind = "hospitalSign", chanceBase = 0.14, chanceDensity = 0.12, scaleMin = 0.88, scaleMax = 1.08 },
         },
         ambientClutter = {
-            kind = "bioBin", chanceBase = 0.008, chanceDensity = 0.010, minDepth = 1, avoidCorridor = true,
+            kind = "bioBin", chanceBase = 0.014, chanceDensity = 0.016, minDepth = 1, avoidCorridor = true,
             scaleMin = 0.70, scaleMax = 0.86,
         },
         corridorScatter = {
-            { kind = "floorStripe", chanceBase = 0.025, chanceDensity = 0.035, rotMode = "axis",
+            { kind = "floorStripe", chanceBase = 0.040, chanceDensity = 0.045, rotMode = "axis",
                 scaleMin = 0.85, scaleMax = 1.08 },
-            { kind = "floorArrow", chanceBase = 0.008, chanceDensity = 0.018, rotMode = "quarter",
+            { kind = "floorArrow", chanceBase = 0.014, chanceDensity = 0.024, rotMode = "quarter",
                 scaleMin = 0.85, scaleMax = 1.05 },
         },
     },
@@ -159,9 +159,19 @@ local PROFILES = {
             floorVariation = { 0.94, 1.06 }, wallVariation = { 0.90, 1.08 },
             capVariation = { 0.92, 1.10 },
         },
+        floorScatter = {
+            kind = "schoolLocker", baseChance = 0.014, corridorFactor = 0.32,
+            difficultyBias = false, scaleMin = 0.72, scaleMax = 0.94, variants = 1,
+        },
+        emphasis = { kind = "schoolBlackboard", minSpacing = 3, roleTargets = { elite = 2, boss = 4 } },
+        ambientClutter = {
+            kind = "schoolBookshelf", chanceBase = 0.012, chanceDensity = 0.014, minDepth = 1,
+            avoidCorridor = true, scaleMin = 0.78, scaleMax = 0.98,
+        },
         -- The school decor list (incl. its schoolWallLight) is authored in the
-        -- ThemePack; the generic pass just consumes it at a denser spacing.
-        wallFixtures = { mode = "spaced", channel = "pack", spacing = 4, proximity = 5 },
+        -- ThemePack; the generic pass consumes it at the same quality spacing as
+        -- the other settings.
+        wallFixtures = { mode = "spaced", channel = "pack", spacing = 3, proximity = 5 },
     },
 }
 

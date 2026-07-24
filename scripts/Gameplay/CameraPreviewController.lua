@@ -8,6 +8,7 @@ local TRANSITION_SECONDS = 0.72
 local WALK_SPEED = 3.2
 local RUN_SPEED = 4.8
 local THIRD_DISTANCE = 12.5
+local FIRST_PERSON_EYE_HEIGHT = 0.92
 local SAMPLE_RADIUS = 0.26
 
 local function Clamp(value, low, high)
@@ -181,12 +182,18 @@ function CameraPreviewController:MoveCharacter(dx, dz)
     self.character.position = position
 end
 
+function CameraPreviewController:SyncCharacterVisibility()
+    local thirdPerson = self.mode == "third"
+    self.visual:SetEnabled(thirdPerson)
+    self.root:GetChild("GroundMarker", true):SetEnabled(thirdPerson)
+end
+
 function CameraPreviewController:DesiredCamera()
     local position = self.character.position
     local desiredPosition
     local desiredTarget
     if self.mode == "first" then
-        desiredPosition = position + Vector3(0, 0.92, 0)
+        desiredPosition = position + Vector3(0, FIRST_PERSON_EYE_HEIGHT, 0)
         local cp = math.cos(self.lookPitch)
         desiredTarget = desiredPosition + Vector3(
             -math.sin(self.yaw) * cp,
@@ -227,10 +234,9 @@ function CameraPreviewController:Activate(mode)
     self.transitionPosition = Vector3(self.cameraNode.position.x, self.cameraNode.position.y, self.cameraNode.position.z)
     self.transitionRotation = Quaternion(self.cameraNode.rotation)
     self.mode = mode
+    self:SyncCharacterVisibility()
     self.phase = "transitioning"
     self.transition = 0
-    self.visual:SetEnabled(mode == "third")
-    self.root:GetChild("GroundMarker", true):SetEnabled(mode == "third")
     self:Notify(true)
     print("[CameraPreview] activate " .. mode)
 end
@@ -321,6 +327,14 @@ function CameraPreviewController:Update(timeStep)
     self.visual.position = Vector3(0, bob, 0)
 
     local desiredPosition, desiredRotation = self:DesiredCamera()
+    if self.mode == "first" then
+        -- First-person camera must stay exactly at the eye position. A smoothed
+        -- follow camera trails behind while sprinting and can slip into the
+        -- hidden character's head or torso for a frame.
+        self.cameraNode.position = desiredPosition
+        self.cameraNode.rotation = desiredRotation
+        return
+    end
     local smoothing = 1 - math.exp(-timeStep * 10)
     self.cameraNode.position = self.cameraNode.position:Lerp(desiredPosition, smoothing)
     self.cameraNode.rotation = self.cameraNode.rotation:Slerp(desiredRotation, smoothing)

@@ -132,7 +132,10 @@ local function TestEditZoomAnchorStability()
         size = newSize
     end
     local final = CursorWorld(target, size)
-    Check(math.abs(final.x - anchor.x) < 1e-6 and math.abs(final.z - anchor.z) < 1e-6,
+    -- Vector3 stores float32, so each round trip may lose one ulp (~1.9e-6 at
+    -- this anchor magnitude on the 5.12 runtime). The analytic anchor is exact
+    -- in real arithmetic; only representation noise below 1e-4 is acceptable.
+    Check(math.abs(final.x - anchor.x) < 1e-4 and math.abs(final.z - anchor.z) < 1e-4,
         "analytic zoom anchor drifted the cursor world point across repeated zooms")
     Check(math.abs(final.y - anchor.y) < 1e-6,
         "zoom anchor should never move the edit plane height")
@@ -157,6 +160,25 @@ local function TestGrabPanDirection()
     local yawNinety = ForgeCameraController.GrabPanDelta(90, 10, 6, 1)
     Check(math.abs(yawNinety.x + 6) < 0.000001 and math.abs(yawNinety.z + 10) < 0.000001,
         "left-button grab pan used the wrong rotated screen basis")
+end
+
+local function TestUEWalkAndScreenPan()
+    -- UE walk: pushing the mouse forward advances along the horizontal view
+    -- heading. At yaw 0 the camera looks toward -Z.
+    local forward = ForgeCameraController.WalkAdvance(0, -10, 1)
+    Check(math.abs(forward.x) < 1e-6 and math.abs(forward.z + 10) < 1e-6,
+        "UE walk did not advance along the view heading at yaw zero")
+    local retreat = ForgeCameraController.WalkAdvance(90, 10, 1)
+    Check(math.abs(retreat.x - 10) < 1e-6 and math.abs(retreat.z) < 1e-6,
+        "UE walk retreat did not reverse the yawed heading")
+    Check(ForgeCameraController.WalkAdvance(30, 0, 1):Length() < 1e-9,
+        "UE walk moved without vertical mouse motion")
+
+    -- UE both-buttons pan: the camera follows the pointer, so a forward push
+    -- lifts it and a rightward drag tracks toward screen-right (-X at yaw 0).
+    local pan = ForgeCameraController.ScreenPanDelta(0, 10, -6, 1)
+    Check(pan.x < 0 and math.abs(pan.y - 6) < 1e-6 and math.abs(pan.z) < 1e-6,
+        "both-button pan did not lift and track along the screen axes")
 end
 
 local function TestCorridorCenterOffset()
@@ -879,7 +901,7 @@ local function Test2D3DSessionSynchronization()
         stairPlacing = true, stairPlacementStyle = "straight",
         stairSnapshot = { floor = 1, rooms = { { id = 1, cx = 8, cy = 7, w = 10, h = 8, floor = 0 } } },
     }
-    local target = { rooms = {}, links = {}, floorHeight = 99,
+    local target = { rooms = {}, links = {},
         RefreshOverlay = function(self) self.refreshed = true end,
         NotifySelection = function(self) self.notified = true end }
     Check(EditorSession.Apply(target, EditorSession.Capture(source)), "editor view session synchronization failed")
@@ -895,8 +917,15 @@ local function Test2D3DSessionSynchronization()
         "editor view session lost the active connection tool")
     Check(target.stairPlacing and target.stairPlacementStyle == "straight" and target.stairSnapshot,
         "editor view session lost stair placement or cancellation state")
-    Check(target.floorHeight == MultiFloor.FLOOR_HEIGHT and target.floorHeight == 5.0,
+    -- Floor height is a per-project runtime setting: a session snapshot must
+    -- never import the source view's value. An unset destination falls back to
+    -- the UrhoX default, while a customized destination keeps its own height.
+    Check(target.floorHeight == MultiFloor.FLOOR_HEIGHT,
         "editor view synchronization imported a non-UrhoX floor height")
+    local customized = { rooms = {}, links = {}, floorHeight = 6.5 }
+    Check(EditorSession.Apply(customized, EditorSession.Capture(source))
+        and customized.floorHeight == 6.5,
+        "editor view synchronization overwrote the project's active floor height")
     target.links[1].connector.lower.x = 99
     Check(source.links[1].connector.lower.x == 8, "editor view session shared mutable connector state")
     target.stairSnapshot.rooms[1].cx = 99
@@ -946,6 +975,7 @@ function EditorTests.Run()
         { "edit zoom anchor stability", TestEditZoomAnchorStability },
         { "unbounded camera zoom out", TestUnboundedCameraZoomOut },
         { "left-button grab pan direction", TestGrabPanDirection },
+        { "UE walk and both-button pan", TestUEWalkAndScreenPan },
         { "corridor center offset", TestCorridorCenterOffset },
         { "adaptive bends", TestAdaptiveBends },
         { "orthogonal route adaptation", TestOrthogonalRouteAdaptation },

@@ -29,6 +29,11 @@ function CustomizationStore.GetImageDirectory()
     return CustomizationStore.IMAGE_DIRECTORY
 end
 
+local function Contains(items, value)
+    for _, item in ipairs(items or {}) do if item == value then return true end end
+    return false
+end
+
 local function IsKnownSetting(key)
     return type(key) == "string" and Themes.settings[key] ~= nil
 end
@@ -123,6 +128,8 @@ local function NormalizeRecords(items, kind)
                     record.settingKey = record.topicId == nil and settingKey or nil
                     if source.source == "builtin" then
                         record.source = "builtin"
+                    elseif source.source == "seed" then
+                        record.source = "seed"
                     elseif source.source == "ai" then
                         record.source = "ai"
                     else
@@ -166,8 +173,14 @@ local function NormalizePalettes(items)
             local id = Trim(source.id)
             local label = Trim(source.label)
             local folded = string.lower(label)
+            local explicitGroup = source.paletteGroup
+            local paletteGroup = explicitGroup == "default" and "default"
+                or (explicitGroup == "theme" and "theme"
+                or (Contains(Themes.GetBuiltinDefaultPalettes(), source.basePaletteKey) and "default" or "theme"))
             local settingKey = IsKnownSetting(source.baseSettingKey) and source.baseSettingKey or "dungeon"
-            local builtinPool = Themes.GetBuiltinPalettes(settingKey)
+            local builtinPool = paletteGroup == "default"
+                and Themes.GetBuiltinDefaultPalettes() or Themes.GetBuiltinThemePalettes(settingKey)
+            if #builtinPool == 0 then builtinPool = Themes.GetBuiltinDefaultPalettes() end
             local basePaletteKey = source.basePaletteKey
             local validBase = false
             for _, key in ipairs(builtinPool) do if key == basePaletteKey then validBase = true; break end end
@@ -180,6 +193,7 @@ local function NormalizePalettes(items)
                     id = id,
                     label = label,
                     prompt = Trim(source.prompt),
+                    paletteGroup = paletteGroup,
                     baseSettingKey = settingKey,
                     basePaletteKey = basePaletteKey,
                     colors = colors,

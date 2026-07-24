@@ -139,9 +139,15 @@ function LocalRequirementPlanner.MergeSeedRoomGroups(existing, settingKey, topic
         if not belongsToTopic then
             untouched[#untouched + 1] = group
         else
-            if legacyScope then
+            local wasLegacyScope = legacyScope
+            if wasLegacyScope then
                 group.topicId, group.settingKey = topicId, nil
-                group.id = SeedRoomId(settingKey, group.id)
+                -- Built-in records changed identity when the seed lifecycle was
+                -- introduced. User-authored records keep their stable IDs while
+                -- only their scope is migrated.
+                if group.source == "builtin" or group.source == "seed" then
+                    group.id = SeedRoomId(settingKey, group.id)
+                end
             end
             if (group.source == "builtin" or group.source == "seed") and group.locked ~= true then
                 group.source = "seed"

@@ -125,10 +125,10 @@ ThemePacks.packs.school = {
         },
     },
     wallRules = {
-        Rule("schoolWallLight", 1, 0.50, 0.92, 1.04),
-        Rule("schoolBlackboard", 1, 0.18, 0.92, 1.04),
-        Rule("schoolNoticeBoard", 1, 0.16, 0.90, 1.02),
-        Rule("schoolClock", 1, 0.10, 0.90, 1.02),
+        Rule("schoolWallLight", 1, 0.78, 0.88, 1.06),
+        Rule("schoolBlackboard", 1, 0.22, 0.90, 1.04),
+        Rule("schoolNoticeBoard", 1, 0.20, 0.88, 1.02),
+        Rule("schoolClock", 1, 0.14, 0.90, 1.04),
     },
 }
 

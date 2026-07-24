@@ -14,7 +14,9 @@ local GenericThemeRules = require("Config.GenericThemeRules")
 local PaletteData = require("Config.PaletteData")
 local Themes = require("Config.Themes")
 local BuiltinRoomRules = require("Config.BuiltinRoomRules")
+local TopicSeeds = require("Config.TopicSeeds")
 local LocalRequirementPlanner = require("AI.LocalRequirementPlanner")
+local PaletteAIProvider = require("AI.PaletteAIProvider")
 
 local GenerationTests = {}
 
@@ -27,8 +29,14 @@ local function CheckValid(dungeon, label)
     Check(dungeon.valid, label .. ": " .. table.concat(dungeon.errors or {}, "; "))
     for _, room in ipairs(dungeon.rooms) do
         local layer = dungeon.layers[room.floor + 1]
-        local cell = room.cy * dungeon.width + room.cx + 1
-        Check(layer.bfs[cell] and layer.bfs[cell] >= 0,
+        local accessCell = nil
+        for cell, roomId in ipairs(layer.roomId or {}) do
+            if roomId == room.id and layer.bfs[cell] and layer.bfs[cell] >= 0 then
+                accessCell = cell
+                break
+            end
+        end
+        Check(accessCell ~= nil,
             string.format("%s: room %d is unreachable", label, room.id))
     end
 end
@@ -103,7 +111,7 @@ local function TestStairContractHeadroomAndProtection()
     local strictBoundary = StairContract.Build({
         mapWidth = 32, mapHeight = 32,
         lower = { x = 6, y = 12 }, direction = "east",
-        run = 8, width = 1, landingDepth = 2,
+        run = 9, width = 1, landingDepth = 2,
         sideClearance = 0, style = "straight",
         floorHeight = 5.0, stepCount = 10,
     })
@@ -617,71 +625,73 @@ local function TestBuiltinRoomRuleFlow()
             prompt = "保留用户房间", source = "manual" },
     })
     Check(materialized ~= nil and changed, mergeReason)
-    local hospitalRooms = LocalRequirementPlanner.GroupsForContext(materialized, nil, "hospital")
-    local schoolRooms = LocalRequirementPlanner.GroupsForContext(materialized, nil, "school")
-    Check(#hospitalRooms == 8, "hospital built-ins or manual room were not materialized")
-    Check(#schoolRooms == 5, "school built-ins were not materialized")
-    Check(#LocalRequirementPlanner.GroupsForContext(materialized, nil, "dungeon") == 0,
-        "built-in hospital or school room leaked into dungeon")
+    local hospitalTopicId = TopicSeeds.IdForSetting("hospital")
+    local schoolTopicId = TopicSeeds.IdForSetting("school")
+    local hospitalRooms = LocalRequirementPlanner.GroupsForTopic(materialized, hospitalTopicId)
+    local schoolRooms = LocalRequirementPlanner.GroupsForTopic(materialized, schoolTopicId)
+    Check(#hospitalRooms == 8, "hospital seed rooms or manual room were not materialized")
+    Check(#schoolRooms == 5, "school seed rooms were not materialized")
+    Check(#LocalRequirementPlanner.GroupsForTopic(materialized, TopicSeeds.IdForSetting("dungeon")) == 0,
+        "hospital or school seed room leaked into dungeon")
 
     local foundManual, foundHospitalBed, foundClassroom = false, false, false
     for _, room in ipairs(hospitalRooms) do
-        Check(room.topicId == nil and room.settingKey == "hospital", "hospital room has an invalid scope")
+        Check(room.topicId == hospitalTopicId and room.settingKey == nil, "hospital room has an invalid scope")
         if room.id == "manual-hospital-chapel" then foundManual = true end
-        if room.id == "builtin-hospital-ward" then foundHospitalBed = true end
+        if room.id == "seed-hospital-ward" then foundHospitalBed = true end
     end
     for _, room in ipairs(schoolRooms) do
-        Check(room.topicId == nil and room.settingKey == "school", "school room has an invalid scope")
-        if room.id == "builtin-school-classroom" then foundClassroom = true end
+        Check(room.topicId == schoolTopicId and room.settingKey == nil, "school room has an invalid scope")
+        if room.id == "seed-school-classroom" then foundClassroom = true end
     end
     Check(foundManual and foundHospitalBed and foundClassroom,
         "materialized room identities are incomplete")
 
     local again, changedAgain = LocalRequirementPlanner.EnsureBuiltinRoomGroups(materialized)
-    Check(not changedAgain and #again == #materialized, "built-in room materialization is not idempotent")
+    Check(not changedAgain and #again == #materialized, "seed room materialization is not idempotent")
 
-    local schoolRoomsBeforeManualEdit = LocalRequirementPlanner.GroupsForContext(materialized, nil, "school")
-    local editedBuiltin = CustomizationStore.FindById(schoolRoomsBeforeManualEdit, "builtin-school-classroom")
+    local schoolRoomsBeforeManualEdit = LocalRequirementPlanner.GroupsForTopic(materialized, schoolTopicId)
+    local editedBuiltin = CustomizationStore.FindById(schoolRoomsBeforeManualEdit, "seed-school-classroom")
     editedBuiltin.name = "多媒体教室"
     editedBuiltin.source = "manual"
     editedBuiltin.locked = true
     local afterManualEdit, changedAfterManualEdit = LocalRequirementPlanner.EnsureBuiltinRoomGroups(materialized)
     Check(not changedAfterManualEdit,
-        "manually edited built-in room triggered a duplicate or replacement")
-    local preservedEdit = CustomizationStore.FindById(afterManualEdit, "builtin-school-classroom")
+        "manually edited seed room triggered a duplicate or replacement")
+    local preservedEdit = CustomizationStore.FindById(afterManualEdit, "seed-school-classroom")
     Check(preservedEdit and preservedEdit.name == "多媒体教室" and preservedEdit.source == "manual",
-        "manual edit of a built-in room was overwritten")
+        "manual edit of a seed room was overwritten")
 
     local normalized = CustomizationStore.Normalize({ roomGroups = afterManualEdit })
-    local normalizedHospital = LocalRequirementPlanner.GroupsForContext(normalized.roomGroups, nil, "hospital")
-    local normalizedSchool = LocalRequirementPlanner.GroupsForContext(normalized.roomGroups, nil, "school")
+    local normalizedHospital = LocalRequirementPlanner.GroupsForTopic(normalized.roomGroups, hospitalTopicId)
+    local normalizedSchool = LocalRequirementPlanner.GroupsForTopic(normalized.roomGroups, schoolTopicId)
     Check(#normalizedHospital == 8 and #normalizedSchool == 5,
-        "built-in room scopes were lost during persistence normalization")
-    local preservedBuiltin = CustomizationStore.FindById(normalized.roomGroups, "builtin-hospital-ward")
-    Check(preservedBuiltin and preservedBuiltin.source == "builtin",
-        "built-in room lifecycle source was lost during normalization")
+        "seed room scopes were lost during persistence normalization")
+    local preservedBuiltin = CustomizationStore.FindById(normalized.roomGroups, "seed-hospital-ward")
+    Check(preservedBuiltin and preservedBuiltin.source == "seed",
+        "seed room lifecycle source was lost during normalization")
 
     local cases = {
         {
             settingKey = "hospital", theme = "sterile", rooms = normalizedHospital,
             expected = {
-                ["builtin-hospital-reception"] = "nurseCounter",
-                ["builtin-hospital-ward"] = "hospitalBed",
-                ["builtin-hospital-nurse-station"] = "nurseCounter",
-                ["builtin-hospital-examination"] = "examTable",
-                ["builtin-hospital-mri"] = "mriScanner",
-                ["builtin-hospital-surgery"] = "surgeryTable",
-                ["builtin-hospital-isolation"] = "privacyCurtain",
+                ["seed-hospital-reception"] = "nurseCounter",
+                ["seed-hospital-ward"] = "hospitalBed",
+                ["seed-hospital-nurse-station"] = "nurseCounter",
+                ["seed-hospital-examination"] = "examTable",
+                ["seed-hospital-mri"] = "mriScanner",
+                ["seed-hospital-surgery"] = "surgeryTable",
+                ["seed-hospital-isolation"] = "privacyCurtain",
             },
         },
         {
             settingKey = "school", theme = "schoolDay", rooms = normalizedSchool,
             expected = {
-                ["builtin-school-lobby"] = "schoolReception",
-                ["builtin-school-classroom"] = "schoolStudentDesk",
-                ["builtin-school-library"] = "schoolBookshelf",
-                ["builtin-school-laboratory"] = "schoolLabBench",
-                ["builtin-school-cafeteria"] = "schoolStage",
+                ["seed-school-lobby"] = "schoolReception",
+                ["seed-school-classroom"] = "schoolStudentDesk",
+                ["seed-school-library"] = "schoolBookshelf",
+                ["seed-school-laboratory"] = "schoolLabBench",
+                ["seed-school-cafeteria"] = "schoolStage",
             },
         },
     }
@@ -1037,6 +1047,74 @@ local function TestThemeToneContracts()
     end
 end
 
+local function TestThemeQualityProfiles()
+    local cases = {
+        { setting = "dungeon", theme = "ancient", required = { "floorScatter", "emphasis", "wallFixtures", "ambientClutter" } },
+        { setting = "hospital", theme = "sterile", required = { "floorScatter", "emphasis", "wallFixtures", "ambientClutter", "corridorScatter" } },
+        { setting = "school", theme = "schoolDay", required = { "floorScatter", "emphasis", "wallFixtures", "ambientClutter" } },
+    }
+    for _, item in ipairs(cases) do
+        local profile = EnvironmentProfiles.Resolve(item.setting)
+        for _, field in ipairs(item.required) do
+            Check(type(profile[field]) == "table" and next(profile[field]) ~= nil,
+                item.setting .. ": missing visual quality layer " .. field)
+        end
+        local fixtureSpacing = profile.wallFixtures.spacing or 4
+        Check(fixtureSpacing <= 4,
+            item.setting .. ": wall fixtures are too sparse for the quality baseline")
+        Check(profile.emphasis.roleTargets.elite and profile.emphasis.roleTargets.boss,
+            item.setting .. ": high-tier emphasis targets are incomplete")
+        local theme = Themes.Get(item.theme)
+        Check(type(theme.ambient) == "number" and theme.ambient >= 0.45,
+            item.setting .. ": ambient quality baseline is too low")
+        Check(type(theme.sunIntensity) == "number" and theme.sunIntensity >= 0.55,
+            item.setting .. ": sun quality baseline is too low")
+    end
+    local pack = ThemePacks.Get("school")
+    Check(pack and pack.wallRules and #pack.wallRules >= 4,
+        "school: wall quality pack is incomplete")
+end
+
+local function TestPaletteAIContract()
+    local colors = {
+        floor = "#6E7078", corridor = "#575A63", wall = "#454852", pillar = "#5D606A",
+        accentObject = "#C06BFF", cloth = "#6F4C91", flame = "#E58BFF", flameCore = "#F4E4FF",
+    }
+    local request = PaletteAIProvider.BuildRequest("冷峻紫灰石材和洋红符文", "月蚀紫", "dungeon",
+        cjson.encode(colors))
+    Check(request.operation == "palette.generate", "AI palette request operation changed")
+    Check(request.prompt:find("冷峻紫灰", 1, true) ~= nil, "AI palette prompt lost user description")
+    Check(#request.fields == #PaletteData.COLOR_FIELDS, "AI palette request field contract changed")
+    for _, field in ipairs(PaletteData.COLOR_FIELDS) do
+        local found = false
+        for _, requestedField in ipairs(request.fields) do
+            if requestedField == field then found = true; break end
+        end
+        Check(found, "AI palette request omitted field " .. field)
+    end
+
+    local direct, directReason = PaletteAIProvider.DecodeResponse(cjson.encode(colors))
+    Check(direct and direct.floor == 0x6e7078, directReason or "direct AI palette response failed")
+    local wrapped, wrappedReason = PaletteAIProvider.DecodeResponse(cjson.encode({ colors = colors }))
+    Check(wrapped and wrapped.flameCore == 0xf4e4ff,
+        wrappedReason or "wrapped AI palette response failed")
+    local openAIResponse = cjson.encode({ choices = { {
+        message = { content = "```json\n" .. cjson.encode({ colors = colors }) .. "\n```" },
+    } } })
+    local openAI, openAIReason = PaletteAIProvider.DecodeResponse(openAIResponse)
+    Check(openAI and openAI.accentObject == 0xc06bff,
+        openAIReason or "OpenAI-compatible palette response failed")
+
+    local invalid = {}
+    for field, value in pairs(colors) do invalid[field] = value end
+    invalid.flameCore = "#ZZZZZZ"
+    local rejected = PaletteAIProvider.DecodeResponse(cjson.encode(invalid))
+    Check(rejected == nil, "invalid AI palette color was accepted")
+    local unavailable, unavailableReason = PaletteAIProvider.Generate(request)
+    Check(unavailable == false and unavailableReason == PaletteAIProvider.UNAVAILABLE_REASON,
+        "unavailable AI provider did not expose the integration boundary")
+end
+
 local function TestCustomizationNormalization()
     local data = CustomizationStore.Normalize({
         customSettings = {
@@ -1067,7 +1145,7 @@ local function TestCustomizationNormalization()
         nextCustomPaletteId = 2,
         activeCustomSettingId = "custom-4",
     })
-    Check(#data.customSettings == 2, "customization normalization kept duplicate or invalid themes")
+    Check(#data.customSettings == 5, "customization normalization kept duplicate or invalid themes")
     Check(data.customSettings[1].label == "Ice Temple", "custom theme label was not trimmed")
     Check(data.customSettings[1].baseSettingKey == "hospital", "valid base setting was lost")
     Check(data.customSettings[1].packStatus == "draft", "draft ThemePack status was lost")
@@ -1077,21 +1155,25 @@ local function TestCustomizationNormalization()
     Check(data.customSettings[2].floorHeight == 4.2,
         "custom topic floor height was lost during normalization")
     Check(data.customSettings[2].baseSettingKey == "dungeon", "invalid base setting did not fall back")
+    Check(CustomizationStore.FindById(data.customSettings, TopicSeeds.IdForSetting("dungeon"))
+            and CustomizationStore.FindById(data.customSettings, TopicSeeds.IdForSetting("hospital"))
+            and CustomizationStore.FindById(data.customSettings, TopicSeeds.IdForSetting("school")),
+        "initial topics were not materialized alongside custom topics")
     Check(data.nextCustomSettingId == 10, "next custom theme id was not repaired")
     Check(data.activeCustomSettingId == "custom-4", "valid active custom theme was cleared")
     Check(#data.roomGroups == 2 and data.nextRoomGroupId == 4,
         "room normalization did not deduplicate names by scope or repair ids")
-    Check(data.roomGroups[1].settingKey == "dungeon",
-        "legacy unscoped room did not migrate to the dungeon setting")
-    Check(data.roomGroups[2].settingKey == "hospital",
-        "base-setting room lost its hospital scope")
-    local dungeonRooms = LocalRequirementPlanner.GroupsForContext(data.roomGroups, nil, "dungeon")
-    local hospitalRooms = LocalRequirementPlanner.GroupsForContext(data.roomGroups, nil, "hospital")
-    local schoolRooms = LocalRequirementPlanner.GroupsForContext(data.roomGroups, nil, "school")
+    Check(data.roomGroups[1].topicId == TopicSeeds.IdForSetting("dungeon"),
+        "legacy unscoped room did not migrate to the dungeon topic")
+    Check(data.roomGroups[2].topicId == TopicSeeds.IdForSetting("hospital"),
+        "base-setting room lost its hospital topic scope")
+    local dungeonRooms = LocalRequirementPlanner.GroupsForTopic(data.roomGroups, TopicSeeds.IdForSetting("dungeon"))
+    local hospitalRooms = LocalRequirementPlanner.GroupsForTopic(data.roomGroups, TopicSeeds.IdForSetting("hospital"))
+    local schoolRooms = LocalRequirementPlanner.GroupsForTopic(data.roomGroups, TopicSeeds.IdForSetting("school"))
     Check(#dungeonRooms == 1 and dungeonRooms[1].id == "room-group-3",
-        "legacy Boss room escaped its migrated dungeon scope")
+        "legacy Boss room escaped its migrated dungeon topic")
     Check(#hospitalRooms == 1 and hospitalRooms[1].id == "hospital-boss",
-        "hospital-scoped room is not isolated to hospital")
+        "hospital-scoped room is not isolated to its topic")
     Check(#schoolRooms == 0, "dungeon or hospital room leaked into school")
     Check(#data.customPalettes == 1 and data.nextCustomPaletteId == 6,
         "custom palette normalization did not validate or repair ids")
@@ -1107,13 +1189,44 @@ local function TestCustomizationNormalization()
         "custom palette was not registered for its setting")
     Check(runtimePalette.wall == 0x504d63 and runtimePalette.fog == Themes.ancient.fog,
         "custom palette did not override model colors while preserving its base environment")
+
+    local defaultBase = Themes.GetDefaultPalettes()[1]
+    Check(defaultBase == "ancient", "default palette ordering changed unexpectedly")
+    Check(Themes.IsPaletteForSetting("ancient", "hospital"),
+        "default palettes must be selectable across themes")
+    Check(not Themes.IsPaletteForSetting("sterile", "school"),
+        "theme palettes must remain scoped to their theme")
+    Check(Themes.GetPaletteGroup("ancient", "school") == "default",
+        "default palette group was not resolved")
+    Check(Themes.GetPaletteGroup("schoolDay", "school") == "theme",
+        "theme palette group was not resolved")
+    Check(Themes.GetPaletteGroup("schoolDay", "hospital") == nil,
+        "foreign theme palette unexpectedly resolved")
+    local hospitalDefault = Themes.Resolve("hospital", "ancient")
+    Check(hospitalDefault.floor == Themes.ancient.floor and hospitalDefault.torchLight[2] == Themes.sterile.torchLight[2],
+        "default palette did not retain theme-specific rendering behavior")
+
+    Themes.SetCustomPalettes({ {
+        schemaVersion = PaletteData.SCHEMA_VERSION,
+        id = "custom-default-palette", label = "通用测试", paletteGroup = "default",
+        baseSettingKey = "dungeon", basePaletteKey = "ancient",
+        colors = {
+            floor = 0x707070, corridor = 0x606060, wall = 0x505050, pillar = 0x686868,
+            accentObject = 0x3fa9d0, cloth = 0x426070, flame = 0x5fcfff, flameCore = 0xdff8ff,
+        },
+    } })
+    Check(Themes.IsPaletteForSetting("custom-default-palette", "school"),
+        "custom default palette was not shared across themes")
+    Check(Themes.GetPaletteGroup("custom-default-palette", "hospital") == "default",
+        "custom default palette group was not retained")
     Themes.SetCustomPalettes({})
 
     local missingActive = CustomizationStore.Normalize({
         customSettings = data.customSettings,
         activeCustomSettingId = "custom-404",
     })
-    Check(missingActive.activeCustomSettingId == nil, "missing active custom theme was retained")
+    Check(missingActive.activeCustomSettingId == TopicSeeds.DEFAULT_ID,
+        "missing active custom theme did not fall back to the initial dungeon topic")
 
     local schoolData = CustomizationStore.Normalize({
         customSettings = { { id = "custom-12", label = "School", baseSettingKey = "school", prompt = "campus" } },
@@ -1304,6 +1417,8 @@ function GenerationTests.Run()
         { "geometry seam contracts", TestGeometrySeamContracts },
         { "material separation", TestMaterialSeparationContracts },
         { "theme tone contracts", TestThemeToneContracts },
+        { "theme quality profiles", TestThemeQualityProfiles },
+        { "palette AI contract", TestPaletteAIContract },
         { "customization normalization", TestCustomizationNormalization },
         { "editor room groups", TestEditorRoomGroupPropagation },
         { "pinned editor stair", TestPinnedEditorStairContract },

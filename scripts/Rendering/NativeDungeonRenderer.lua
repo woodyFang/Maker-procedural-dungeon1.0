@@ -656,8 +656,7 @@ function NativeDungeonRenderer:AddHospitalDetails(root, dungeon, floorVisible, t
     end
 end
 
-function NativeDungeonRenderer:AddThemeDetails(root, dungeon, themeKey, floorVisible)
-    local theme = Themes.Get(themeKey)
+function NativeDungeonRenderer:AddThemeDetails(root, dungeon, theme, themeKey, floorVisible)
     local accent = theme.accentObject
     local darkStone = CreateMaterial(MixHex(theme.wall, 0x15191f, 0.42), 0.92, 0.02)
     local accentMaterial = CreateMaterial(accent, 0.35, 0.08, accent)
@@ -725,7 +724,7 @@ function NativeDungeonRenderer:Build(dungeon, themeKey, options)
             object = object, showTime = showTime or timeline.total, shown = false,
         }
     end
-    local theme = Themes.Get(themeKey)
+    local theme = Themes.Resolve(settingKey, themeKey)
     local root = self.scene:CreateChild("GeneratedDungeon")
     self.root = root
 

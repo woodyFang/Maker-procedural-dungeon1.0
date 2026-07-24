@@ -725,7 +725,7 @@ end
 
 local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, roomGroupsById)
     local profile = EnvironmentProfiles.Resolve(settingKey)
-    local theme = Themes.Get(themeKey)
+    local theme = Themes.Resolve(settingKey, themeKey)
     for _, layer in ipairs(dungeon.layers) do
         local rng = FloorRandom(floorSeeds, layer.floor, STREAM_DECOR)
         local occupied = {}
@@ -1429,8 +1429,9 @@ local function GenerateAttempt(seed, parameters)
         entrance, boss, maxDepth, criticalLength = AssignSemantics(rooms, edges, floorCount, floorSeeds)
     end
     local roomGroupsById, roomGroupCounts = AssignRoomGroups(rooms, parameters.roomGroups)
-    local theme = Themes.Get(parameters.theme or "ancient")
-    local environment = EnvironmentProfiles.Resolve(parameters.settingKey or "dungeon")
+    local settingKey = parameters.settingKey or "dungeon"
+    local theme = Themes.Resolve(settingKey, parameters.theme or "ancient")
+    local environment = EnvironmentProfiles.Resolve(settingKey)
     -- Generic room-feature selector. The feature field, eligibility and theme
     -- flag are profile data; this is no longer a dungeon-only lake/grave branch.
     for floor = 0, floorCount - 1 do
