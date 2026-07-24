@@ -1,0 +1,44 @@
+local RouteEditing = require("UI.Editor.RouteEditing")
+
+local RoomEditing = {}
+
+local Snap = RouteEditing.Snap
+
+-- Keep this geometry in the same order as Three's editorNormalizeRect:
+-- calculate from the unsnapped pointer first, then snap the resulting center
+-- and size. Snapping an edge before this step makes odd-sized rooms jump by
+-- half a cell as soon as a resize handle is pressed.
+function RoomEditing.NormalizeRect(a, b)
+    local x0, x1 = math.min(a.x, b.x), math.max(a.x, b.x)
+    local y0, y1 = math.min(a.y, b.y), math.max(a.y, b.y)
+    return {
+        cx = Snap((x0 + x1) * 0.5),
+        cy = Snap((y0 + y1) * 0.5),
+        w = math.max(5, Snap(x1 - x0)),
+        h = math.max(5, Snap(y1 - y0)),
+    }
+end
+
+function RoomEditing.Resize(start, pointer, mode)
+    -- UI descriptors use names such as "resize-nw". Never search the full
+    -- name for direction letters: the word "resize" itself contains both
+    -- "e" and "s", which used to activate the east and south edges for every
+    -- handle. Only the suffix is the resize direction.
+    local direction = (mode or ""):gsub("^resize%-", "")
+    local x0, x1 = start.cx - start.w * 0.5, start.cx + start.w * 0.5
+    local y0, y1 = start.cy - start.h * 0.5, start.cy + start.h * 0.5
+    if direction:find("w", 1, true) then x0 = pointer.x end
+    if direction:find("e", 1, true) then x1 = pointer.x end
+    if direction:find("n", 1, true) then y0 = pointer.y end
+    if direction:find("s", 1, true) then y1 = pointer.y end
+    return RoomEditing.NormalizeRect({ x = x0, y = y0 }, { x = x1, y = y1 })
+end
+
+-- Use the immutable room and pointer starts, matching Three's room drag.
+-- This keeps every frame independent of the previously applied frame.
+function RoomEditing.Move(start, pointerStart, pointer)
+    return Snap(start.cx + pointer.x - pointerStart.x),
+        Snap(start.cy + pointer.y - pointerStart.y)
+end
+
+return RoomEditing

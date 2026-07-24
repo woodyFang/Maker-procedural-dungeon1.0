@@ -1,0 +1,7 @@
+<material>
+	<surfaceshader name="Shaders/BLGL/Generated/mat_water_bc463771.shader"/>
+	<surfacetexture name="tex_normal" texture="Textures/Water_N.png" type="Texture2D"/>
+	<parameter name="param_color" value="0.0501790009 0.0649999976 0.0377000012 0"/>
+	<parameter name="param_opacity" value="0.800000012"/>
+	<parameter name="param_roughness" value="-0.982568979"/>
+</material>
