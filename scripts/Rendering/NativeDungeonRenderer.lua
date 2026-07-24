@@ -4,10 +4,12 @@ local PropBlueprints = require("Rendering.PropBlueprints")
 local ExactGeometryBatcher = require("Rendering.ExactGeometryBatcher")
 local StairRenderPlan = require("Rendering.StairRenderPlan")
 local AtmosphereFX = require("Rendering.AtmosphereFX")
+local VolumetricFog = require("Rendering.VolumetricFog")
 local Random = require("Generation.Random")
 local MultiFloor = require("Generation.MultiFloor")
 local EditorSelectionHighlight = require("Rendering.EditorSelectionHighlight")
 local RoomGroupColors = require("Config.RoomGroupColors")
+local AtmosphereProfiles = require("Config.AtmosphereProfiles")
 
 local NativeDungeonRenderer = {}
 NativeDungeonRenderer.__index = NativeDungeonRenderer
@@ -173,6 +175,8 @@ function NativeDungeonRenderer.new(scene)
         batchCount = 0,
         floorSpacing = 1,
         dynamicLights = {},
+        volumetricFogEnabled = false,
+        volumetricFogConfig = nil,
         elapsed = 0,
         animation = nil,
         lastBuildMetrics = nil,
@@ -355,6 +359,9 @@ function NativeDungeonRenderer:AddPointLight(parent, name, position, color, brig
     light.brightness = brightness or 4.0
     light.range = range or 7.0
     light.castShadows = false
+    local fogConfig = self.volumetricFogConfig or {}
+    VolumetricFog.ConfigureLight(light, self.volumetricFogEnabled,
+        fogConfig.pointLightIntensity or 1.0, false)
     self.dynamicLights[#self.dynamicLights + 1] = {
         light = light, base = light.brightness, phase = #self.dynamicLights * 1.731,
         flicker = flicker ~= false,
@@ -705,6 +712,8 @@ function NativeDungeonRenderer:Build(dungeon, themeKey, options)
     self:Clear()
     self.selectionDungeon = dungeon
     options = options or {}
+    self.volumetricFogEnabled = options.volumetricFogEnabled == true
+    self.volumetricFogConfig = options.volumetricFogConfig
     local currentFloor = options.currentFloor or 0
     local viewMode = options.viewMode or "neighbors"
     local settingKey = options.settingKey or "dungeon"
@@ -756,6 +765,10 @@ function NativeDungeonRenderer:Build(dungeon, themeKey, options)
     local exactRng = Random.new(dungeon.seed ~ 0x9e3779b9)
     local torchLightCount = 0
     local propLightCount = 0
+    -- Mood envelope: scales the authored firelight and drives the flicker
+    -- waves in Update(). Neutral moods keep the legacy behavior exactly.
+    self.mood = AtmosphereProfiles.Resolve(settingKey, theme)
+    local torchScale = AtmosphereProfiles.TorchScale(self.mood)
 
     for _, layer in ipairs(dungeon.layers) do
         if FloorVisible(layer.floor) then
@@ -780,7 +793,7 @@ function NativeDungeonRenderer:Build(dungeon, themeKey, options)
                 torchLightCount = torchLightCount + 1
                 local torchSpec = theme.torchLight or { settingKey == "hospital" and 0xbfe9e3 or 0xffa640, 1.5, 9.5 }
                 self:AddPointLight(root, "TorchLight-" .. layer.floor .. "-" .. torchIndex,
-                    Vector3(tx, ty, tz), HexColor(torchSpec[1], 1.0), torchSpec[2], torchSpec[3])
+                    Vector3(tx, ty, tz), HexColor(torchSpec[1], 1.0), torchSpec[2] * torchScale, torchSpec[3])
             end
         end
         for _, arch in ipairs(layer.arches or {}) do exact:QueueArch(layer, arch, self.floorSpacing) end
@@ -793,11 +806,14 @@ function NativeDungeonRenderer:Build(dungeon, themeKey, options)
         self:AddRoomGroupHighlights(root, dungeon, FloorVisible, options.roomGroups)
     end
 
-    -- Dynamic atmosphere layer (ruins particles, god rays, gates, sigils).
-    -- Built after Flush so the shared emissive materials exist for the pulse.
+    -- Dynamic atmosphere layer (particles, real volumetric beams, gates,
+    -- sigils). Built after Flush so the shared emissive materials exist for
+    -- the pulse.
     self.atmosphere = AtmosphereFX.Build({
         parent = root, dungeon = dungeon, theme = theme, settingKey = settingKey,
         modelCache = self.modelCache, floorVisible = FloorVisible,
+        volumetricFogEnabled = self.volumetricFogEnabled,
+        volumetricFogConfig = self.volumetricFogConfig,
         floorSpacing = self.floorSpacing,
         worldPosition = function(gridX, gridY, floor, localY)
             return self:WorldPosition(dungeon, gridX, gridY, floor, localY)
@@ -883,7 +899,7 @@ function NativeDungeonRenderer:Build(dungeon, themeKey, options)
                     connector.fromFloor, anchor.elevation)
                 self:AddPointLight(root, "StairLight-" .. connector.id .. "-" .. index,
                     Vector3(lx, ly, lz), HexColor(stairLightSpec[1], 1.0),
-                    stairLightSpec[2], stairLightSpec[3],
+                    stairLightSpec[2] * torchScale, stairLightSpec[3],
                     settingKey == "dungeon" or settingKey == "temple")
             end
         end
@@ -964,11 +980,13 @@ function NativeDungeonRenderer:Update(timeStep)
             self.animation.timeline.atmosphere.start, self.animation.timeline.atmosphere.finish)
         self:UpdateBuildOverlay(self.animation)
     end
+    local envelope = AtmosphereProfiles.FlickerEnvelope(self.mood)
     for _, entry in ipairs(self.dynamicLights) do
         local flicker = 1
         if entry.flicker then
-            flicker = 0.90 + math.sin(self.elapsed * 7.3 + entry.phase) * 0.07
-                + math.sin(self.elapsed * 13.1 + entry.phase * 0.37) * 0.03
+            flicker = envelope.base
+                + math.sin(self.elapsed * envelope.speedA + entry.phase) * envelope.ampA
+                + math.sin(self.elapsed * envelope.speedB + entry.phase * envelope.phaseScale) * envelope.ampB
         end
         entry.light.brightness = entry.base * flicker * lightRamp
     end

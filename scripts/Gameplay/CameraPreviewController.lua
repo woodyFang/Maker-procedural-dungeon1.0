@@ -16,7 +16,7 @@ local THIRD_PITCH_MIN = 0.78
 local THIRD_PITCH_MAX = 1.22
 local THIRD_DISTANCE_MIN = 9
 local THIRD_DISTANCE_MAX = 20
-local FIRST_PERSON_EYE_HEIGHT = 0.92
+local FIRST_PERSON_EYE_HEIGHT = 1.48
 local SAMPLE_RADIUS = 0.26
 local MAX_SURFACE_DISCONTINUITY = 0.65
 local MOVEMENT_SUBSTEP = 0.20
@@ -44,17 +44,13 @@ local function HexColor(value, brightness, alpha)
     )
 end
 
-local function CreateMaterial(color, roughness, metallic, emissive, alpha)
+local function CreateMaterial(color, roughness, metallic)
     local material = Material:new()
-    local technique = alpha and "Techniques/PBR/PBRNoTextureAlpha.xml" or "Techniques/PBR/PBRNoTexture.xml"
-    material:SetTechnique(0, cache:GetResource("Technique", technique))
-    material:SetShaderParameter("MatDiffColor", Variant(HexColor(color, 1, alpha or 1)))
+    material:SetTechnique(0, cache:GetResource("Technique", "Techniques/PBR/PBRNoTexture.xml"))
+    material:SetShaderParameter("MatDiffColor", Variant(HexColor(color)))
     material:SetShaderParameter("MatSpecColor", Variant(Color(0.35, 0.35, 0.35, 1)))
     material:SetShaderParameter("Roughness", Variant(roughness or 0.72))
     material:SetShaderParameter("Metallic", Variant(metallic or 0.08))
-    if emissive then
-        material:SetShaderParameter("MatEmissiveColor", Variant(HexColor(emissive, 1.2)))
-    end
     return material
 end
 
@@ -103,179 +99,189 @@ function CameraPreviewController:CreateCharacter()
     self.character = self.root:CreateChild("PreviewCharacter")
     self.thirdPersonRoot = self.character:CreateChild("ThirdPersonVisual")
     self.visual = self.thirdPersonRoot:CreateChild("CharacterVisual")
-    self.visual.scale = Vector3(0.74, 0.74, 0.74)
+    self.visual.scale = Vector3(0.78, 0.78, 0.78)
     self.visual.rotation = Quaternion(180, Vector3.UP)
 
     local model = function(key, fallback)
         return ResolveModel(self.dungeonRenderer, key, fallback)
     end
-    local armor = CreateMaterial(0x202938, 0.30, 0.76)
-    local armorEdge = CreateMaterial(0x64758a, 0.22, 0.90)
-    local cloth = CreateMaterial(0x291537, 0.78, 0.06)
-    local skin = CreateMaterial(0xb78368, 0.68, 0.10)
-    local steel = CreateMaterial(0xbac9da, 0.18, 0.92)
-    local gold = CreateMaterial(0xc6812c, 0.32, 0.78)
-    local heraldry = CreateMaterial(0x8e2430, 0.62, 0.18)
-    local glow = CreateMaterial(0x35d9ff, 0.28, 0.08, 0x35d9ff)
+    -- Classic medieval palette: bright polished plate over dark under-armour,
+    -- gold trim and heraldic red cloth. Bright plate keeps the figure readable
+    -- inside dark dungeon lighting instead of dissolving into a black column.
+    local plate = CreateMaterial(0x9fabb8, 0.30, 0.86)
+    local plateDark = CreateMaterial(0x39424e, 0.42, 0.62)
+    local steel = CreateMaterial(0xd6dde3, 0.16, 0.94)
+    local gold = CreateMaterial(0xc08a35, 0.30, 0.85)
+    local heraldry = CreateMaterial(0x9c2430, 0.55, 0.12)
+    local clothRed = CreateMaterial(0x77201e, 0.85, 0.03)
     local glowWarm = CreateMaterial(0xff6333, 0.30, 0.12, 0xff4a24)
-    cloth.cullMode = CULL_NONE
+    clothRed.cullMode = CULL_NONE
+    local flat = Quaternion(-90, Vector3.RIGHT)
 
+    -- Proportion contract: authored at ~8 heads tall (total 2.20 units, helm
+    -- width 0.27) so the silhouette reads as an adult man-at-arms, not a chibi
+    -- mascot. Legs take half the height; plate limbs are round tubes like real
+    -- rerebraces/vambraces instead of rectangular robot blocks.
     self.rig = self.visual:CreateChild("ArmorRig")
-    self.rig.position = Vector3(0, 0.04, 0)
+    self.rig.position = Vector3(0, 0.02, 0)
 
-    -- Human silhouette: broad chest, narrow abdomen and armored pelvis.
-    AddPart(self.rig, "Pelvis", model("roundedBox"), Vector3(0, 0.52, 0),
-        Vector3(0.62, 0.24, 0.46), armorEdge)
-    AddPart(self.rig, "Abdomen", model("roundedBox"), Vector3(0, 0.72, 0),
-        Vector3(0.50, 0.30, 0.37), armor)
-    AddPart(self.rig, "Chest", model("roundedBox"), Vector3(0, 0.98, 0),
-        Vector3(0.76, 0.46, 0.50), armor)
-    AddPart(self.rig, "ChestPlate", model("roundedBox"), Vector3(0, 1.02, -0.29),
-        Vector3(0.59, 0.50, 0.12), armorEdge)
-    AddPart(self.rig, "ChestInset", model("box"), Vector3(0, 1.02, -0.40),
-        Vector3(0.38, 0.29, 0.045), armor)
-    self.core = AddPart(self.rig, "ChestCore", model("octahedron"), Vector3(0, 1.03, -0.47),
-        Vector3(0.16, 0.25, 0.10), glow)
-    AddPart(self.rig, "WaistSeal", model("torus"), Vector3(0, 0.59, 0),
-        Vector3(0.50, 0.08, 0.38), gold)
-    AddPart(self.rig, "Collar", model("torus"), Vector3(0, 1.23, 0),
-        Vector3(0.47, 0.08, 0.38), gold)
+    -- Pelvis, faulds skirt and waist.
+    AddPart(self.rig, "Pelvis", model("roundedBox"), Vector3(0, 1.20, 0),
+        Vector3(0.42, 0.20, 0.30), plateDark)
+    AddPart(self.rig, "FauldFront", model("roundedBox"), Vector3(0, 1.10, -0.145),
+        Vector3(0.32, 0.24, 0.05), plate, Quaternion(6, Vector3.RIGHT))
+    AddPart(self.rig, "FauldBack", model("roundedBox"), Vector3(0, 1.10, 0.145),
+        Vector3(0.32, 0.24, 0.05), plate, Quaternion(-6, Vector3.RIGHT))
+    AddPart(self.rig, "FauldL", model("roundedBox"), Vector3(-0.20, 1.10, 0),
+        Vector3(0.05, 0.22, 0.26), plate, Quaternion(0, 0, -10))
+    AddPart(self.rig, "FauldR", model("roundedBox"), Vector3(0.20, 1.10, 0),
+        Vector3(0.05, 0.22, 0.26), plate, Quaternion(0, 0, 10))
+    AddPart(self.rig, "Waist", model("cylinder", "Models/Cylinder.mdl"), Vector3(0, 1.36, 0),
+        Vector3(0.34, 0.16, 0.26), plateDark)
+    AddPart(self.rig, "Belt", model("torus"), Vector3(0, 1.31, 0),
+        Vector3(0.34, 0.26, 0.30), gold, flat)
 
-    -- Rounded great-helm silhouette: no cone tip, only a low crest ridge.
-    AddPart(self.rig, "Head", model("sphere", "Models/Sphere.mdl"), Vector3(0, 1.57, 0),
-        Vector3(0.36, 0.38, 0.34), skin)
-    AddPart(self.rig, "HelmetDome", model("sphere", "Models/Sphere.mdl"), Vector3(0, 1.79, 0),
-        Vector3(0.45, 0.34, 0.42), armor)
-    AddPart(self.rig, "HelmetBrim", model("cylinder", "Models/Cylinder.mdl"), Vector3(0, 1.69, 0),
-        Vector3(0.48, 0.10, 0.45), armorEdge)
-    AddPart(self.rig, "Visor", model("roundedBox"), Vector3(0, 1.70, -0.31),
-        Vector3(0.33, 0.09, 0.08), steel)
-    AddPart(self.rig, "Crest", model("roundedBox"), Vector3(0, 1.98, 0.04),
-        Vector3(0.07, 0.10, 0.28), gold)
-    AddPart(self.rig, "CrestGem", model("octahedron"), Vector3(0, 1.91, -0.28),
-        Vector3(0.09, 0.12, 0.07), glowWarm)
+    -- Chest: broad plate tapering into the waist, with the heraldic cross.
+    AddPart(self.rig, "Chest", model("roundedBox"), Vector3(0, 1.60, 0),
+        Vector3(0.52, 0.36, 0.32), plate)
+    AddPart(self.rig, "ChestLower", model("roundedBox"), Vector3(0, 1.44, 0),
+        Vector3(0.42, 0.16, 0.28), plate)
+    AddPart(self.rig, "ChestCrossV", model("roundedBox"), Vector3(0, 1.60, -0.155),
+        Vector3(0.075, 0.24, 0.03), heraldry)
+    AddPart(self.rig, "ChestCrossH", model("roundedBox"), Vector3(0, 1.645, -0.155),
+        Vector3(0.19, 0.075, 0.03), heraldry)
+    AddPart(self.rig, "Gorget", model("cylinder", "Models/Cylinder.mdl"), Vector3(0, 1.795, 0),
+        Vector3(0.235, 0.09, 0.21), plateDark)
+    AddPart(self.rig, "GorgetTrim", model("torus"), Vector3(0, 1.775, 0),
+        Vector3(0.25, 0.22, 0.24), gold, flat)
 
-    -- Shoulder pivots now carry actual upper arms, elbows, gauntlets and hands.
+    -- Small great helm at true head scale: tube + dome + eye slit + red plume.
+    AddPart(self.rig, "Neck", model("cylinder", "Models/Cylinder.mdl"), Vector3(0, 1.86, 0),
+        Vector3(0.13, 0.10, 0.13), plateDark)
+    AddPart(self.rig, "HelmBody", model("cylinder", "Models/Cylinder.mdl"), Vector3(0, 1.97, 0),
+        Vector3(0.27, 0.18, 0.255), plate)
+    AddPart(self.rig, "HelmDome", model("sphere", "Models/Sphere.mdl"), Vector3(0, 2.065, 0),
+        Vector3(0.28, 0.20, 0.265), plate)
+    AddPart(self.rig, "VisorBar", model("roundedBox"), Vector3(0, 1.935, -0.115),
+        Vector3(0.20, 0.032, 0.035), plateDark)
+    AddPart(self.rig, "EyeSlit", model("box"), Vector3(0, 1.985, -0.118),
+        Vector3(0.16, 0.028, 0.028), glowWarm)
+    AddPart(self.rig, "PlumeBase", model("roundedBox"), Vector3(0, 2.155, 0.01),
+        Vector3(0.045, 0.09, 0.16), heraldry)
+    AddPart(self.rig, "PlumeMid", model("roundedBox"), Vector3(0, 2.10, 0.135),
+        Vector3(0.04, 0.07, 0.14), heraldry, Quaternion(-32, Vector3.RIGHT))
+    AddPart(self.rig, "PlumeTail", model("roundedBox"), Vector3(0, 2.015, 0.235),
+        Vector3(0.035, 0.06, 0.12), heraldry, Quaternion(-58, Vector3.RIGHT))
+
+    -- Arms: bowl pauldrons over tubular plate limbs with ball elbows.
     self.shoulderL = self.rig:CreateChild("ShoulderL")
-    self.shoulderL.position = Vector3(-0.57, 1.20, 0)
-    AddPart(self.shoulderL, "Pauldron", model("roundedBox"), Vector3(0, 0.02, 0),
-        Vector3(0.43, 0.22, 0.52), armorEdge, Quaternion(-8, Vector3.FORWARD))
-    AddPart(self.shoulderL, "ShoulderRivet", model("sphere", "Models/Sphere.mdl"),
-        Vector3(-0.12, 0.10, -0.12), Vector3(0.10, 0.10, 0.10), gold)
-    AddPart(self.shoulderL, "UpperArm", model("roundedBox"), Vector3(0, -0.19, 0.02),
-        Vector3(0.18, 0.36, 0.20), armor)
+    self.shoulderL.position = Vector3(-0.30, 1.76, 0)
+    AddPart(self.shoulderL, "Pauldron", model("sphere", "Models/Sphere.mdl"), Vector3(-0.03, 0.045, 0),
+        Vector3(0.24, 0.15, 0.25), plate)
+    AddPart(self.shoulderL, "PauldronRim", model("torus"), Vector3(-0.03, 0.0, 0),
+        Vector3(0.185, 0.16, 0.19), gold, flat)
+    AddPart(self.shoulderL, "UpperArm", model("cylinder", "Models/Cylinder.mdl"), Vector3(-0.03, -0.19, 0),
+        Vector3(0.125, 0.34, 0.125), plateDark)
     self.elbowL = self.shoulderL:CreateChild("ElbowL")
-    self.elbowL.position = Vector3(0, -0.39, -0.02)
-    AddPart(self.elbowL, "ElbowJoint", model("sphere", "Models/Sphere.mdl"),
-        Vector3(0, 0, -0.03), Vector3(0.14, 0.14, 0.14), armorEdge)
-    AddPart(self.elbowL, "Forearm", model("roundedBox"), Vector3(0, -0.17, -0.07),
-        Vector3(0.16, 0.32, 0.18), armor)
+    self.elbowL.position = Vector3(-0.03, -0.38, 0)
+    AddPart(self.elbowL, "ElbowJoint", model("sphere", "Models/Sphere.mdl"), Vector3(0, 0, 0),
+        Vector3(0.13, 0.13, 0.13), plate)
+    AddPart(self.elbowL, "Forearm", model("cylinder", "Models/Cylinder.mdl"), Vector3(0, -0.17, 0),
+        Vector3(0.115, 0.30, 0.115), plate)
     self.handL = self.elbowL:CreateChild("GauntletL")
-    self.handL.position = Vector3(0, -0.36, -0.11)
+    self.handL.position = Vector3(0, -0.36, 0)
     AddPart(self.handL, "Gauntlet", model("roundedBox"), Vector3(0, 0, 0),
-        Vector3(0.22, 0.18, 0.24), steel)
+        Vector3(0.15, 0.13, 0.16), plateDark)
 
     self.shoulderR = self.rig:CreateChild("ShoulderR")
-    self.shoulderR.position = Vector3(0.57, 1.20, 0)
-    AddPart(self.shoulderR, "Pauldron", model("roundedBox"), Vector3(0, 0.02, 0),
-        Vector3(0.43, 0.22, 0.52), armorEdge, Quaternion(8, Vector3.FORWARD))
-    AddPart(self.shoulderR, "ShoulderRivet", model("sphere", "Models/Sphere.mdl"),
-        Vector3(0.12, 0.10, -0.12), Vector3(0.10, 0.10, 0.10), gold)
-    AddPart(self.shoulderR, "UpperArm", model("roundedBox"), Vector3(0, -0.19, 0.02),
-        Vector3(0.18, 0.36, 0.20), armor)
+    self.shoulderR.position = Vector3(0.30, 1.76, 0)
+    AddPart(self.shoulderR, "Pauldron", model("sphere", "Models/Sphere.mdl"), Vector3(0.03, 0.045, 0),
+        Vector3(0.24, 0.15, 0.25), plate)
+    AddPart(self.shoulderR, "PauldronRim", model("torus"), Vector3(0.03, 0.0, 0),
+        Vector3(0.185, 0.16, 0.19), gold, flat)
+    AddPart(self.shoulderR, "UpperArm", model("cylinder", "Models/Cylinder.mdl"), Vector3(0.03, -0.19, 0),
+        Vector3(0.125, 0.34, 0.125), plateDark)
     self.elbowR = self.shoulderR:CreateChild("ElbowR")
-    self.elbowR.position = Vector3(0, -0.39, -0.02)
-    AddPart(self.elbowR, "ElbowJoint", model("sphere", "Models/Sphere.mdl"),
-        Vector3(0, 0, -0.03), Vector3(0.14, 0.14, 0.14), armorEdge)
-    AddPart(self.elbowR, "Forearm", model("roundedBox"), Vector3(0, -0.17, -0.07),
-        Vector3(0.16, 0.32, 0.18), armor)
+    self.elbowR.position = Vector3(0.03, -0.38, 0)
+    AddPart(self.elbowR, "ElbowJoint", model("sphere", "Models/Sphere.mdl"), Vector3(0, 0, 0),
+        Vector3(0.13, 0.13, 0.13), plate)
+    AddPart(self.elbowR, "Forearm", model("cylinder", "Models/Cylinder.mdl"), Vector3(0, -0.17, 0),
+        Vector3(0.115, 0.30, 0.115), plate)
     self.handR = self.elbowR:CreateChild("GauntletR")
-    self.handR.position = Vector3(0, -0.36, -0.11)
+    self.handR.position = Vector3(0, -0.36, 0)
     AddPart(self.handR, "Gauntlet", model("roundedBox"), Vector3(0, 0, 0),
-        Vector3(0.22, 0.18, 0.24), steel)
+        Vector3(0.15, 0.13, 0.16), plateDark)
 
-    -- Articulated legs: thigh, knee, shin and boot instead of one long greave.
+    -- Legs: half the body height, tubular cuisses and greaves, ball knees.
     self.legL = self.rig:CreateChild("LegL")
-    self.legL.position = Vector3(-0.19, 0.76, 0)
-    AddPart(self.legL, "Thigh", model("roundedBox"), Vector3(0, -0.16, 0),
-        Vector3(0.30, 0.34, 0.31), armor)
+    self.legL.position = Vector3(-0.13, 1.18, 0)
+    AddPart(self.legL, "Thigh", model("cylinder", "Models/Cylinder.mdl"), Vector3(0, -0.27, 0),
+        Vector3(0.185, 0.50, 0.185), plate)
     self.kneeL = self.legL:CreateChild("KneeL")
-    self.kneeL.position = Vector3(0, -0.35, -0.02)
-    AddPart(self.kneeL, "KneeCap", model("sphere", "Models/Sphere.mdl"), Vector3(0, 0, -0.04),
-        Vector3(0.18, 0.16, 0.14), armorEdge)
+    self.kneeL.position = Vector3(0, -0.55, 0)
+    AddPart(self.kneeL, "KneeCap", model("sphere", "Models/Sphere.mdl"), Vector3(0, 0, -0.02),
+        Vector3(0.15, 0.13, 0.14), plateDark)
     local shinL = self.kneeL:CreateChild("ShinL")
-    AddPart(shinL, "Shin", model("roundedBox"), Vector3(0, -0.18, 0),
-        Vector3(0.25, 0.36, 0.27), armor)
-    AddPart(shinL, "Boot", model("roundedBox"), Vector3(0, -0.16, -0.10),
-        Vector3(0.30, 0.16, 0.42), steel)
+    AddPart(shinL, "Shin", model("cylinder", "Models/Cylinder.mdl"), Vector3(0, -0.26, 0),
+        Vector3(0.155, 0.46, 0.155), plate)
+    AddPart(shinL, "Boot", model("roundedBox"), Vector3(0, -0.525, -0.06),
+        Vector3(0.17, 0.11, 0.32), plateDark)
 
     self.legR = self.rig:CreateChild("LegR")
-    self.legR.position = Vector3(0.19, 0.76, 0)
-    AddPart(self.legR, "Thigh", model("roundedBox"), Vector3(0, -0.16, 0),
-        Vector3(0.30, 0.34, 0.31), armor)
+    self.legR.position = Vector3(0.13, 1.18, 0)
+    AddPart(self.legR, "Thigh", model("cylinder", "Models/Cylinder.mdl"), Vector3(0, -0.27, 0),
+        Vector3(0.185, 0.50, 0.185), plate)
     self.kneeR = self.legR:CreateChild("KneeR")
-    self.kneeR.position = Vector3(0, -0.35, -0.02)
-    AddPart(self.kneeR, "KneeCap", model("sphere", "Models/Sphere.mdl"), Vector3(0, 0, -0.04),
-        Vector3(0.18, 0.16, 0.14), armorEdge)
+    self.kneeR.position = Vector3(0, -0.55, 0)
+    AddPart(self.kneeR, "KneeCap", model("sphere", "Models/Sphere.mdl"), Vector3(0, 0, -0.02),
+        Vector3(0.15, 0.13, 0.14), plateDark)
     local shinR = self.kneeR:CreateChild("ShinR")
-    AddPart(shinR, "Shin", model("roundedBox"), Vector3(0, -0.18, 0),
-        Vector3(0.25, 0.36, 0.27), armor)
-    AddPart(shinR, "Boot", model("roundedBox"), Vector3(0, -0.16, -0.10),
-        Vector3(0.30, 0.16, 0.42), steel)
+    AddPart(shinR, "Shin", model("cylinder", "Models/Cylinder.mdl"), Vector3(0, -0.26, 0),
+        Vector3(0.155, 0.46, 0.155), plate)
+    AddPart(shinR, "Boot", model("roundedBox"), Vector3(0, -0.525, -0.06),
+        Vector3(0.17, 0.11, 0.32), plateDark)
 
-    -- Right hand holds the sword instead of leaving it floating beside the rig.
+    -- Arming sword held point-up in the right gauntlet.
     self.weapon = self.handR:CreateChild("KnightSword")
-    self.weapon.position = Vector3(0, -0.08, 0.03)
-    self.weapon.rotation = Quaternion(-8, Vector3.FORWARD)
-    AddPart(self.weapon, "Guard", model("roundedBox"), Vector3(0, 0, 0),
-        Vector3(0.38, 0.07, 0.12), gold)
-    AddPart(self.weapon, "Grip", model("cylinder", "Models/Cylinder.mdl"), Vector3(0, -0.18, 0),
-        Vector3(0.08, 0.28, 0.08), armor)
-    AddPart(self.weapon, "Blade", model("box", "Models/Box.mdl"), Vector3(0, 0.44, 0),
-        Vector3(0.14, 0.70, 0.10), steel)
-    AddPart(self.weapon, "BladeCore", model("box", "Models/Box.mdl"), Vector3(0, 0.44, -0.065),
-        Vector3(0.035, 0.61, 0.032), glowWarm)
+    self.weapon.position = Vector3(0.05, -0.01, -0.06)
+    self.weapon.rotation = Quaternion(-12, Vector3.FORWARD)
+    AddPart(self.weapon, "Pommel", model("sphere", "Models/Sphere.mdl"), Vector3(0, -0.20, 0),
+        Vector3(0.075, 0.075, 0.075), gold)
+    AddPart(self.weapon, "Grip", model("cylinder", "Models/Cylinder.mdl"), Vector3(0, -0.12, 0),
+        Vector3(0.055, 0.15, 0.055), plateDark)
+    AddPart(self.weapon, "Guard", model("roundedBox"), Vector3(0, -0.025, 0),
+        Vector3(0.28, 0.05, 0.08), gold)
+    AddPart(self.weapon, "Blade", model("box", "Models/Box.mdl"), Vector3(0, 0.42, 0),
+        Vector3(0.10, 0.86, 0.032), steel)
+    AddPart(self.weapon, "BladeTip", model("box", "Models/Box.mdl"), Vector3(0, 0.88, 0),
+        Vector3(0.068, 0.09, 0.032), steel)
 
-    -- Left hand carries a layered heater shield with a visible heraldic cross.
+    -- Tall heater shield strapped to the left forearm.
     self.shield = self.handL:CreateChild("HeaterShield")
-    self.shield.position = Vector3(-0.16, -0.02, -0.12)
+    self.shield.position = Vector3(-0.115, 0.02, -0.03)
     AddPart(self.shield, "ShieldFace", model("roundedBox"), Vector3(0, 0, 0),
-        Vector3(0.08, 0.46, 0.36), armorEdge)
-    AddPart(self.shield, "ShieldTopTrim", model("roundedBox"), Vector3(-0.045, 0.20, -0.02),
-        Vector3(0.05, 0.045, 0.38), gold)
-    AddPart(self.shield, "ShieldBottomTrim", model("roundedBox"), Vector3(-0.045, -0.20, -0.02),
-        Vector3(0.05, 0.045, 0.34), gold)
-    AddPart(self.shield, "ShieldCrossV", model("roundedBox"), Vector3(-0.055, 0, -0.20),
-        Vector3(0.025, 0.22, 0.035), heraldry)
-    AddPart(self.shield, "ShieldCrossH", model("roundedBox"), Vector3(-0.055, 0, -0.20),
-        Vector3(0.025, 0.035, 0.18), heraldry)
-    AddPart(self.shield, "ShieldBoss", model("octahedron"), Vector3(-0.08, 0, -0.23),
-        Vector3(0.10, 0.12, 0.10), gold)
+        Vector3(0.05, 0.56, 0.42), plate)
+    AddPart(self.shield, "ShieldTopTrim", model("roundedBox"), Vector3(-0.018, 0.265, 0),
+        Vector3(0.042, 0.05, 0.44), gold)
+    AddPart(self.shield, "ShieldPoint", model("roundedBox"), Vector3(-0.008, -0.31, 0),
+        Vector3(0.046, 0.12, 0.26), plate)
+    AddPart(self.shield, "ShieldCrossV", model("roundedBox"), Vector3(-0.038, -0.005, 0),
+        Vector3(0.026, 0.40, 0.095), heraldry)
+    AddPart(self.shield, "ShieldCrossH", model("roundedBox"), Vector3(-0.038, 0.09, 0),
+        Vector3(0.026, 0.095, 0.30), heraldry)
+    AddPart(self.shield, "ShieldBoss", model("sphere", "Models/Sphere.mdl"), Vector3(-0.05, 0.09, 0),
+        Vector3(0.09, 0.09, 0.09), gold)
 
+    -- Heraldic red cloak pinned at the shoulder blades, swept away from the back.
     self.cloak = self.rig:CreateChild("Cloak")
-    self.cloak.position = Vector3(0, 1.07, 0.32)
-    AddPart(self.cloak, "CloakCloth", model("bannerCloth"), Vector3(0, -0.52, 0),
-        Vector3(1.48, 1.48, 1), cloth)
-    AddPart(self.cloak, "CloakSpine", model("cylinder", "Models/Cylinder.mdl"),
-        Vector3(0, -0.43, 0.05), Vector3(0.06, 0.78, 0.06), gold)
-
-    -- A fixed-pitch child lets the parent spin around Y without changing the
-    -- ring's floor-parallel orientation.
-    self.runeSpinner = self.rig:CreateChild("RuneSpinner")
-    self.runeSpinner.position = Vector3(0, 1.12, 0)
-    AddPart(self.runeSpinner, "RuneRing", model("ring"), Vector3(0, 0, 0),
-        Vector3(0.48, 0.48, 0.48), glow, Quaternion(-90, Vector3.RIGHT))
-
-    self.orbitRoot = self.rig:CreateChild("OrbitingRelics")
-    self.orbiters = {}
-    local orbitModels = { "octahedron", "icosahedron", "octahedron" }
-    local orbitMaterials = { glow, glowWarm, glow }
-    for index = 1, 3 do
-        local orbiter = AddPart(self.orbitRoot, "Relic" .. index,
-            model(orbitModels[index]), Vector3.ZERO, Vector3(0.12, 0.20, 0.12),
-            orbitMaterials[index])
-        self.orbiters[index] = { node = orbiter, phase = (index - 1) * 2.094, radius = 0.86 + index * 0.04 }
-    end
+    self.cloak.position = Vector3(0, 1.76, 0.17)
+    self.cloak.rotation = Quaternion(-14, Vector3.RIGHT)
+    AddPart(self.cloak, "CloakCloth", model("bannerCloth"), Vector3(0, -0.02, 0),
+        Vector3(1.20, 1.45, 1), clothRed)
+    AddPart(self.cloak, "CloakPinL", model("sphere", "Models/Sphere.mdl"),
+        Vector3(-0.24, 0.02, -0.02), Vector3(0.075, 0.075, 0.075), gold)
+    AddPart(self.cloak, "CloakPinR", model("sphere", "Models/Sphere.mdl"),
+        Vector3(0.24, 0.02, -0.02), Vector3(0.075, 0.075, 0.075), gold)
 
     local marker = CreateMaterial(0xe5a35d, 0.35, 0.05, 0xe5a35d, 0.45)
     marker.cullMode = CULL_NONE
@@ -408,7 +414,18 @@ function CameraPreviewController:FindStart()
             end
         end
     end
-    if room then return self:WorldAt(room.cx, room.cy, self.floor, 0) end
+    if room then
+        -- The entrance room centre carries the spawn-gate FX rig; offset the
+        -- start cell so the knight is not born inside the glowing portal.
+        for _, offset in ipairs({ { 2, 0 }, { -2, 0 }, { 0, 2 }, { 0, -2 }, { 0, 0 } }) do
+            local gx, gy = room.cx + offset[1], room.cy + offset[2]
+            if gx >= 0 and gy >= 0 and gx < self.dungeon.width and gy < self.dungeon.height
+                and self.layer.grid[gy * self.dungeon.width + gx + 1] == TILE_FLOOR then
+                return self:WorldAt(gx, gy, self.floor, 0)
+            end
+        end
+        return self:WorldAt(room.cx, room.cy, self.floor, 0)
+    end
 
     for cell, tile in ipairs(self.layer.grid) do
         if tile == TILE_FLOOR then
@@ -540,7 +557,9 @@ function CameraPreviewController:MoveCharacter(dx, dz)
 end
 
 function CameraPreviewController:SyncCharacterVisibility()
-    self.thirdPersonRoot:SetEnabled(self.mode == "third")
+    -- SetDeepEnabled is required here: the visual is a nested tree of model
+    -- nodes, and SetEnabled on the group does not suppress descendant meshes.
+    self.thirdPersonRoot:SetDeepEnabled(self.mode == "third")
 end
 
 function CameraPreviewController:DesiredCamera()
@@ -562,7 +581,7 @@ function CameraPreviewController:DesiredCamera()
             math.sin(self.orbitPitch) * self.distance + 0.72,
             math.cos(self.yaw) * cp * self.distance
         )
-        desiredTarget = position + Vector3(0, 0.56, 0)
+        desiredTarget = position + Vector3(0, 0.82, 0)
     end
     local desiredRotation = Quaternion()
     desiredRotation:FromLookRotation((desiredTarget - desiredPosition):Normalized(), Vector3.UP)
@@ -584,7 +603,7 @@ function CameraPreviewController:Activate(mode)
     if self.phase == "idle" then
         self.observerPosition = Vector3(self.cameraNode.position.x, self.cameraNode.position.y, self.cameraNode.position.z)
         self.observerRotation = Quaternion(self.cameraNode.rotation)
-        self.root:SetEnabled(true)
+        self.root:SetDeepEnabled(true)
     end
     self.transitionPosition = Vector3(self.cameraNode.position.x, self.cameraNode.position.y, self.cameraNode.position.z)
     self.transitionRotation = Quaternion(self.cameraNode.rotation)
@@ -616,7 +635,7 @@ function CameraPreviewController:UpdateTransition(timeStep)
         if self.transition >= 1 then
             self.phase = "idle"
             self.mode = nil
-            self.root:SetEnabled(false)
+            self.root:SetDeepEnabled(false)
             self:Notify(false)
             print("[CameraPreview] idle")
         end
@@ -648,32 +667,18 @@ function CameraPreviewController:UpdateCharacterAnimation()
     local shoulderSwing = stride * (self.running and 7 or 4)
     self.shoulderL.rotation = Quaternion(-shoulderSwing, Vector3.FORWARD)
     self.shoulderR.rotation = Quaternion(shoulderSwing, Vector3.FORWARD)
-    self.elbowL.rotation = Quaternion(14 + math.max(0, -stride) * 8, Vector3.RIGHT)
-    self.elbowR.rotation = Quaternion(14 + math.max(0, stride) * 8, Vector3.RIGHT)
+    self.elbowL.rotation = Quaternion(12 + math.max(0, -stride) * 8, Vector3.RIGHT)
+    self.elbowR.rotation = Quaternion(12 + math.max(0, stride) * 8, Vector3.RIGHT)
     self.rig.rotation = Quaternion(
         (self.moving and math.sin(time * (self.running and 13 or 9)) * (self.running and 4 or 2) or 0),
         Vector3.FORWARD)
-    self.rig.scale = Vector3(1, 1 + pulse * 0.025, 1)
+    self.rig.scale = Vector3(1, 1 + pulse * 0.02, 1)
 
     self.cloak.rotation = Quaternion(
-        math.sin(time * 2.1 + 0.7) * (self.moving and (self.running and 13 or 8) or 4),
+        -14 - (self.moving and (self.running and 14 or 8) or 0)
+            + math.sin(time * 2.1 + 0.7) * (self.moving and (self.running and 5 or 3) or 2),
         Vector3.RIGHT)
-    self.cloak.position = Vector3(0, 1.07 + math.sin(time * 1.7) * 0.018,
-        0.32 + (self.moving and (self.running and 0.07 or 0.04) or 0))
-
-    self.runeSpinner.rotation = Quaternion(math.deg(time * 42), Vector3.UP)
-    self.core.scale = Vector3(0.94 + pulse * 0.13, 0.94 + pulse * 0.13, 0.94 + pulse * 0.13)
-    self.weapon.rotation = Quaternion(-8 + math.sin(time * 2.8) * 2.5, Vector3.FORWARD)
-
-    for _, orbiter in ipairs(self.orbiters) do
-        local angle = time * (self.running and 1.75 or 1.0) + orbiter.phase
-        local height = 1.10 + math.sin(time * 2.0 + orbiter.phase) * 0.18
-        local radius = orbiter.radius + pulse * 0.035
-        orbiter.node.position = Vector3(math.cos(angle) * radius, height, math.sin(angle) * radius)
-        local scale = 0.86 + pulse * 0.24
-        orbiter.node.scale = Vector3(scale, scale * 1.45, scale)
-        orbiter.node.rotation = Quaternion(math.deg(angle * 1.8), Vector3.UP)
-    end
+    self.weapon.rotation = Quaternion(-14 + math.sin(time * 2.8) * 2.5, Vector3.FORWARD)
 end
 
 function CameraPreviewController:Update(timeStep)

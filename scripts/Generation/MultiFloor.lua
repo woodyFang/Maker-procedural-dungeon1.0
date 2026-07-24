@@ -180,6 +180,7 @@ function MultiFloor.CreateLayer(floor, width, height)
         corridor = {},
         corridorOwner = {},
         doorway = {},
+        doorFlankMask = {},
         stairMask = {},
         stairwellMask = {},
         stairClearance = {},
@@ -410,9 +411,17 @@ local function StampCell(layer, x, y, width, owner, mapWidth, mapHeight)
             local nx, ny = x + ox, y + oy
             if InBounds(nx, ny, mapWidth, mapHeight) then
                 local cell = Index(nx, ny, mapWidth)
-                layer.grid[cell] = MultiFloor.Tiles.FLOOR
-                layer.corridor[cell] = true
-                if not layer.corridorOwner[cell] then layer.corridorOwner[cell] = owner end
+                -- Brush spill must not consume the wall cells reserved for a
+                -- door frame's posts; a corridor turning right at a mouth used
+                -- to shave the flank wall and leave the frame floating. The
+                -- centreline itself still carves through (path continuity).
+                local protected = layer.doorFlankMask and layer.doorFlankMask[cell]
+                    and not (nx == x and ny == y)
+                if not protected then
+                    layer.grid[cell] = MultiFloor.Tiles.FLOOR
+                    layer.corridor[cell] = true
+                    if not layer.corridorOwner[cell] then layer.corridorOwner[cell] = owner end
+                end
             end
         end
     end
@@ -1379,8 +1388,36 @@ function MultiFloor.Build(options)
     end)
 
     local connectors = {}
+    -- Only edges with an actual corridor/connector are returned. Optional
+    -- loops that cannot receive a wall-supported door are intentionally omitted.
+    local resolvedEdges = {}
+    -- Reserve the two wall cells flanking a resolved opening before anything
+    -- is carved, so neither this corridor's own turn nor a later edge's brush
+    -- can hollow out the masonry the door posts must rest against.
+    local function ReserveDoorFlanks(layer, point, doorWidth)
+        local normal = DoorContract.SideNormal(point.side)
+        if not normal then return end
+        local offsets = DoorContract.WidthOffsets(doorWidth)
+        local first, last = offsets[1], offsets[#offsets]
+        if not first or not last then return end
+        local tangentX = normal.y ~= 0 and 1 or 0
+        local tangentY = normal.x ~= 0 and 1 or 0
+        local anchorX = math.floor((tonumber(point.x) or 0) + 0.5)
+        local anchorY = math.floor((tonumber(point.y) or 0) + 0.5)
+        for _, tangentOffset in ipairs({ first - 1, last + 1 }) do
+            local wallX = anchorX + tangentX * tangentOffset + normal.x
+            local wallY = anchorY + tangentY * tangentOffset + normal.y
+            if InBounds(wallX, wallY, width, height) then
+                local cell = Index(wallX, wallY, width)
+                if layer.grid[cell] ~= MultiFloor.Tiles.FLOOR then
+                    layer.doorFlankMask[cell] = true
+                end
+            end
+        end
+    end
     for _, edge in ipairs(activeEdges) do
         local roomA, roomB = rooms[edge.a], rooms[edge.b]
+        local optionalLoop = edge.isLoop and not edge.isCritical and not edge.isManual
         if edge.kind == "corridor" then
             local layer = layers[edge.floor + 1]
             local defaultStart = RoomDoorPoint(roomA, roomB, 0)
@@ -1401,43 +1438,56 @@ function MultiFloor.Build(options)
                 end
             end
             if not startPoint or not goalPoint then
-                errors[#errors + 1] = "edge " .. edge.id .. " has no legal wall door"
-            else
-                local startApproach = DoorContract.DoorApproach(startPoint)
-                local goalApproach = DoorContract.DoorApproach(goalPoint)
-                local route = nil
-                if edge.isEditor and edge.bends and #edge.bends > 0 then
-                    local points = { startPoint, startApproach }
-                    for _, bend in ipairs(edge.bends) do
-                        points[#points + 1] = { x = bend.x, y = bend.y }
-                    end
-                    points[#points + 1], points[#points + 1] = goalApproach, goalPoint
-                    route = {
-                        points = points,
-                        cells = CarvePolyline(layer, points, corridorWidth, edge.id, width, height),
-                    }
-                else
-                    route = MultiFloor.RouteAStar(layer, startApproach, goalApproach, {
-                        width = width, height = height, startRoomId = roomA.id, goalRoomId = roomB.id,
-                    })
-                    if route then
-                        local points = { startPoint }
-                        for _, point in ipairs(route.points or {}) do points[#points + 1] = point end
-                        points[#points + 1] = goalPoint
-                        route.points = points
-                        route.cells = CarvePolyline(layer, points, corridorWidth, edge.id, width, height)
-                    end
+                edge.skipped = optionalLoop or nil
+                if not optionalLoop then
+                    resolvedEdges[#resolvedEdges + 1] = edge
+                    errors[#errors + 1] = "edge " .. edge.id .. " has no legal wall door"
                 end
-                if route then
-                    DoorContract.MarkDoor(layer, width, height, startPoint, corridorWidth)
-                    DoorContract.MarkDoor(layer, width, height, goalPoint, corridorWidth)
-                    local startArch = DoorContract.BuildArch(layer, width, height, roomA,
-                        startPoint, corridorWidth)
-                    local goalArch = DoorContract.BuildArch(layer, width, height, roomB,
-                        goalPoint, corridorWidth)
-                    if not startArch or not goalArch then
+            else
+                -- Validate both arches before carving. A loop that cannot
+                -- receive two wall-supported posts is omitted entirely rather
+                -- than leaving a corridor with a floating or skewed frame.
+                local startArch = DoorContract.BuildArch(layer, width, height, roomA,
+                    startPoint, corridorWidth)
+                local goalArch = DoorContract.BuildArch(layer, width, height, roomB,
+                    goalPoint, corridorWidth)
+                if not startArch or not goalArch then
+                    edge.skipped = optionalLoop or nil
+                    if not optionalLoop then
+                        resolvedEdges[#resolvedEdges + 1] = edge
                         errors[#errors + 1] = "edge " .. edge.id .. " has no wall interface"
+                    end
+                else
+                    ReserveDoorFlanks(layer, startPoint, corridorWidth)
+                    ReserveDoorFlanks(layer, goalPoint, corridorWidth)
+                    local startApproach = DoorContract.DoorApproach(startPoint)
+                    local goalApproach = DoorContract.DoorApproach(goalPoint)
+                    local route = nil
+                    if edge.isEditor and edge.bends and #edge.bends > 0 then
+                        local points = { startPoint, startApproach }
+                        for _, bend in ipairs(edge.bends) do
+                            points[#points + 1] = { x = bend.x, y = bend.y }
+                        end
+                        points[#points + 1], points[#points + 1] = goalApproach, goalPoint
+                        route = {
+                            points = points,
+                            cells = CarvePolyline(layer, points, corridorWidth, edge.id, width, height),
+                        }
                     else
+                        route = MultiFloor.RouteAStar(layer, startApproach, goalApproach, {
+                            width = width, height = height, startRoomId = roomA.id, goalRoomId = roomB.id,
+                        })
+                        if route then
+                            local points = { startPoint }
+                            for _, point in ipairs(route.points or {}) do points[#points + 1] = point end
+                            points[#points + 1] = goalPoint
+                            route.points = points
+                            route.cells = CarvePolyline(layer, points, corridorWidth, edge.id, width, height)
+                        end
+                    end
+                    if route then
+                        DoorContract.MarkDoor(layer, width, height, startPoint, corridorWidth)
+                        DoorContract.MarkDoor(layer, width, height, goalPoint, corridorWidth)
                         layer.arches[#layer.arches + 1] = startArch
                         layer.arches[#layer.arches + 1] = goalArch
                         edge.route = route.points
@@ -1449,12 +1499,18 @@ function MultiFloor.Build(options)
                         edge.resolvedDoorB = {
                             x = goalPoint.x, y = goalPoint.y, side = goalPoint.side,
                         }
+                        resolvedEdges[#resolvedEdges + 1] = edge
+                    else
+                        edge.skipped = optionalLoop or nil
+                        if not optionalLoop then
+                            resolvedEdges[#resolvedEdges + 1] = edge
+                            errors[#errors + 1] = "edge " .. edge.id .. " has no A* route"
+                        end
                     end
-                else
-                    errors[#errors + 1] = "edge " .. edge.id .. " has no A* route"
                 end
             end
         else
+            ---@type table|nil
             local connector = nil
             local alternates = edge.stairAlternates or { { a = edge.a, b = edge.b } }
             for _, pair in ipairs(alternates) do
@@ -1462,12 +1518,53 @@ function MultiFloor.Build(options)
                 connector = PlaceConnector(edge, rooms, layers, width, height, #connectors + 1, floorHeight)
                 if connector then break end
             end
-            if connector then connectors[#connectors + 1] = connector
-            else errors[#errors + 1] = "edge " .. edge.id .. " has no legal stair candidate" end
+            if connector then
+                connectors[#connectors + 1] = connector
+                resolvedEdges[#resolvedEdges + 1] = edge
+            else
+                resolvedEdges[#resolvedEdges + 1] = edge
+                errors[#errors + 1] = "edge " .. edge.id .. " has no legal stair candidate"
+            end
         end
     end
     for _, layer in ipairs(layers) do BuildWalls(layer, width, height) end
     ApplyThemeCarving(layers, rooms, width, height, options)
+    -- Door frames were validated when each edge resolved, but corridors carved
+    -- later can consume the wall cells flanking an earlier opening. Re-check
+    -- every arch against the FINAL grid: a frame whose posts cannot rest on
+    -- solid wall on both sides is omitted entirely instead of rendered afloat.
+    local function FrameFlanksSupported(layer, arch)
+        if not arch.anchorX or not arch.anchorY or not arch.nx then return true end
+        local offsets = DoorContract.WidthOffsets(arch.len or arch.corridorWidth or 2)
+        local first, last = offsets[1], offsets[#offsets]
+        if not first or not last then return true end
+        local tangentX = arch.ny ~= 0 and 1 or 0
+        local tangentY = arch.nx ~= 0 and 1 or 0
+        for _, tangentOffset in ipairs({ first - 1, last + 1 }) do
+            local flankX = arch.anchorX + tangentX * tangentOffset
+            local flankY = arch.anchorY + tangentY * tangentOffset
+            local wallX, wallY = flankX + arch.nx, flankY + arch.ny
+            if not InBounds(flankX, flankY, width, height)
+                or not InBounds(wallX, wallY, width, height)
+                or (layer.roomId[Index(flankX, flankY, width)] or 0) ~= (arch.roomId or 0)
+                or layer.grid[Index(wallX, wallY, width)] ~= MultiFloor.Tiles.WALL then
+                return false
+            end
+        end
+        return true
+    end
+    for _, layer in ipairs(layers) do
+        local kept, dropped = {}, 0
+        for _, arch in ipairs(layer.arches) do
+            if FrameFlanksSupported(layer, arch) then
+                kept[#kept + 1] = arch
+            else
+                dropped = dropped + 1
+            end
+        end
+        layer.arches = kept
+        layer.droppedArches = dropped
+    end
     for _, connector in ipairs(connectors) do
         local lowerLayer = layers[connector.fromFloor + 1]
         local upperLayer = layers[connector.toFloor + 1]
@@ -1502,7 +1599,7 @@ function MultiFloor.Build(options)
     for _, id in ipairs(validation.unreachableConnectors) do errors[#errors + 1] = "connector " .. id .. " is unreachable" end
     for _, id in ipairs(validation.invalidConnectors) do errors[#errors + 1] = "connector " .. id .. " violates spatial contract" end
     return {
-        layers = layers, edges = activeEdges, connectors = connectors,
+        layers = layers, edges = resolvedEdges, connectors = connectors,
         bfs3 = validation.distance, reach = validation.reach,
         stairAudits = validation.stairAudits,
         passedStairs = validation.passedStairs,

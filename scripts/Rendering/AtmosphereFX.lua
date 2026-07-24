@@ -1,8 +1,8 @@
 -- Dynamic atmosphere layer for the ruins ("遗迹") setting.
 --
 -- Everything the static batcher cannot express lives here: the ambient
--- particle field, god-ray light columns, the spinning entrance gate, floating
--- shrine crystals, boss rune sigils, grave wisps and the global emissive
+-- particle field, real volumetric light columns, the spinning entrance gate,
+-- floating shrine crystals, boss rune sigils, grave wisps and the global emissive
 -- breathing pulse. The pass structure is GENERIC — which rooms receive which
 -- effect comes from EnvironmentProfiles.<setting>.atmosphere, and every color,
 -- count and envelope comes from the palette (theme.particles / theme.fx), so
@@ -22,6 +22,7 @@
 local MultiFloor = require("Generation.MultiFloor")
 local Random = require("Generation.Random")
 local EnvironmentProfiles = require("Config.EnvironmentProfiles")
+local VolumetricFog = require("Rendering.VolumetricFog")
 local MaterialRules = require("Rendering.ProceduralMaterialRules")
 
 local AtmosphereFX = {}
@@ -63,12 +64,6 @@ local function GlowMaterial(color, strength, alpha)
     material:SetShaderParameter("Roughness", Variant(0.4))
     material:SetShaderParameter("MatEmissiveColor", Variant(ChannelColor(
         color, (strength or 1.5) * ATMOSPHERE_EMISSIVE_SCALE)))
-    return material
-end
-
-local function RayMaterial(color, alpha)
-    local material = GlowMaterial(color, 1.1, alpha or 0.12)
-    material.cullMode = CULL_NONE
     return material
 end
 
@@ -170,10 +165,8 @@ end
 local function BuildGodRays(fx, args, spec, rng)
     local raySpec = args.theme.fx and args.theme.fx.godRays
     local policy = spec.godRays
-    if type(raySpec) ~= "table" or not policy then return end
-    local model = args.modelCache:Get("godRay")
-    if not model then return end
-    local material = RayMaterial(raySpec.color or 0xffffff, raySpec.alpha or 0.12)
+    local config = args.volumetricFogConfig or {}
+    if type(raySpec) ~= "table" or not policy or not args.volumetricFogEnabled then return end
 
     local candidates = {}
     local RANK = { boss = 1, shrine = 2, entrance = 3, treasure = 4 }
@@ -199,16 +192,44 @@ local function BuildGodRays(fx, args, spec, rng)
             perFloorCount[room.floor] = floorCount + 1
             total = total + 1
             local wx, wy, wz = args.worldPosition(room.cx, room.cy, room.floor, 0)
-            -- Model spans -3..+3; scale to fill ~92% of the storey clearance.
-            local span = 4.6 * vs
+            local span = (config.localVolumeHeight or 4.6) * vs
             local radius = math.min(1.0, math.min(room.w, room.h) * 0.09)
-            local node = AddNode(fx, fx.root, "GodRay-" .. room.id, model, material,
-                wx + rng:Float(-0.8, 0.8), wy + span * 0.5, wz + rng:Float(-0.8, 0.8),
-                radius, span / 6, radius)
-            fx.rays[#fx.rays + 1] = {
-                node = node, ph = rng:Float(0, TAU), yaw = rng:Float(0, 360),
-                sx = radius, sy = span / 6,
+            local x = wx + rng:Float(-0.8, 0.8)
+            local z = wz + rng:Float(-0.8, 0.8)
+
+            -- A LocalFogVolume supplies the actual medium. The spotlight above
+            -- it is a real participating light, so walls and shadows shape the
+            -- beam instead of a translucent cone mesh.
+            local volumeNode = fx.root:CreateChild("GodRayFog-" .. room.id)
+            volumeNode.position = Vector3(x, wy + span * 0.5, z)
+            volumeNode.scale = Vector3(radius, span * 0.5, radius)
+            local volume = volumeNode:CreateComponent("LocalFogVolume")
+            volume.albedo = Color(1, 1, 1, 1)
+            volume.emissive = Color(0, 0, 0, 1)
+            volume.radialExtinction = config.localVolumeExtinction or 0.12
+            volume.heightExtinction = config.localVolumeHeightExtinction or 0
+            volume.heightFalloff = config.localVolumeHeightFalloff or 0
+            volume.radialFalloff = config.localVolumeFalloff or 1.35
+            volume.phaseG = config.localVolumePhaseG or config.phaseG or 0.58
+            volume.maxDrawDistance = config.viewDistance or 90.0
+
+            local lightNode = fx.root:CreateChild("GodRayLight-" .. room.id)
+            lightNode.position = Vector3(x, wy + span * 0.96, z)
+            lightNode.direction = Vector3(0, -1, 0)
+            local light = lightNode:CreateComponent("Light")
+            light.lightType = LIGHT_SPOT
+            light.color = ChannelColor(raySpec.color or 0xffffff, 1.0)
+            light.brightness = 0
+            light.range = span * 1.30
+            light.fov = config.localLightFov or 34.0
+            light.castShadows = false
+            VolumetricFog.ConfigureLight(light, true,
+                raySpec.intensity or config.localLightIntensity or 2.4, false)
+            fx.lights[#fx.lights + 1] = {
+                light = light, base = raySpec.intensity or config.localLightIntensity or 2.4,
+                ph = rng:Float(0, TAU),
             }
+            fx.volumetricVolumeCount = fx.volumetricVolumeCount + 1
         end
     end
 end
@@ -275,6 +296,8 @@ local function BuildPortal(fx, args, prop, layer, rng)
     light.brightness = 0
     light.range = 6.5
     light.castShadows = false
+    VolumetricFog.ConfigureLight(light, args.volumetricFogEnabled,
+        args.volumetricFogConfig and args.volumetricFogConfig.portalLightIntensity or 1.0, false)
     fx.lights[#fx.lights + 1] = { light = light, base = 2.3, ph = rng:Float(0, TAU) }
 end
 
@@ -378,7 +401,7 @@ end
 
 function AtmosphereFX.Build(args)
     local profile = EnvironmentProfiles.Resolve(args.settingKey)
-    local spec = profile.atmosphere
+    local spec = profile["atmosphere"]
     if not spec then return nil end
 
     local fx = {
@@ -387,9 +410,9 @@ function AtmosphereFX.Build(args)
         revealTime = args.revealTime or 0,
         revealed = (args.revealTime or 0) <= 0,
         verticalScale = args.dungeon.floorHeight / MultiFloor.SOURCE_FLOOR_HEIGHT,
-        nodeCount = 0,
+        nodeCount = 0, volumetricVolumeCount = 0,
         particles = {}, particleKind = 0,
-        rays = {}, spinners = {}, bobbers = {}, orbiters = {},
+        spinners = {}, bobbers = {}, orbiters = {},
         wisps = {}, lights = {}, pulseNodes = {},
         pulse = nil,
     }
@@ -486,16 +509,6 @@ function AtmosphereFX.Update(fx, timeStep)
         and math.min(1, (time - fx.revealTime) / 0.6) or 1
 
     UpdateParticles(fx, time)
-
-    for _, ray in ipairs(fx.rays) do
-        ray.node.rotation = Quaternion(
-            math.sin(time * 0.31 + ray.ph) * 2.4,
-            ray.yaw + time * 4.0,
-            math.cos(time * 0.27 + ray.ph) * 2.4)
-        local widen = 1 + math.sin(time * 0.8 + ray.ph) * 0.06
-        scratchScale.x, scratchScale.y, scratchScale.z = ray.sx * widen, ray.sy, ray.sx * widen
-        ray.node.scale = scratchScale
-    end
 
     for _, spinner in ipairs(fx.spinners) do
         spinner.angle = (spinner.angle + spinner.rate * timeStep) % 360

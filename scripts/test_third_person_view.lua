@@ -45,8 +45,8 @@ function HandlePreviewSmokeUpdate(eventType, eventData)
     if settled < 0.8 then return end
 
     local pitch = app.preview.orbitPitch
-    if math.abs(pitch - 0.96) > 0.001 then
-        Fail(string.format("orbitPitch expected 0.96 got %.3f", pitch))
+    if math.abs(pitch - math.rad(50)) > 0.001 then
+        Fail(string.format("orbitPitch expected %.3f got %.3f", math.rad(50), pitch))
     end
     local screenshot = Image()
     if not graphics:TakeScreenShot(screenshot) or not screenshot:SavePNG(".tmp/third-person-view.png") then

@@ -1,6 +1,7 @@
 local Themes = require("Config.Themes")
 local ThemePacks = require("Config.ThemePacks")
 local TopicSeeds = require("Config.TopicSeeds")
+local RoomGroupColors = require("Config.RoomGroupColors")
 
 local BuiltinRoomRules = {
     SCHEMA_VERSION = 2,
@@ -125,6 +126,34 @@ local TEMPLE_ROOMS = {
     },
 }
 
+-- Combat/secret rooms share the processional room identity in the UI, but
+-- their physical composition rotates between several temple-specific courts.
+-- Every variant keeps a pillar lattice as the common architectural grammar and
+-- adds a different focal/edge story so repeated rooms remain recognizable.
+local TEMPLE_VISUAL_VARIANTS = {
+    ["processional-ruin"] = {
+        {
+            Rule("pillar", 4, 1.0, 0.94, 1.06,
+                { layout = "grid", step = 3, centered = true, skipCenter = true, rot = 0, max = 4 }),
+            Rule("archRuin", 1, 1.0, 0.95, 1.10, { layout = "focal", tries = 30 }),
+            Rule("templeUrn", 2, 1.0, 0.80, 0.98, { layout = "perimeter", step = 4, max = 2 }),
+        },
+        {
+            Rule("pillar", 4, 1.0, 0.94, 1.06,
+                { layout = "grid", step = 4, centered = true, skipCenter = true, rot = 0, max = 4 }),
+            Rule("obelisk", 4, 1.0, 0.88, 1.00,
+                { layout = "ring", radius = 2.8, angleJitter = false }),
+            Rule("brokenPillar", 1, 1.0, 0.90, 1.08, { layout = "edgeFocal", side = "north", edgeInset = 1, tries = 28 }),
+        },
+        {
+            Rule("pillar", 4, 1.0, 0.94, 1.06,
+                { layout = "grid", step = 3, centered = true, skipCenter = true, rot = 0, max = 4 }),
+            Rule("crystalCluster", 1, 1.0, 0.82, 1.02, { layout = "focal", tries = 30 }),
+            Rule("brokenPillar", 2, 1.0, 0.90, 1.12, { layout = "perimeter", step = 4, max = 2 }),
+        },
+    },
+}
+
 local HOSPITAL_ROOMS = {
     {
         key = "reception", name = "接待大厅", purpose = "承担入口、挂号、分诊和候诊功能。",
@@ -240,6 +269,17 @@ function BuiltinRoomRules.Get(settingKey)
     return REGISTRY[settingKey]
 end
 
+function BuiltinRoomRules.VisualVariants(settingKey, groupId)
+    if settingKey ~= "temple" or type(groupId) ~= "string" then return nil end
+    local prefix = "seed-" .. settingKey .. "-"
+    local key = groupId:sub(1, #prefix) == prefix and groupId:sub(#prefix + 1) or groupId
+    local variants = TEMPLE_VISUAL_VARIANTS[key]
+    if not variants then return nil end
+    local result = {}
+    for index, rules in ipairs(variants) do result[index] = CopyRules(rules) end
+    return result
+end
+
 function BuiltinRoomRules.Materialize(settingKey, topicId)
     local definitions = REGISTRY[settingKey]
     if not definitions then return nil, "未知题材生成体系：" .. tostring(settingKey) end
@@ -255,6 +295,7 @@ function BuiltinRoomRules.Materialize(settingKey, topicId)
             id = string.format("seed-%s-%s", settingKey, definition.key),
             topicId = topicId,
             name = definition.name,
+            color = RoomGroupColors.Default(definition, definition.sortOrder),
             prompt = string.format("题材“%s”中的%s。%s", setting.label, definition.name, definition.purpose),
             ruleClass = "specific-room",
             source = "seed",

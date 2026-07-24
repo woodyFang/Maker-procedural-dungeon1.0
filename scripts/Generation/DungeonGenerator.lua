@@ -6,6 +6,7 @@ local RoomLayout = require("Generation.RoomLayout")
 local Themes = require("Config.Themes")
 local ThemePacks = require("Config.ThemePacks")
 local EnvironmentProfiles = require("Config.EnvironmentProfiles")
+local BuiltinRoomRules = require("Config.BuiltinRoomRules")
 
 local DungeonGenerator = {}
 
@@ -556,24 +557,36 @@ local function AssignRoomGroups(rooms, groups)
     end
 
     local explicit = {}
+    local function BindGroup(room, group)
+        if not group then return end
+        room.roomGroupId = group.id
+        room.roomGroupColor = group.color
+        counts[group.id] = (counts[group.id] or 0) + 1
+    end
     for _, room in ipairs(rooms) do
         if room.roomGroupId then
             explicit[room.id] = true
-            if byId[room.roomGroupId] then counts[room.roomGroupId] = counts[room.roomGroupId] + 1 end
+            local group = byId[room.roomGroupId]
+            if group then
+                room.roomGroupColor = group.color
+                counts[room.roomGroupId] = counts[room.roomGroupId] + 1
+            end
         else
-            local selected = nil
+            local candidates = {}
             for _, group in ipairs(groups) do
                 if not group.defaultGroup and GroupSupportsRole(group, room.type) then
-                    selected = group
-                    break
+                    candidates[#candidates + 1] = group
                 end
+            end
+            local selected = nil
+            if #candidates > 0 then
+                -- Repeated rooms rotate through the authored semantic groups
+                -- deterministically instead of collapsing into one default room.
+                selected = candidates[((tonumber(room.id) or 1) - 1) % #candidates + 1]
             end
             selected = selected or (defaultGroup and GroupSupportsRole(defaultGroup, room.type) and defaultGroup or nil)
             selected = selected or defaultGroup
-            if selected then
-                room.roomGroupId = selected.id
-                counts[selected.id] = counts[selected.id] + 1
-            end
+            BindGroup(room, selected)
         end
     end
 
@@ -599,6 +612,7 @@ local function AssignRoomGroups(rooms, groups)
             if not candidate then break end
             counts[defaultGroup.id] = counts[defaultGroup.id] - 1
             candidate.roomGroupId = group.id
+            candidate.roomGroupColor = group.color
             counts[group.id] = counts[group.id] + 1
         end
     end
@@ -794,6 +808,18 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
         -- validity-checked closures above, so a layout can only choose cells.
         local layoutPlace = { at = AddPropAt, prop = AddProp }
 
+        -- Small rooms should keep a readable focal identity without becoming
+        -- storage closets full of props. Rule order is authored from the
+        -- strongest signature to the weakest supporting detail.
+        local function RoomDetailLevel(room)
+            local area = math.max(1, (room.w or 0) * (room.h or 0))
+            if room.denseDecoration and area >= 40 then return 4 end
+            if area < 40 then return 1 end
+            if area < 60 then return 2 end
+            if area < 90 then return 3 end
+            return 4
+        end
+
         local function DecorateHospitalRoom(room)
             local area = math.max(1, room.w * room.h)
             local roomy = area >= 95
@@ -906,6 +932,7 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
             -- 遗迹 (no roomSetPieces) keeps its original dressing while 神殿遗迹
             -- layers guardians, obelisks, arch ruins and crystal clusters on top.
             local setPieces = profile.roomSetPieces or {}
+            local detail = RoomDetailLevel(room)
             if room.type == ROOM_TYPES.ENTRANCE then
                 RoomLayout.focal(room, rng, { kind = "ring", rot = 0, tries = 24 }, layoutPlace)
             elseif room.type == ROOM_TYPES.BOSS then
@@ -919,20 +946,22 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
                         AddProp(room, guardian.kind, { rot = 0, scale = guardian.scale or 1.2, tries = 40 })
                     end
                 end
-                RoomLayout.ring(room, rng, {
-                    kind = "brazier", count = 6, angleSpan = 1,
-                    anchor = "bossCrystal", anchorScale = 1.15,
-                }, layoutPlace)
+                if detail >= 2 then
+                    RoomLayout.ring(room, rng, {
+                        kind = "brazier", count = 6, angleSpan = 1,
+                        anchor = "bossCrystal", anchorScale = 1.15,
+                    }, layoutPlace)
+                end
             elseif room.type == ROOM_TYPES.TREASURE then
                 RoomLayout.focal(room, rng, { kind = "chest", tries = 24 }, layoutPlace)
-                if setPieces.treasureFocal then
+                if detail >= 2 and setPieces.treasureFocal then
                     RoomLayout.focal(room, rng, {
                         kind = setPieces.treasureFocal.kind, count = setPieces.treasureFocal.count,
                         scaleMin = setPieces.treasureFocal.scaleMin,
                         scaleMax = setPieces.treasureFocal.scaleMax, tries = 30,
                     }, layoutPlace)
                 end
-                if setPieces.treasureGold then
+                if detail >= 3 and setPieces.treasureGold then
                     RoomLayout.focal(room, rng, {
                         kind = setPieces.treasureGold.kind, count = setPieces.treasureGold.count,
                         scaleMin = setPieces.treasureGold.scaleMin,
@@ -941,7 +970,7 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
                 end
             elseif room.type == ROOM_TYPES.SHRINE then
                 RoomLayout.focal(room, rng, { kind = "shrineCrystal", tries = 24 }, layoutPlace)
-                if setPieces.shrineFocal then
+                if detail >= 2 and setPieces.shrineFocal then
                     RoomLayout.focal(room, rng, {
                         kind = setPieces.shrineFocal.kind, count = setPieces.shrineFocal.count,
                         scaleMin = setPieces.shrineFocal.scaleMin,
@@ -1019,7 +1048,17 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
         local function DecorateRoomGroup(room, allowedProps)
             local group = roomGroupsById and roomGroupsById[room.roomGroupId] or nil
             if not group or type(group.propRules) ~= "table" or #group.propRules == 0 then return false end
-            for _, rule in ipairs(group.propRules) do
+            ---@type table<integer, table>
+            local rules = group.propRules
+            local variants = BuiltinRoomRules.VisualVariants(settingKey, group.id)
+            if variants and #variants > 0 then
+                local variantIndex = ((tonumber(room.id) or 1) - 1) % #variants + 1
+                rules = variants[variantIndex] or rules
+                room.visualVariant = variantIndex
+            end
+            local ruleLimit = math.min(#rules, RoomDetailLevel(room))
+            for index = 1, ruleLimit do
+                local rule = rules[index]
                 if not allowedProps or allowedProps[rule.kind] then ApplyRule(room, rule) end
             end
             return true
@@ -1033,7 +1072,18 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
             end
         end
 
+        local denseRoomChance = math.max(0, math.min(1, tonumber(profile.denseRoomChance) or 0))
+        local function MaybeMarkDenseRoom(room)
+            local area = math.max(1, (room.w or 0) * (room.h or 0))
+            local eligible = room.type == ROOM_TYPES.COMBAT
+                or room.type == ROOM_TYPES.SECRET
+                or room.type == ROOM_TYPES.TREASURE
+            room.denseDecoration = eligible and area >= 40
+                and denseRoomChance > 0 and rng:Chance(denseRoomChance) or false
+        end
+
         for _, room in ipairs(dungeon.rooms) do
+            if room.floor == layer.floor then MaybeMarkDenseRoom(room) end
             if room.floor == layer.floor then
                 if settingKey == "hospital" then
                     if not DecorateRoomGroup(room) then DecorateHospitalRoom(room) end
@@ -1075,24 +1125,92 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
         -- the prop, density and scale come from its EnvironmentProfile.
         local scatter = profile.floorScatter
         if scatter then
+            local groupSpec = type(scatter.group) == "table" and scatter.group or nil
+            local scatterGroupId = 0
+            local function ScatterScale()
+                local low = groupSpec and groupSpec.scaleMin or scatter.scaleMin or 0.6
+                local high = groupSpec and groupSpec.scaleMax or scatter.scaleMax or 1.35
+                local jitter = groupSpec and groupSpec.sizeJitter or 0
+                local scale = rng:Float(low, high)
+                if jitter > 0 then scale = scale * rng:Float(1 - jitter, 1 + jitter) end
+                return scale
+            end
+            local function AddScatterProp(x, y, roomId, groupId)
+                local cell = MultiFloor.Index(x, y, dungeon.width)
+                layer.props[#layer.props + 1] = {
+                    kind = scatter.kind, x = x, y = y, roomId = roomId,
+                    rot = rng:Float(0, math.pi * 2), scale = ScatterScale(),
+                    v = rng:Int(0, (scatter.variants or 3) - 1),
+                    scatterGroup = groupId,
+                }
+                occupied[cell] = true
+            end
+            local function CanGroupCell(cell, anchorCell, roomId)
+                return cell >= 1 and cell <= #layer.grid
+                    and layer.grid[cell] == MultiFloor.Tiles.FLOOR
+                    and not occupied[cell] and not layer.doorway[cell]
+                    and not layer.lakeMask[cell]
+                    and (layer.roomId[cell] or 0) == roomId
+                    and (layer.corridor[cell] or false) == (layer.corridor[anchorCell] or false)
+            end
+
             for cell, tile in ipairs(layer.grid) do
                 if tile == MultiFloor.Tiles.FLOOR and not occupied[cell]
                     and not layer.doorway[cell] and not layer.lakeMask[cell] then
                     local roomId = layer.roomId[cell] or 0
                     local room = roomId > 0 and dungeon.rooms[roomId] or nil
+                    local x, y = MultiFloor.Coordinates(cell, dungeon.width)
                     local chance = density * scatter.baseChance
                     if scatter.difficultyBias then
                         chance = chance * (1.25 - 0.6 * (room and room.difficulty or 0.5))
                     end
-                    if layer.corridor[cell] then chance = chance * scatter.corridorFactor end
+                    if layer.corridor[cell] then
+                        chance = chance * scatter.corridorFactor
+                    elseif room and scatter.edgeBias then
+                        local x0 = math.ceil(room.cx - room.w * 0.5) + 1
+                        local x1 = math.floor(room.cx + room.w * 0.5) - 1
+                        local y0 = math.ceil(room.cy - room.h * 0.5) + 1
+                        local y1 = math.floor(room.cy + room.h * 0.5) - 1
+                        local edgeDistance = math.min(x - x0, x1 - x, y - y0, y1 - y)
+                        local bias = math.max(0, math.min(1, scatter.edgeBias))
+                        local edgeFactor = edgeDistance <= 1 and (1 + bias)
+                            or (1 - bias * 0.55)
+                        chance = chance * edgeFactor
+                    end
                     if rng:Chance(chance) then
-                        local x, y = MultiFloor.Coordinates(cell, dungeon.width)
-                        layer.props[#layer.props + 1] = {
-                            kind = scatter.kind, x = x, y = y, roomId = roomId,
-                            rot = rng:Float(0, math.pi * 2),
-                            scale = rng:Float(scatter.scaleMin or 0.6, scatter.scaleMax or 1.35),
-                            v = rng:Int(0, (scatter.variants or 3) - 1),
-                        }
+                        if not groupSpec then
+                            AddScatterProp(x, y, roomId, nil)
+                        else
+                            scatterGroupId = scatterGroupId + 1
+                            local memberMin = math.max(1, math.floor(groupSpec.memberMin or 2))
+                            local memberMax = math.max(memberMin, math.floor(groupSpec.memberMax or 4))
+                            local memberCount = rng:Int(memberMin, memberMax)
+                            local radiusMin = groupSpec.radiusMin or 0.7
+                            local radiusMax = math.max(radiusMin, groupSpec.radiusMax or 2.2)
+                            AddScatterProp(x, y, roomId, scatterGroupId)
+                            for member = 2, memberCount do
+                                local placed = false
+                                for _ = 1, groupSpec.attempts or 10 do
+                                    local angle = rng:Float(0, math.pi * 2)
+                                    local distance = rng:Float(radiusMin, radiusMax)
+                                    local ox = math.floor(math.cos(angle) * distance + 0.5)
+                                    local oy = math.floor(math.sin(angle) * distance + 0.5)
+                                    if ox == 0 and oy == 0 then
+                                        ox = rng:Chance(0.5) and 1 or -1
+                                    end
+                                    local nx, ny = x + ox, y + oy
+                                    if nx >= 0 and ny >= 0 and nx < dungeon.width and ny < dungeon.height then
+                                        local nextCell = MultiFloor.Index(nx, ny, dungeon.width)
+                                        if CanGroupCell(nextCell, cell, roomId) then
+                                            AddScatterProp(nx, ny, roomId, scatterGroupId)
+                                            placed = true
+                                            break
+                                        end
+                                    end
+                                end
+                                if not placed then break end
+                            end
+                        end
                     end
                 end
             end
@@ -1494,8 +1612,8 @@ local function GenerateAttempt(seed, parameters)
         entrance, boss, maxDepth, criticalLength = AssignSemantics(rooms, edges, floorCount, floorSeeds)
     end
     local roomGroupsById, roomGroupCounts = AssignRoomGroups(rooms, parameters.roomGroups)
-    local settingKey = parameters.settingKey or "dungeon"
-    local theme = Themes.Resolve(settingKey, parameters.theme or "ancient")
+    local settingKey = parameters.settingKey or "temple"
+    local theme = Themes.Resolve(settingKey, parameters.theme or "templeGold")
     local environment = EnvironmentProfiles.Resolve(settingKey)
     -- Generic room-feature selector. The feature field, eligibility and theme
     -- flag are profile data; this is no longer a dungeon-only lake/grave branch.
@@ -1540,8 +1658,8 @@ local function GenerateAttempt(seed, parameters)
         floorHeight = floorHeight,
         rooms = rooms, edges = edges, entrance = entrance,
         changedFloor = changedFloor,
-        settingKey = parameters.settingKey or "dungeon",
-        theme = parameters.theme or "ancient", rng = carvingRngByFloor[1], rngByFloor = carvingRngByFloor,
+        settingKey = parameters.settingKey or "temple",
+        theme = parameters.theme or "templeGold", rng = carvingRngByFloor[1], rngByFloor = carvingRngByFloor,
     })
     local dungeon = {
         seed = seed, width = width, height = height, W = width, H = height,
@@ -1561,7 +1679,7 @@ local function GenerateAttempt(seed, parameters)
         stairAudits = multi.stairAudits,
         passedStairs = multi.passedStairs,
         totalStairs = multi.totalStairs,
-        theme = parameters.theme or "ancient",
+        theme = parameters.theme or "templeGold",
         roomCountsByFloor = roomCounts, loopRatesByFloor = loopRates,
         decorDensitiesByFloor = densities,
         roomGroupCounts = roomGroupCounts,
@@ -1573,7 +1691,7 @@ local function GenerateAttempt(seed, parameters)
         },
     }
     for _, edge in ipairs(multi.edges) do if edge.isLoop then dungeon.stats.loops = dungeon.stats.loops + 1 end end
-    Decorate(dungeon, floorSeeds, densities, parameters.settingKey or "dungeon", parameters.theme or "ancient",
+    Decorate(dungeon, floorSeeds, densities, parameters.settingKey or "temple", parameters.theme or "templeGold",
         roomGroupsById)
     local floorTiles = 0
     for _, layer in ipairs(dungeon.layers) do

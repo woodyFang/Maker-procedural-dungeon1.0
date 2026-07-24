@@ -73,7 +73,7 @@ local function Trim(value)
 end
 
 local function ResolveSettingKey(key)
-    return type(key) == "string" and Themes.settings[key] and key or "dungeon"
+    return type(key) == "string" and Themes.settings[key] and key or "temple"
 end
 
 -- This is the always-available executable contract. It deliberately reuses the

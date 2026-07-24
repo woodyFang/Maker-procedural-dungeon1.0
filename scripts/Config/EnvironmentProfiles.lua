@@ -24,7 +24,7 @@ local EnvironmentProfiles = {
 -- Layer vocabulary (all optional per theme):
 --
 -- floorScatter    Sprinkle a clutter prop across free floor cells to fill space.
---                 { kind, baseChance, corridorFactor, difficultyBias, scaleMin, scaleMax, variants }
+--                 { kind, baseChance, corridorFactor, difficultyBias, edgeBias, scaleMin, scaleMax, variants }
 --
 -- emphasis        Wall-mounted markers in high-tier rooms (banner-style focus).
 --                 { kind, minSpacing, roleTargets = { <roomType> = count } }
@@ -55,7 +55,8 @@ local EnvironmentProfiles = {
 -- atmosphere      Declares which AtmosphereFX passes run for this setting and
 --                 where. Palette-level colors/counts live in theme.particles /
 --                 theme.fx; this block only owns placement policy.
---                 { particles = { perFloorCap, totalCap, size, emissive },
+--                 { volumetricFog = { densityScale, viewDistance, phaseG, ... },
+--                   particles = { perFloorCap, totalCap, size, emissive },
 --                   godRays = { roomTypes, minDim, maxPerFloor },
 --                   runeCircles = { roomTypes },
 --                   animatedProps = { <propKind> = true, ... },
@@ -129,6 +130,15 @@ local PROFILES = {
                 poolModes = { [0] = 0.8, [3] = 0.45 }, kind = "crack",
                 scaleMin = 0.9, scaleMax = 1.5,
             },
+        },
+        -- Ruins mood layer: a restrained dust-and-firelight pass. Only the
+        -- ambient particle field (palette-authored kind/color) and the gentle
+        -- emissive breathing run here -- the showcase passes (god rays, rune
+        -- circles, animated portals/crystals, the froxel volume) stay temple
+        -- data and must not leak back into the plain dungeon.
+        atmosphere = {
+            particles = { perFloorCap = 200, totalCap = 360, size = 0.052, emissive = 1.7 },
+            pulse = { min = 0.94, max = 1.06, speed = 0.8 },
         },
     },
     -- Every setting below provides its own semantic assets for the same richness
@@ -217,12 +227,28 @@ PROFILES.temple = ExtendProfile(PROFILES.dungeon, {
         capGeometry = "templeWallCap", capMaterial = "templeCap",
         doorPostGeometry = "templeDoorPost", doorLintelGeometry = "templeDoorLintel",
         doorMaterial = "templeCap",
-        wallHeight = 2.0, wallHeightVariation = 0.06,
+        -- Raise the temple masonry toward the 5m storey ceiling so the room
+        -- reads as a monumental hall instead of a low partition.
+        wallHeight = 2.85, wallHeightVariation = 0.08,
+        doorLintelBase = 2.12, doorPostScaleY = 1.28, doorLintelScaleY = 1.12,
         -- Wall lamp: hanging gilt lantern whose glass capsule carries the glow
-        -- (and the point light) instead of an open flame pair.
+        -- (and the point light) instead of an open flame pair. The mount rises
+        -- with the taller wall while remaining below the minimum wall top.
+        torchMountHeight = 1.76,
         torchGeometry = "templeLantern", torchMaterial = "gild", torchColor = 0xb08d52,
-        torchGlow = { geometry = "templeLanternGlass", height = 1.675, out = 0.16 },
+        torchGlow = { geometry = "templeLanternGlass", height = 2.28, out = 0.16 },
         flameGeometry = "templeFlame", flameCoreGeometry = "templeFlameCore",
+    },
+    -- Temple floor debris is authored as small irregular clusters instead of
+    -- a uniform field of equally spaced, equally sized single pieces.
+    floorScatter = {
+        kind = "debris", baseChance = 0.012, corridorFactor = 0.30,
+        difficultyBias = true, edgeBias = 0.48,
+        scaleMin = 0.52, scaleMax = 1.18, variants = 3,
+        group = {
+            memberMin = 2, memberMax = 3, radiusMin = 0.7, radiusMax = 2.2,
+            attempts = 10, sizeJitter = 0.24,
+        },
     },
     -- Fluted columns with gilt rings and the great tripod cauldron replace
     -- the plain ruins pillar/brazier; the boss spike cluster becomes a dais
@@ -242,6 +268,9 @@ PROFILES.temple = ExtendProfile(PROFILES.dungeon, {
         colors = { 0x8d6738, 0x9b493f, 0x7562a8 },
         scales = { 0.85, 1.0, 1.2 },
     },
+    -- A small minority of sufficiently large rooms may become dense set-piece
+    -- spaces; most rooms keep the breathing-space detail tiers.
+    denseRoomChance = 0.14,
     -- Scene-richness overrides: gilt sigil plaques between the lanterns,
     -- ceremonial amphorae in deep rooms, and waymark runes along corridors.
     wallAccents = {
@@ -266,6 +295,18 @@ PROFILES.temple = ExtendProfile(PROFILES.dungeon, {
         brokenWallChance = 0.055, heightMin = 0.32, heightMax = 0.60, rubbleChance = 0.7,
     },
     atmosphere = {
+        -- Real froxel volume settings. The room policy below places local fog
+        -- media and spotlights in the authored key rooms.
+        volumetricFog = {
+            densityScale = 0.65, height = 2.0, heightFalloff = 0,
+            viewDistance = 90.0, startDistance = 1.5, phaseG = 0.58,
+            maxOpacity = 0.48, sunIntensity = 1.0, pointLightIntensity = 1.0,
+            localVolumeHeight = 4.6, localVolumeExtinction = 0.12,
+            localVolumeHeightExtinction = 0.0, localVolumeHeightFalloff = 0.0,
+            localVolumeFalloff = 1.35, localVolumePhaseG = 0.58,
+            localLightIntensity = 2.4, localLightFov = 34.0,
+            gridPixelSize = 16, gridSizeZ = 64, historyWeight = 0.90,
+        },
         particles = { perFloorCap = 240, totalCap = 420, size = 0.052, emissive = 1.9 },
         godRays = {
             roomTypes = { entrance = true, shrine = true, boss = true, treasure = true },

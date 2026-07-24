@@ -15,9 +15,12 @@ local TopicSeeds = require("Config.TopicSeeds")
 local RoomGroupColors = require("Config.RoomGroupColors")
 local DungeonGeometryLibrary = require("Rendering.DungeonGeometryLibrary")
 local ProceduralMaterialRules = require("Rendering.ProceduralMaterialRules")
+local EnvironmentProfiles = require("Config.EnvironmentProfiles")
+local VolumetricFog = require("Rendering.VolumetricFog")
 local LocalRequirementPlanner = require("AI.LocalRequirementPlanner")
 local PaletteAIProvider = require("AI.PaletteAIProvider")
 local PaletteData = require("Config.PaletteData")
+local AtmosphereProfiles = require("Config.AtmosphereProfiles")
 local EditorData = require("UI.Editor.EditorData")
 local UI = require("urhox-libs/UI")
 
@@ -72,11 +75,11 @@ function DungeonApp.new()
     return setmetatable({
         seed = 1337, floorCount = 1, floorHeight = MultiFloor.FLOOR_HEIGHT,
         currentFloor = 0, floorViewMode = "neighbors",
-        settingKey = "dungeon", themeKey = "ancient",
+        settingKey = "temple", themeKey = "templeGold",
         roomCounts = { 10 }, loopRates = { 15 }, decorDensities = { 60 },
         customSettings = TopicSeeds.Ensure({}), roomGroups = {}, customPalettes = {},
         nextCustomSettingId = 1, nextRoomGroupId = 1, nextCustomPaletteId = 1,
-        activeCustomSettingId = TopicSeeds.DEFAULT_ID, customSettingName = "遗迹", activeFixedThemeId = nil,
+        activeCustomSettingId = TopicSeeds.DEFAULT_ID, customSettingName = "神殿遗迹", activeFixedThemeId = nil,
         topicMode = TOPIC_MODE_CUSTOM, topicSelectionVersion = 0,
         customizationRevision = 0, customizationUpdatedAt = "", cloudLoadPending = false,
         customizationSaveInFlight = false, customizationSaveQueued = false, queuedSaveCallback = nil,
@@ -131,11 +134,10 @@ function DungeonApp:RestoreTopicSelection(selection)
     if record and record.packStatus ~= "draft" then
         self.topicMode = TOPIC_MODE_CUSTOM
         self.activeCustomSettingId, self.customSettingName = record.id, record.label
-        self.settingKey = Themes.settings[record.baseSettingKey] and record.baseSettingKey or "dungeon"
+        self.settingKey = Themes.settings[record.baseSettingKey] and record.baseSettingKey or "temple"
         self.floorHeight = MultiFloor.NormalizeFloorHeight(record.floorHeight)
-        local palettes = Themes.GetPalettes(self.settingKey)
         self.themeKey = Themes.IsPaletteForSetting(selection.themeKey, self.settingKey)
-            and selection.themeKey or palettes[1]
+            and selection.themeKey or Themes.DefaultPaletteForSetting(self.settingKey)
     end
 end
 
@@ -178,7 +180,7 @@ function DungeonApp:ApplyCustomizationData(data, preserveTopicSelection)
             self.settingKey = active.baseSettingKey
             self.floorHeight = MultiFloor.NormalizeFloorHeight(active.floorHeight)
             local validPalette = Themes.IsPaletteForSetting(self.themeKey, self.settingKey)
-            if not validPalette then self.themeKey = Themes.GetPalettes(self.settingKey)[1] end
+            if not validPalette then self.themeKey = Themes.DefaultPaletteForSetting(self.settingKey) end
         else
             local fallback = CustomizationStore.FindById(self.customSettings, TopicSeeds.DEFAULT_ID)
             if fallback then self:UseCustomSetting(fallback) end
@@ -457,10 +459,11 @@ function DungeonApp:UseCustomSetting(record)
     self.topicMode = TOPIC_MODE_CUSTOM
     self:MarkTopicSelectionChanged()
     self.activeCustomSettingId, self.customSettingName = record.id, record.label
-    self.settingKey = Themes.settings[record.baseSettingKey] and record.baseSettingKey or "dungeon"
+    self.settingKey = Themes.settings[record.baseSettingKey] and record.baseSettingKey or "temple"
     self.floorHeight = MultiFloor.NormalizeFloorHeight(record.floorHeight)
-    local palettes = Themes.GetPalettes(self.settingKey)
-    if not Themes.IsPaletteForSetting(self.themeKey, self.settingKey) then self.themeKey = palettes[1] end
+    if not Themes.IsPaletteForSetting(self.themeKey, self.settingKey) then
+        self.themeKey = Themes.DefaultPaletteForSetting(self.settingKey)
+    end
     return true
 end
 
@@ -783,7 +786,7 @@ function DungeonApp:CreatePanel()
             if not deleted then return false, "自定义配色不存在。" end
             local wasActive = self.themeKey == id
             Themes.SetCustomPalettes(self.customPalettes)
-            if wasActive then self.themeKey = Themes.GetPalettes(self.settingKey)[1] end
+            if wasActive then self.themeKey = Themes.DefaultPaletteForSetting(self.settingKey) end
             self.customizationRevision = self.customizationRevision + 1
             self:RefreshPanel()
             local saved, reason = self:SaveCustomizations(function(success, detail, target)
@@ -842,7 +845,7 @@ function DungeonApp:CreatePanel()
             end
             if group.topicId then group.settingKey = nil end
             if not group.topicId and not group.settingKey then
-                group.settingKey = "dungeon"
+                group.settingKey = self.settingKey or "temple"
             end
             group.color = RoomGroupColors.Parse(group.color,
                 RoomGroupColors.Default(group, #self.roomGroups + 1))
@@ -1043,7 +1046,7 @@ function DungeonApp:PreviewPaletteTheme(colors, settingKey, basePaletteKey)
     settingKey = Themes.settings[settingKey] and settingKey or self.settingKey
     local baseKey = basePaletteKey
     if not baseKey or not Themes.Get(baseKey) then
-        baseKey = Themes.GetPalettes(settingKey)[1] or self.themeKey
+        baseKey = Themes.DefaultPaletteForSetting(settingKey) or self.themeKey
     end
     local baseTheme = Themes.Get(baseKey)
     local previewTheme = PaletteData.CreateRuntimeTheme({
@@ -1079,6 +1082,14 @@ end
 
 function DungeonApp:ApplyTheme()
     local theme = Themes.Resolve(self.settingKey, self.themeKey)
+    local profile = EnvironmentProfiles.Resolve(self.settingKey)
+    local atmosphere = profile["atmosphere"]
+    local volumetricConfig = atmosphere and atmosphere.volumetricFog or nil
+    self.volumetricFogEnabled = volumetricConfig ~= nil
+    self.volumetricFogConfig = volumetricConfig
+    -- 氛围预设只提供强度与行为（明暗、雾浓、暗角、火光包络），色相始终来自配色。
+    local mood = AtmosphereProfiles.Resolve(self.settingKey, theme)
+    local lighting = AtmosphereProfiles.ComputeLighting(theme, mood)
     self:LoadLightingPreset(self.settingKey)
     -- 色调自带泛光默认值（遗迹 2.0 全系开启，自发光元素靠它出彩）。
     -- 手动开关（B 键）仍可在当前色调内覆盖，切换色调时重新采纳默认。
@@ -1088,20 +1099,44 @@ function DungeonApp:ApplyTheme()
     end
     self.zone.fogColor = HexColor(theme.fog, 1.0)
     self.zone.fogStart, self.zone.fogEnd = 0, 1000
-    self.zone.fogDensity = theme.fogDensity
+    -- The froxel volume owns temple atmosphere. Keep the legacy depth fog as a
+    -- fallback for settings that do not opt into the real volumetric profile.
+    self.zone.fogDensity = self.volumetricFogEnabled and 0 or lighting.fogDensity
     self.zone.ambientSource = AMBIENT_COLOR
     self.zone.ambientGradient = true
     self.zone.ambientStartColor = HexColor(theme.sky, 1.0)
     self.zone.ambientEndColor = HexColor(theme.ground, 1.0)
     self.zone.ambientColor = HexColor(theme.sky, 1.0)
-    self.zone.ambientIntensity = theme.ambient
+    self.zone.ambientIntensity = lighting.ambientIntensity
     self.zone.autoExposureEnabled = false
     self.zone.bloomPlusEnabled = self.postEnabled
+    self.zone.vignetteEnabled = lighting.vignetteIntensity > 0
+    if lighting.vignetteIntensity > 0 then
+        self.zone.vignetteIntensity = lighting.vignetteIntensity
+    end
+
+    local density = lighting.fogDensity * (volumetricConfig and volumetricConfig.densityScale or 1.0)
+    VolumetricFog.ConfigureRenderer(self.volumetricFogEnabled, volumetricConfig)
+    VolumetricFog.ConfigureZone(self.zone, self.volumetricFogEnabled, {
+        density = density,
+        height = volumetricConfig and volumetricConfig.height,
+        heightFalloff = volumetricConfig and volumetricConfig.heightFalloff,
+        viewDistance = volumetricConfig and volumetricConfig.viewDistance,
+        startDistance = volumetricConfig and volumetricConfig.startDistance,
+        phaseG = volumetricConfig and volumetricConfig.phaseG,
+        maxOpacity = volumetricConfig and volumetricConfig.maxOpacity,
+        absorptionColor = volumetricConfig and volumetricConfig.absorptionColor,
+        absorptionIntensity = volumetricConfig and volumetricConfig.absorptionIntensity,
+    }, HexColor(theme.sun, 1.0))
+
     self.sun.color = HexColor(theme.sun, 1.0)
-    self.sun.brightness = theme.sunIntensity
+    self.sun.brightness = lighting.sunBrightness
     self.sun.castShadows = true
     self.sun.shadowBias = BiasParameters(0.00025, 0.5)
     self.sun.shadowCascade = CascadeParameters(12.0, 45.0, 140.0, 0.0, 0.8)
+    VolumetricFog.ConfigureLight(self.sun, self.volumetricFogEnabled,
+        volumetricConfig and volumetricConfig.sunIntensity or 1.0,
+        self.volumetricFogEnabled)
 end
 
 function DungeonApp:RebuildView(animate)
@@ -1112,6 +1147,8 @@ function DungeonApp:RebuildView(animate)
         roomGroupsVisible = self.roomGroupsVisible,
         roomGroups = self:ActiveRoomGroups(),
         previewTheme = self.palettePreviewTheme,
+        volumetricFogEnabled = self.volumetricFogEnabled == true,
+        volumetricFogConfig = self.volumetricFogConfig,
         animate = animate == true,
     })
 end
@@ -1441,7 +1478,7 @@ function DungeonApp:HandleUpdate(timeStep)
                 end
                 local nextTopic = ready[nextIndex]
                 self:UseCustomSetting(nextTopic)
-                self.themeKey = Themes.GetPalettes(self.settingKey)[1]
+                self.themeKey = Themes.DefaultPaletteForSetting(self.settingKey)
                 self.editorRooms = nil; self:ApplyTheme(); self:Generate(false, false)
             end
         else

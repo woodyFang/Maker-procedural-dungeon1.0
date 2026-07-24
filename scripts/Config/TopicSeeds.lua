@@ -3,8 +3,9 @@ local MultiFloor = require("Generation.MultiFloor")
 local TopicSeeds = {
     SCHEMA_VERSION = 1,
     SOURCE = "seed-theme-v1",
-    DEFAULT_ID = "theme-dungeon",
-    order = { "theme-dungeon", "theme-temple", "theme-hospital", "theme-school" },
+    -- Fresh sessions and missing active-topic fallbacks start on 神殿遗迹.
+    DEFAULT_ID = "theme-temple",
+    order = { "theme-temple", "theme-dungeon", "theme-hospital", "theme-school" },
 }
 
 TopicSeeds.records = {

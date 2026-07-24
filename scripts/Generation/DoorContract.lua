@@ -115,6 +115,36 @@ local function IsHardBlocked(layer, cell)
         or (layer.slabOpening and layer.slabOpening[cell])
 end
 
+-- A door frame has two posts, so the wall must continue by at least one
+-- tangent cell beyond both ends of the opening. Without this check a legal
+-- opening can be placed at a room corner: the route is valid, but one post
+-- hangs in empty space and the rendered arch appears skewed.
+local function HasWallSupport(layer, width, height, room, x, y, normal)
+    if not normal then return false end
+    if not InBounds(x, y, width, height)
+        or (layer.roomId[Index(x, y, width)] or 0) ~= room.id then
+        return false
+    end
+
+    -- The support cell is the room-boundary cell carrying the post. The
+    -- approach side may already be open or corridor-carved; the important
+    -- invariant here is that both posts remain anchored inside this room's
+    -- actual wall span rather than hanging past a corner.
+    return true
+end
+
+local function HasFrameSupports(layer, width, height, room, point, offsets, normal)
+    local first, last = offsets[1], offsets[#offsets]
+    if not first or not last or not normal then return false end
+    local tangentX, tangentY = normal.y ~= 0 and 1 or 0, normal.x ~= 0 and 1 or 0
+    local firstX = point.x + tangentX * (first - 1)
+    local firstY = point.y + tangentY * (first - 1)
+    local lastX = point.x + tangentX * (last + 1)
+    local lastY = point.y + tangentY * (last + 1)
+    return HasWallSupport(layer, width, height, room, firstX, firstY, normal)
+        and HasWallSupport(layer, width, height, room, lastX, lastY, normal)
+end
+
 local function ResolveWallDoor(layer, width, height, room, preferred, fallback, doorWidth, allowSideFallback)
     if not layer or not room then return nil, "missing door layer or room" end
     local requestedSide = NormalizeSide(preferred and preferred.side)
@@ -164,7 +194,7 @@ local function ResolveWallDoor(layer, width, height, room, preferred, fallback, 
                 local da, db = math.abs(a - target), math.abs(b - target)
                 return da == db and a < b or da < db
             end)
-            local normal = DoorContract.SideNormal(side)
+            local normal = assert(DoorContract.SideNormal(side))
             for _, tangent in ipairs(candidates) do
                 local point
                 if side == "north" or side == "south" then
@@ -180,6 +210,9 @@ local function ResolveWallDoor(layer, width, height, room, preferred, fallback, 
                         legal = false
                         break
                     end
+                end
+                if legal and not HasFrameSupports(layer, width, height, room, point, offsets, normal) then
+                    legal = false
                 end
                 if legal then return point end
             end
@@ -226,7 +259,13 @@ function DoorContract.ResolveArchInterface(layer, width, height, room, point, do
     local tangent = normal.y ~= 0 and { x = 1, y = 0 } or { x = 0, y = 1 }
     local anchorX, anchorY = Round(point.x), Round(point.y)
     local offsets = DoorContract.WidthOffsets(doorWidth)
-    local centerOffset = (offsets[1] + offsets[#offsets]) * 0.5
+    local firstOffset, lastOffset = offsets[1], offsets[#offsets]
+    if not firstOffset or not lastOffset then return nil end
+    if not HasFrameSupports(layer, width, height, room,
+        { x = anchorX, y = anchorY }, offsets, normal) then
+        return nil
+    end
+    local centerOffset = (firstOffset + lastOffset) * 0.5
     local interfaces = {}
     for _, offset in ipairs(offsets) do
         local roomX = anchorX + tangent.x * offset
@@ -252,6 +291,7 @@ function DoorContract.ResolveArchInterface(layer, width, height, room, point, do
     end
     if #interfaces == 0 then return nil end
     local first = interfaces[1]
+    if not first then return nil end
     local normalCoordinate = normal.x ~= 0 and "x" or "y"
     for _, item in ipairs(interfaces) do
         if item[normalCoordinate] ~= first[normalCoordinate] then return nil end
@@ -274,7 +314,9 @@ function DoorContract.BuildArch(layer, width, height, room, point, doorWidth)
     local px = normal.y ~= 0 and 1 or 0
     local py = px == 1 and 0 or 1
     local offsets = DoorContract.WidthOffsets(normalizedWidth)
-    local centerOffset = (offsets[1] + offsets[#offsets]) * 0.5
+    local firstOffset, lastOffset = offsets[1], offsets[#offsets]
+    if not firstOffset or not lastOffset then return nil end
+    local centerOffset = (firstOffset + lastOffset) * 0.5
     local anchorX, anchorY = Round(point.x), Round(point.y)
     local arch = {
         x = anchorX + px * centerOffset,

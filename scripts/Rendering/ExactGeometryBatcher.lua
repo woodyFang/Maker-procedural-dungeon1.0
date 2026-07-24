@@ -672,7 +672,10 @@ function ExactGeometryBatcher:QueueTorch(layer, torch, floorSpacing)
     local torchGeometry = structure and structure.torchGeometry or "torch"
     local torchMaterial = structure and structure.torchMaterial or "trim"
     local torchColor = structure and structure.torchColor or 0x4a4038
-    self:Add(torchGeometry, torchMaterial, { x=mountX,y=baseY+1.02,z=mountZ,ry=ry,color=torchColor })
+    local torchMountHeight = structure and structure.torchMountHeight or 1.02
+    self:Add(torchGeometry, torchMaterial, {
+        x=mountX, y=baseY+torchMountHeight, z=mountZ, ry=ry, color=torchColor,
+    })
     -- A kit may enclose its light in fixture glass (hanging lantern) instead
     -- of the open flame pair; the glass also anchors the point light.
     local glowSpec = structure and structure.torchGlow
@@ -738,14 +741,21 @@ function ExactGeometryBatcher:QueueArch(layer, arch, floorSpacing)
     local openingWidth = (arch.len or 2) + 0.46
     local lintelBase = structure and structure.doorLintelBase
         or GeometryRules.DoorLintelBase(self.hospital)
+    local postScaleY = structure and structure.doorPostScaleY or 1
+    local lintelScaleY = structure and structure.doorLintelScaleY or 1
     if horizontal then
-        self:Add(post, material, {x=x-half,y=baseY,z=z,color=color})
-        self:Add(post, material, {x=x+half,y=baseY,z=z,color=color})
-        self:Add(lintel, material, {x=x,y=baseY+lintelBase,z=z,sx=openingWidth,color=color})
+        self:Add(post, material, {x=x-half,y=baseY,z=z,sy=postScaleY,color=color})
+        self:Add(post, material, {x=x+half,y=baseY,z=z,sy=postScaleY,color=color})
+        self:Add(lintel, material, {
+            x=x,y=baseY+lintelBase,z=z,sx=openingWidth,sy=lintelScaleY,color=color,
+        })
     else
-        self:Add(post, material, {x=x,y=baseY,z=z-half,color=color})
-        self:Add(post, material, {x=x,y=baseY,z=z+half,color=color})
-        self:Add(lintel, material, {x=x,y=baseY+lintelBase,z=z,sx=openingWidth,ry=math.pi*0.5,color=color})
+        self:Add(post, material, {x=x,y=baseY,z=z-half,sy=postScaleY,color=color})
+        self:Add(post, material, {x=x,y=baseY,z=z+half,sy=postScaleY,color=color})
+        self:Add(lintel, material, {
+            x=x,y=baseY+lintelBase,z=z,sx=openingWidth,sy=lintelScaleY,
+            ry=math.pi*0.5,color=color,
+        })
     end
 end
 

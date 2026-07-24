@@ -13,7 +13,7 @@ Themes.settings = {
         themePalettes = { "schoolDay", "schoolClassic", "schoolEvening" } },
 }
 Themes.defaultPalettes = { "ancient", "molten", "frost", "grim", "verdant" }
-Themes.settingOrder = { "dungeon", "temple", "hospital", "school" }
+Themes.settingOrder = { "temple", "dungeon", "hospital", "school" }
 Themes.order = { "ancient", "molten", "frost", "grim", "verdant",
     "templeGold", "templeMagma", "templeFrost", "templeGrim", "templeVine",
     "sterile", "abandoned", "emergency",
@@ -278,6 +278,11 @@ local DEFAULT_THEME_BY_SETTING = {
     hospital = "sterile",
     school = "schoolDay",
 }
+
+function Themes.DefaultPaletteForSetting(settingKey)
+    local resolved = Themes.GetSetting(settingKey).key
+    return DEFAULT_THEME_BY_SETTING[resolved] or DEFAULT_THEME_BY_SETTING.dungeon
+end
 
 function Themes.Resolve(settingKey, paletteKey)
     local resolvedSetting = Themes.GetSetting(settingKey).key

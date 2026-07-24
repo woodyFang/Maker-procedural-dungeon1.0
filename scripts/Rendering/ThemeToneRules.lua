@@ -95,7 +95,11 @@ function ThemeToneRules.ResolveFloorColor(theme, tone, context)
     local color = context.corridor and theme.corridor or theme.floor
     color = ApplyPaletteVisibility(theme, tone, color)
     local role = context.room and context.room.type
-    local semanticTint = role ~= "combat" and role and ROOM_TINT[role]
+    -- A planned room group carries its own muted identity color. Prefer it
+    -- over the generic role tint so several rooms with the same gameplay role
+    -- still read as different spaces; ungrouped rooms keep the legacy fallback.
+    local semanticTint = context.room and context.room.roomGroupColor
+        or (role ~= "combat" and role and ROOM_TINT[role])
     local semanticAmount = tonumber(tone.semanticTintAmount) or 0
     if semanticTint and semanticAmount > 0 then
         color = LerpColor(color, semanticTint, semanticAmount)

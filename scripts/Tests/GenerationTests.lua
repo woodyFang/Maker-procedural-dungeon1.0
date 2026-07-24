@@ -7,6 +7,7 @@ local GeometryRules = require("Generation.GeometryRules")
 local MaterialRules = require("Rendering.ProceduralMaterialRules")
 local ThemeToneRules = require("Rendering.ThemeToneRules")
 local EnvironmentProfiles = require("Config.EnvironmentProfiles")
+local AtmosphereProfiles = require("Config.AtmosphereProfiles")
 local PropBlueprints = require("Rendering.PropBlueprints")
 local DungeonGeometry = require("Rendering.DungeonGeometryLibrary")
 local CustomizationStore = require("Config.CustomizationStore")
@@ -482,9 +483,24 @@ local function TestTempleSettingCoverage()
     local profile = EnvironmentProfiles.Resolve("temple")
     Check(type(profile.atmosphere) == "table" and type(profile.structureRuin) == "table",
         "temple profile is missing its showcase layers")
+    Check(type(profile.atmosphere.volumetricFog) == "table"
+            and profile.atmosphere.volumetricFog.gridSizeZ >= 64
+            and profile.atmosphere.volumetricFog.localVolumeExtinction > 0,
+        "temple profile is missing real volumetric fog tuning")
+    Check(profile.structure.wallHeight >= 2.8
+            and profile.structure.doorLintelBase > 2.0
+            and profile.structure.torchMountHeight > 1.5,
+        "temple walls, door frames and lanterns did not rise with the taller hall")
     Check(profile.structure.floorInlay.material == "gild"
             and profile.spawnVisual.material == "gild",
         "temple floor matrix and spawn markers must use non-emissive gilt")
+    Check(type(profile.floorScatter.group) == "table"
+            and profile.floorScatter.group.memberMin >= 2
+            and profile.floorScatter.group.memberMax >= profile.floorScatter.group.memberMin,
+        "temple floor clutter must use irregular groups")
+    Check(type(profile.denseRoomChance) == "number"
+            and profile.denseRoomChance > 0.05 and profile.denseRoomChance < 0.25,
+        "temple dense-room ratio must remain a sparse minority")
     Check(profile.atmosphere.runeCircles.roomTypes.boss
             and not profile.atmosphere.runeCircles.roomTypes.shrine,
         "temple shrine floor must not receive a second emissive rune circle")
@@ -495,8 +511,17 @@ local function TestTempleSettingCoverage()
         Check(type(Themes.Get(paletteKey).clothAccent) == "number",
             "temple palette is missing a fabric accent color: " .. paletteKey)
     end
-    Check(EnvironmentProfiles.Resolve("dungeon").atmosphere == nil,
-        "plain dungeon profile must not carry the temple atmosphere")
+    local dungeonAtmosphere = EnvironmentProfiles.Resolve("dungeon").atmosphere
+    Check(type(dungeonAtmosphere) == "table"
+            and type(dungeonAtmosphere.particles) == "table"
+            and type(dungeonAtmosphere.pulse) == "table",
+        "plain dungeon lost its dust-and-firelight atmosphere layer")
+    Check(dungeonAtmosphere.godRays == nil and dungeonAtmosphere.runeCircles == nil
+            and dungeonAtmosphere.animatedProps == nil and dungeonAtmosphere.volumetricFog == nil,
+        "plain dungeon atmosphere must stay a dust layer, not clone the temple miracles")
+    Check(dungeonAtmosphere.particles.perFloorCap <= profile.atmosphere.particles.perFloorCap
+            and dungeonAtmosphere.particles.totalCap <= profile.atmosphere.particles.totalCap,
+        "plain dungeon particle budget must stay at or below the temple showcase budget")
 end
 
 local function TestSchoolThemePackStability()
@@ -735,6 +760,15 @@ local function TestBuiltinRoomRuleFlow()
     Check(shrineSeed and shrineSeed.propRules[2].layout == "ring"
             and shrineSeed.propRules[2].radius == 3,
         "temple structured room layout was not materialized")
+    local processionalVariants = BuiltinRoomRules.VisualVariants(
+        "temple", "seed-temple-processional-ruin")
+    Check(processionalVariants and #processionalVariants == 3,
+        "temple processional rooms did not expose distinct visual variants")
+    for _, variant in ipairs(processionalVariants or {}) do
+        local hasPillar = false
+        for _, rule in ipairs(variant) do if rule.kind == "pillar" then hasPillar = true end end
+        Check(hasPillar, "temple visual variant lost its common pillar grammar")
+    end
 
     local foundManual, foundHospitalBed, foundClassroom = false, false, false
     for _, room in ipairs(hospitalRooms) do
@@ -970,6 +1004,12 @@ local function TestDoorContract()
             and math.abs(arch.interfaceY - 6) < 0.000001,
         "door arch did not use the resolved wall interface")
 
+    local cornerRoom = { id = 2, cx = 6, cy = 6, w = 5, h = 1, floor = 0 }
+    local cornerLayer = CreateDoorTestLayer(width, height, cornerRoom)
+    local cornerDoor = DoorContract.ResolveWallDoor(cornerLayer, width, height, cornerRoom,
+        { x = 8, y = 6, side = "east" }, { x = 8, y = 6, side = "east" }, 1, false)
+    Check(not cornerDoor, "door was generated without wall support on both frame sides")
+
     local blocked = CreateDoorTestLayer(width, height, room)
     for y = 4, 8 do
         for x = 9, 10 do blocked.grid[y * width + x + 1] = MultiFloor.Tiles.WALL end
@@ -993,11 +1033,12 @@ local function TestThreeParityContracts()
             settingKey = "dungeon", theme = theme, decorDensity = 0.7, loopRate = 0.25,
         })
         CheckValid(dungeon, "three parity " .. theme)
-        local leaves, corridorEdges, archCount, featureCount = 0, 0, 0, 0
+        local leaves, corridorEdges, archCount, droppedArches, featureCount = 0, 0, 0, 0, 0
         for _, room in ipairs(dungeon.rooms) do if room.degree == 1 then leaves = leaves + 1 end end
         for _, edge in ipairs(dungeon.edges) do if edge.kind == "corridor" then corridorEdges = corridorEdges + 1 end end
         for _, layer in ipairs(dungeon.layers) do
             archCount = archCount + #layer.arches
+            droppedArches = droppedArches + (layer.droppedArches or 0)
             for _, arch in ipairs(layer.arches) do
                 Check(arch.interfaceX ~= nil and arch.interfaceY ~= nil
                         and arch.anchorX ~= nil and arch.anchorY ~= nil,
@@ -1013,8 +1054,15 @@ local function TestThreeParityContracts()
             end
         end
         Check(leaves >= 3, theme .. ": loop insertion removed too many leaf rooms")
-        Check(archCount == corridorEdges * 2,
-            string.format("%s: expected two authored door frames per corridor, got %d for %d", theme, archCount, corridorEdges))
+        -- Every corridor still owns two door slots, but a frame renders only
+        -- when the final wall grid supports both posts; unsupported frames are
+        -- dropped and must remain a small minority.
+        Check(archCount + droppedArches == corridorEdges * 2,
+            string.format("%s: expected two door slots per corridor, got %d + %d for %d",
+                theme, archCount, droppedArches, corridorEdges))
+        Check(droppedArches * 4 <= corridorEdges * 2,
+            string.format("%s: too many floating door frames were dropped (%d of %d)",
+                theme, droppedArches, corridorEdges * 2))
         Check(featureCount > 0, theme .. ": missing generated theme feature " .. feature)
     end
 end
@@ -1167,7 +1215,7 @@ end
 
 local function TestThemeQualityProfiles()
     local cases = {
-        { setting = "dungeon", theme = "ancient", required = { "floorScatter", "emphasis", "wallFixtures", "ambientClutter" } },
+        { setting = "dungeon", theme = "ancient", required = { "floorScatter", "emphasis", "wallFixtures", "ambientClutter", "atmosphere" } },
         { setting = "temple", theme = "templeGold", required = { "floorScatter", "emphasis", "wallFixtures", "ambientClutter", "atmosphere", "structureRuin" } },
         { setting = "hospital", theme = "sterile", required = { "floorScatter", "emphasis", "wallFixtures", "ambientClutter", "corridorScatter" } },
         { setting = "school", theme = "schoolDay", required = { "floorScatter", "emphasis", "wallFixtures", "ambientClutter" } },
@@ -1192,6 +1240,57 @@ local function TestThemeQualityProfiles()
     local pack = ThemePacks.Get("school")
     Check(pack and pack.wallRules and #pack.wallRules >= 4,
         "school: wall quality pack is incomplete")
+end
+
+local function TestAtmosphereMoodPresets()
+    local valid, reason = AtmosphereProfiles.Validate()
+    Check(valid, reason)
+
+    -- Resolution chain: palette override -> per-setting default -> neutral.
+    Check(AtmosphereProfiles.Resolve("dungeon", Themes.Get("ancient")).key == "dungeonDepths",
+        "dungeon setting did not resolve its default mood")
+    for _, settingKey in ipairs({ "temple", "hospital", "school" }) do
+        local palette = Themes.Get(Themes.DefaultPaletteForSetting(settingKey))
+        Check(AtmosphereProfiles.Resolve(settingKey, palette).key == AtmosphereProfiles.NEUTRAL_KEY,
+            settingKey .. " must stay on the neutral mood until its own atmosphere is authored")
+    end
+    Check(AtmosphereProfiles.Resolve("dungeon", { atmosphereKey = "neutral" }).key == "neutral",
+        "palette atmosphereKey override was ignored")
+    Check(AtmosphereProfiles.Resolve("dungeon", { atmosphereKey = "no-such-mood" }).key == "dungeonDepths",
+        "unknown palette atmosphereKey must fall back to the setting default")
+
+    -- Neutral must be a strict identity so un-authored settings render unchanged.
+    local sterile = Themes.Get("sterile")
+    local neutral = AtmosphereProfiles.ComputeLighting(sterile, AtmosphereProfiles.Get("neutral"))
+    Check(neutral.fogDensity == sterile.fogDensity
+            and neutral.ambientIntensity == sterile.ambient
+            and neutral.sunBrightness == sterile.sunIntensity
+            and neutral.vignetteIntensity == 0,
+        "neutral mood is no longer an identity envelope")
+    local legacyFlicker = AtmosphereProfiles.FlickerEnvelope(AtmosphereProfiles.Get("neutral"))
+    Check(legacyFlicker.base == 0.90 and legacyFlicker.ampA == 0.07 and legacyFlicker.speedA == 7.3
+            and legacyFlicker.ampB == 0.03 and legacyFlicker.speedB == 13.1,
+        "neutral flicker drifted from the legacy renderer constants")
+
+    -- The dungeon mood darkens and thickens, but every built-in ruins palette
+    -- must stay above the readability floor backing the §2.10 acceptance.
+    local mood = AtmosphereProfiles.Get("dungeonDepths")
+    for _, paletteKey in ipairs({ "ancient", "molten", "frost", "grim", "verdant" }) do
+        local theme = Themes.Get(paletteKey)
+        local lit = AtmosphereProfiles.ComputeLighting(theme, mood)
+        Check(lit.fogDensity > theme.fogDensity and lit.ambientIntensity < theme.ambient
+                and lit.sunBrightness < theme.sunIntensity,
+            paletteKey .. ": dungeon mood must darken the base light and thicken the fog")
+        Check(lit.ambientIntensity >= 0.40 and lit.sunBrightness >= 0.30,
+            paletteKey .. ": dungeon mood dimmed the base light below the readability floor")
+        Check(lit.vignetteIntensity > 0 and lit.vignetteIntensity <= 3,
+            paletteKey .. ": dungeon vignette must stay subtle")
+    end
+    Check(AtmosphereProfiles.TorchScale(mood) > 1.0,
+        "dungeon mood must return brightness through the torch pools")
+    local moodFlicker = AtmosphereProfiles.FlickerEnvelope(mood)
+    Check(moodFlicker.ampA + moodFlicker.ampB > legacyFlicker.ampA + legacyFlicker.ampB,
+        "dungeon firelight should breathe deeper than the neutral envelope")
 end
 
 local function TestPaletteAIContract()
@@ -1345,7 +1444,7 @@ local function TestCustomizationNormalization()
         activeCustomSettingId = "custom-404",
     })
     Check(missingActive.activeCustomSettingId == TopicSeeds.DEFAULT_ID,
-        "missing active custom theme did not fall back to the initial dungeon topic")
+        "missing active custom theme did not fall back to the initial temple topic")
 
     local schoolData = CustomizationStore.Normalize({
         customSettings = { { id = "custom-12", label = "School", baseSettingKey = "school", prompt = "campus" } },
@@ -1539,6 +1638,7 @@ function GenerationTests.Run()
         { "material separation", TestMaterialSeparationContracts },
         { "theme tone contracts", TestThemeToneContracts },
         { "theme quality profiles", TestThemeQualityProfiles },
+        { "atmosphere mood presets", TestAtmosphereMoodPresets },
         { "palette AI contract", TestPaletteAIContract },
         { "customization normalization", TestCustomizationNormalization },
         { "editor room groups", TestEditorRoomGroupPropagation },
