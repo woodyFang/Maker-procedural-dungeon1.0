@@ -54,6 +54,11 @@
       "name": "UrhoX",
       "path": "C:/Maker/UrhoX/",
       "readOnly": false
+    },
+    {
+      "name": "wuzhong",
+      "path": "E:/Maker-procedural-dungeon1.0/wuzhong/",
+      "readOnly": false
     }
   ],
   "rendering": {

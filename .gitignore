@@ -1,6 +1,11 @@
 uuid_mappings.json
 .cache
 
+# Per-machine editor and runtime configuration
+.project/editor_config.json
+dev.json
+start-offline.local.cmd
+
 # Local AI development kits and engine reference copies
 .agents/
 .claude/
@@ -15,6 +20,11 @@ skills/
 templates/
 tools/
 urhox-libs/
+
+# User-owned FantasyDungeon export pipeline under scripts/Tools.
+!scripts/Tools/
+!scripts/Tools/PCGDungeonAssetPipeline/
+!scripts/Tools/PCGDungeonAssetPipeline/*.py
 
 # Local runtime, editor, and diagnostic output
 .tmp/

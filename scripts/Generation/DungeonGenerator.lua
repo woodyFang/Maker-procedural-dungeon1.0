@@ -58,14 +58,25 @@ local function ClassifyRoom(width, height)
 end
 
 ---@return table<integer, table>
-local function ScatterRooms(rng, count, floor, centerX, centerY, firstId)
+local function ScatterRooms(rng, count, floor, centerX, centerY, firstId, roomCellBounds)
     local radius = math.sqrt(math.max(1, count)) * 4.6
     local rooms = {}
     local largeCount = 0
+    local minimum = roomCellBounds and roomCellBounds.min or nil
+    local maximum = roomCellBounds and roomCellBounds.max or nil
+    -- PCG room bounds are Y-up vectors. DungeonGenerator is a floor-plane
+    -- graph, so vector X maps to room width and vector Z maps to room depth;
+    -- vector Y remains the single-floor vertical cell count.
+    local minWidth = minimum and Clamp(math.floor((minimum[1] or 1) + 0.5), 1, 24) or nil
+    local minHeight = minimum and Clamp(math.floor((minimum[3] or 1) + 0.5), 1, 24) or nil
+    local maxWidth = maximum and Clamp(math.floor((maximum[1] or minWidth) + 0.5), minWidth, 24) or nil
+    local maxHeight = maximum and Clamp(math.floor((maximum[3] or minHeight) + 0.5), minHeight, 24) or nil
     for i = 1, count do
         local roll = rng:Raw()
         local width, height
-        if roll < 0.45 then
+        if minWidth then
+            width, height = rng:Int(minWidth, maxWidth), rng:Int(minHeight, maxHeight)
+        elseif roll < 0.45 then
             width, height = rng:Int(5, 7), rng:Int(5, 7)
         elseif roll < 0.85 then
             width, height = rng:Int(8, 12), rng:Int(8, 12)
@@ -83,7 +94,7 @@ local function ScatterRooms(rng, count, floor, centerX, centerY, firstId)
             type = ROOM_TYPES.COMBAT, depth = 0, difficulty = 0.2, degree = 0,
         }
     end
-    while largeCount < math.min(2, count) do
+    while not minWidth and largeCount < math.min(2, count) do
         local room = rooms[rng:Int(1, #rooms)]
         if room.arch ~= "large" then
             room.w, room.h = rng:Int(13, 18), rng:Int(13, 18)
@@ -263,8 +274,12 @@ local function BuildFloorGraph(rooms, roomIndices, loopRate, rng)
     return edges
 end
 
-local function BuildGraph(rooms, floorCount, loopRates, floorSeeds)
+local function BuildGraph(rooms, floorCount, loopRates, floorSeeds, roomCellBounds)
     local edges = {}
+    local maximum = roomCellBounds and roomCellBounds.max or nil
+    local compactStairs = maximum
+        and (tonumber(maximum[1]) or math.huge) <= 3
+        and (tonumber(maximum[3]) or math.huge) <= 3
     for floor = 0, floorCount - 1 do
         local roomIndices = FloorRoomIndices(rooms, floor)
         local floorEdges = BuildFloorGraph(rooms, roomIndices,
@@ -292,7 +307,14 @@ local function BuildGraph(rooms, floorCount, loopRates, floorSeeds)
             end
         end
         if lower and upper then
-            edges[#edges + 1] = { a = lower.id, b = upper.id, isLoop = false, isCritical = true }
+            local edge = { a = lower.id, b = upper.id, isLoop = false, isCritical = true }
+            if compactStairs then
+                -- X/Z are the PCG floor plane. Small 1-3 cell rooms need a
+                -- compact stair footprint; Y remains the independent floor axis.
+                edge.stairSpec = { style = "straight", width = 1, landingDepth = 1 }
+                lower.stairRoom, upper.stairRoom = true, true
+            end
+            edges[#edges + 1] = edge
         end
     end
 
@@ -926,28 +948,10 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
             end
         end
 
-        local function DecorateRoomGroup(room, allowedProps)
-            local group = roomGroupsById and roomGroupsById[room.roomGroupId] or nil
-            if not group or type(group.propRules) ~= "table" or #group.propRules == 0 then return false end
-            for _, rule in ipairs(group.propRules) do
-                if not allowedProps or allowedProps[rule.kind] then
-                    for _ = 1, rule.count or 1 do
-                        if rng:Chance(rule.chance == nil and 1 or rule.chance) then
-                            AddProp(room, rule.kind, {
-                                rot = rng:Chance(0.5) and 0 or math.pi * 0.5,
-                                scale = rng:Float(rule.scaleMin or 0.92, rule.scaleMax or 1.0),
-                                tries = 100,
-                            })
-                        end
-                    end
-                end
-            end
-            return true
-        end
-
         local function DecorateThemePackRoom(room, pack)
-            if DecorateRoomGroup(room, pack.props) then return end
-            local rules = pack.roomRules[room.type] or pack.roomRules.default or {}
+            local group = roomGroupsById and roomGroupsById[room.roomGroupId] or nil
+            local rules = group and group.propRules and #group.propRules > 0 and group.propRules
+                or pack.roomRules[room.type] or pack.roomRules.default or {}
             for _, rule in ipairs(rules) do
                 if pack.props[rule.kind] then
                     for _ = 1, rule.count or 1 do
@@ -966,7 +970,7 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
         for _, room in ipairs(dungeon.rooms) do
             if room.floor == layer.floor then
                 if settingKey == "hospital" then
-                    if not DecorateRoomGroup(room) then DecorateHospitalRoom(room) end
+                    DecorateHospitalRoom(room)
                 elseif ThemePacks.Get(settingKey) then
                     DecorateThemePackRoom(room, ThemePacks.Get(settingKey))
                 else
@@ -1239,7 +1243,7 @@ local function Decorate(dungeon, floorSeeds, densities, settingKey, themeKey, ro
 end
 
 local function GenerateAttempt(seed, parameters)
-    local floorCount = math.max(1, math.floor((parameters.floorCount or 2) + 0.5))
+    local floorCount = Clamp(math.floor((parameters.floorCount or 2) + 0.5), 1, 6)
     local floorHeight = MultiFloor.NormalizeFloorHeight(parameters.floorHeight)
     local emptyScene = parameters.emptyScene == true
     local stableSeed = Random.U32(parameters.stableSeed or seed)
@@ -1306,7 +1310,7 @@ local function GenerateAttempt(seed, parameters)
                 end
             else
                 generated = ScatterRooms(FloorRandom(floorSeeds, floor, STREAM_LAYOUT),
-                    roomCounts[floor + 1], floor, 0, 0, nextId)
+                    roomCounts[floor + 1], floor, 0, 0, nextId, parameters.roomCellBounds)
             end
             local generatedRooms = generated or {}
             for _, room in ipairs(generatedRooms) do rooms[#rooms + 1] = room end
@@ -1353,8 +1357,8 @@ local function GenerateAttempt(seed, parameters)
                         anchor = CopyPoint(spec.anchor), previewAnchor = CopyPoint(spec.previewAnchor),
                         direction = spec.direction, previewDirection = spec.previewDirection,
                         style = spec.style or "l-turn", previewStyle = spec.previewStyle,
-                        width = MultiFloor.NormalizeStairWidth(spec.width),
-                        previewWidth = spec.previewWidth and MultiFloor.NormalizeStairWidth(spec.previewWidth) or nil,
+                        width = Clamp(tonumber(spec.width) or 2, 1, 5),
+                        previewWidth = spec.previewWidth and Clamp(tonumber(spec.previewWidth) or 2, 1, 5) or nil,
                         length = tonumber(spec.length), previewLength = tonumber(spec.previewLength),
                         landingDepth = math.max(1, math.floor((tonumber(spec.landingDepth) or 2) + 0.5)),
                         previewLandingDepth = tonumber(spec.previewLandingDepth), manualPreview = spec.manualPreview == true,
@@ -1374,7 +1378,7 @@ local function GenerateAttempt(seed, parameters)
             end
         end
     else
-        edges = BuildGraph(rooms, floorCount, loopRates, floorSeeds)
+        edges = BuildGraph(rooms, floorCount, loopRates, floorSeeds, parameters.roomCellBounds)
         edges = MergePreservedFloorEdges(rooms, edges, parameters.preserveDungeon, changedFloor)
     end
     local entrance, boss, maxDepth, criticalLength = nil, nil, 1, 0
@@ -1436,6 +1440,14 @@ local function GenerateAttempt(seed, parameters)
     local dungeon = {
         seed = seed, width = width, height = height, W = width, H = height,
         floorCount = floorCount, floorHeight = floorHeight,
+        -- Keep the normal generator's editor contract explicit. Fixed PCG
+        -- scenes use a 5m cell and swapped X/Z axes; authored scenes must
+        -- restore their own 1m coordinate space when the topic changes.
+        editorWorldScale = GeometryRules.CELL_SIZE,
+        editorSwapAxes = false,
+        editorCenterOffset = 0.5,
+        editorRoomMinimumWidth = 5,
+        editorRoomMinimumHeight = 5,
         sceneInfo = {
             floorHeight = floorHeight,
             cellSize = GeometryRules.CELL_SIZE,
@@ -1448,9 +1460,6 @@ local function GenerateAttempt(seed, parameters)
         rooms = rooms, edges = multi.edges, connectors = multi.connectors, layers = multi.layers,
         entrance = entrance, boss = boss, maxDepth = maxDepth,
         valid = multi.valid, errors = multi.errors, bfs3 = multi.bfs3,
-        stairAudits = multi.stairAudits,
-        passedStairs = multi.passedStairs,
-        totalStairs = multi.totalStairs,
         theme = parameters.theme or "ancient",
         roomCountsByFloor = roomCounts, loopRatesByFloor = loopRates,
         decorDensitiesByFloor = densities,

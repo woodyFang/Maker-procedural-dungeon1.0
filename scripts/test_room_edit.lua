@@ -23,13 +23,15 @@ local function RunRegression()
     local editor = {
         rooms = { { cx = 20, cy = 18, w = 9, h = 7, floor = 0 } },
         links = {}, callbacks = {}, editorInteraction = EditorInteraction.new(),
+        roomMinimumWidth = 1, roomMinimumHeight = 1,
         UpdateRoomStairEdit = function() end,
         ApplyAdaptiveRoutes = function() end,
         UpdateRoomVisual = function() end,
         RefreshOverlay = function() end,
         Commit = function(self) self.commits = (self.commits or 0) + 1 end,
-        ResizeRoom = function(_, room, start, x, y, mode)
-            local resized = RoomEditing.Resize(start, { x = x, y = y }, mode)
+        ResizeRoom = function(self, room, start, x, y, mode)
+            local resized = RoomEditing.Resize(start, { x = x, y = y }, mode,
+                self.roomMinimumWidth, self.roomMinimumHeight)
             room.cx, room.cy, room.w, room.h = resized.cx, resized.cy, resized.w, resized.h
         end,
     }
@@ -64,16 +66,26 @@ local function RunRegression()
         editor.editorInteraction:Capture()
         Check(not EditorGesture.Apply(editor, corner.x, corner.y) and SameRoom(room, start),
             mode .. " changed room on press cycle " .. cycle)
-        local pointer = { x = corner.x + (west and -1.2 or 1.2),
-            y = corner.y + (north and -1.2 or 1.2) }
-        local expected = RoomEditing.Resize(start, pointer, mode)
+        local inward = cycle % 2 == 0
+        local pointer = {
+            x = corner.x + (inward and (west and 1.2 or -1.2) or (west and -1.2 or 1.2)),
+            y = corner.y + (inward and (north and 1.2 or -1.2) or (north and -1.2 or 1.2)),
+        }
+        local expected = RoomEditing.Resize(start, pointer, mode,
+            editor.roomMinimumWidth, editor.roomMinimumHeight)
         Check(EditorGesture.Apply(editor, pointer.x, pointer.y) and SameRoom(room, expected),
             mode .. " did not follow pointer cycle " .. cycle)
+        Check(not inward or (room.w < start.w and room.h < start.h),
+            mode .. " did not shrink toward the room interior cycle " .. cycle)
         Check(EditorGesture.Finish(editor) and not editor.editorInteraction:IsCaptured(),
             mode .. " did not release cycle " .. cycle)
     end
     Check(editor.commits == 200, "not every gesture committed: " .. tostring(editor.commits))
-    return "PASS roomMove=100 roomResize=100 corners=nw,ne,sw,se commits=200"
+    local defaultMinimum = RoomEditing.NormalizeRect({ x = 0, y = 0 }, { x = 1, y = 1 })
+    local pcgMinimum = RoomEditing.NormalizeRect({ x = 0, y = 0 }, { x = 1, y = 1 }, 1, 1)
+    Check(defaultMinimum.w == 5 and defaultMinimum.h == 5, "default minimum changed")
+    Check(pcgMinimum.w == 1 and pcgMinimum.h == 1, "PCG minimum was not applied")
+    return "PASS roomMove=100 roomResize=100 inward=50 corners=nw,ne,sw,se commits=200"
 end
 
 function Start()

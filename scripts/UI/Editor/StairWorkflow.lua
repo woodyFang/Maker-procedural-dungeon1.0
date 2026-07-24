@@ -40,6 +40,7 @@ function StairWorkflow.Install(Editor, helpers)
     end
 
     function Editor:ApplyStairPlacement(link, placement, requestedWidth)
+        if link and link.runtimeGenerated then return false end
         local spec = link and link.stairSpec
         if not spec or not placement then return false end
         if requestedWidth then spec.previewWidth = StairEditing.SnapWidth(requestedWidth) end
@@ -136,6 +137,7 @@ function StairWorkflow.Install(Editor, helpers)
 
     function Editor:ConfirmSelectedStair()
         local link = self.links[self.selectedLink]
+        if link and link.runtimeGenerated then return false end
         local spec = link and link.stairSpec
         if not spec or not spec.pending or spec.invalid or not spec.previewAnchor then return false end
         spec.anchor, spec.direction = CopyPoint(spec.previewAnchor), spec.previewDirection
@@ -161,6 +163,7 @@ function StairWorkflow.Install(Editor, helpers)
 
     function Editor:RotateSelectedStair()
         local link = self.links[self.selectedLink]
+        if link and link.runtimeGenerated then return false end
         local spec = link and link.stairSpec
         local rotated = spec and StairEditing.Rotate90(spec, link.connector)
         if not rotated or not self:ApplyStairPlacement(link, rotated) then return false end
@@ -170,8 +173,9 @@ function StairWorkflow.Install(Editor, helpers)
     end
 
     function Editor:SetSelectedStairStyle(style)
-        self.stairPlacementStyle = StairEditing.NormalizeStyle(style)
         local link = self.links[self.selectedLink]
+        if link and link.runtimeGenerated then return false end
+        self.stairPlacementStyle = StairEditing.NormalizeStyle(style)
         if not link or link.kind ~= "stairs" then self:RefreshOverlay(); return true end
         local placement = StairEditing.ChangeStyle(link.stairSpec, link.connector, self.stairPlacementStyle)
         if not placement or not self:ApplyStairPlacement(link, placement) then return false end
@@ -182,7 +186,7 @@ function StairWorkflow.Install(Editor, helpers)
 
     function Editor:CaptureStairDrag(linkIndex)
         local link = self.links[linkIndex]
-        if not link or not link.stairSpec or not link.connector then return nil end
+        if not link or link.runtimeGenerated or not link.stairSpec or not link.connector then return nil end
         return {
             link = linkIndex, spec = CopyLink(link).stairSpec, connector = link.connector,
             roomA = CopyRoomShape(self.rooms[link.a]), roomB = CopyRoomShape(self.rooms[link.b]),
@@ -198,7 +202,7 @@ function StairWorkflow.Install(Editor, helpers)
         end
         local result = { room = roomIndex, pair = pairIndex, pairShape = CopyRoomShape(self.rooms[pairIndex]), stairs = {}, shapes = {} }
         for linkIndex, link in ipairs(self.links) do
-            if link.kind == "stairs" and (link.a == roomIndex or link.b == roomIndex
+            if not link.runtimeGenerated and link.kind == "stairs" and (link.a == roomIndex or link.b == roomIndex
                 or (pairIndex and (link.a == pairIndex or link.b == pairIndex))) and link.stairSpec and link.connector then
                 result.stairs[#result.stairs + 1] = self:CaptureStairDrag(linkIndex)
                 result.shapes[link.a], result.shapes[link.b] = CopyRoomShape(self.rooms[link.a]), CopyRoomShape(self.rooms[link.b])
@@ -218,7 +222,7 @@ function StairWorkflow.Install(Editor, helpers)
         if resized then return end
         for _, stair in ipairs(edit.stairs) do
             local link, base = self.links[stair.link], stair.spec
-            if link then
+            if link and not link.runtimeGenerated then
                 for _, endpoint in ipairs({ link.a, link.b }) do
                     if endpoint ~= edit.room and endpoint ~= edit.pair then RestoreRoomShape(self.rooms[endpoint], edit.shapes[endpoint]) end
                 end
@@ -237,7 +241,7 @@ function StairWorkflow.Install(Editor, helpers)
 
     function Editor:UpdateStairDrag(drag, placement, width)
         local link = drag and self.links[drag.link]
-        if not link then return false end
+        if not link or link.runtimeGenerated then return false end
         RestoreRoomShape(self.rooms[link.a], drag.roomA)
         RestoreRoomShape(self.rooms[link.b], drag.roomB)
         link.stairSpec = CopyLink({ stairSpec = drag.spec, a = link.a, b = link.b }).stairSpec
@@ -247,6 +251,7 @@ function StairWorkflow.Install(Editor, helpers)
 
     function Editor:ToggleSelectedStairLock()
         local link = self.links[self.selectedLink]
+        if link and link.runtimeGenerated then return false end
         local spec = link and link.stairSpec
         if not spec then return false end
         spec.mode = spec.mode == "locked" and "stable-auto" or "locked"
@@ -260,7 +265,7 @@ function StairWorkflow.Install(Editor, helpers)
 
     function Editor:DeleteSelectedStair()
         local index, link = self.selectedLink, self.links[self.selectedLink]
-        if not link or link.kind ~= "stairs" then return false end
+        if not link or link.runtimeGenerated or link.kind ~= "stairs" then return false end
         local function Delete()
             if not StairEditing.RemovePairedStairRooms(self.rooms, self.links, link) then table.remove(self.links, index) end
             self.selectedLink, self.stairSnapshot = nil, nil

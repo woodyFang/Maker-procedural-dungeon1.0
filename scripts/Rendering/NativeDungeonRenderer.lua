@@ -2,12 +2,10 @@ local Themes = require("Config.Themes")
 local ProceduralModelCache = require("Rendering.ProceduralModelCache")
 local PropBlueprints = require("Rendering.PropBlueprints")
 local ExactGeometryBatcher = require("Rendering.ExactGeometryBatcher")
-local StairRenderPlan = require("Rendering.StairRenderPlan")
 local Random = require("Generation.Random")
 local MultiFloor = require("Generation.MultiFloor")
 local EditorSelectionHighlight = require("Rendering.EditorSelectionHighlight")
 local RoomGroupColors = require("Config.RoomGroupColors")
-local CurrentFloorCue = require("Rendering.CurrentFloorCue")
 
 local NativeDungeonRenderer = {}
 NativeDungeonRenderer.__index = NativeDungeonRenderer
@@ -18,7 +16,6 @@ local TILE_WALL = 2
 local CELL_SIZE = 1.0
 local FLOOR_THICKNESS = 0.16
 local WALL_HEIGHT = 2.8
-local CURRENT_FLOOR_CUE_HEIGHT = 0.045
 
 local function HexColor(value, brightness, alpha)
     local factor = brightness or 1.0
@@ -197,7 +194,7 @@ end
 
 function NativeDungeonRenderer:Clear()
     if self.root then
-        self.root:Remove()
+        self.root:Dispose()
         self.root = nil
     end
     self.instanceCount = 0
@@ -247,22 +244,6 @@ end
 
 function NativeDungeonRenderer:AddBatch(parent, transforms, material, name)
     return self:AddModelBatch(parent, transforms, self.modelCache:Get("box"), material, name, true)
-end
-
-function NativeDungeonRenderer:AddCurrentFloorCue(root, dungeon, currentFloor, viewMode, accent)
-    local bounds = CurrentFloorCue.Bounds(dungeon, currentFloor)
-    if not bounds then return nil end
-
-    local centerX, baseY, centerZ = self:WorldPosition(
-        dungeon, bounds.centerGridX, bounds.centerGridY, currentFloor, 0)
-    local material = CreateAlphaMaterial(accent, 0.24, accent, viewMode == "current" and 0.48 or 0.72)
-    local cue = root:CreateChild("CurrentFloorCue")
-    for index, marker in ipairs(CurrentFloorCue.CornerMarkers(bounds, viewMode)) do
-        self:AddPrimitive(cue, "CurrentFloorCorner-" .. index, "Models/Box.mdl",
-            Vector3(centerX + marker.x, baseY + CURRENT_FLOOR_CUE_HEIGHT + marker.y, centerZ + marker.z),
-            Vector3(marker.sx, marker.sy, marker.sz), material, nil, false)
-    end
-    return cue
 end
 
 function NativeDungeonRenderer:AddRoomGroupHighlights(root, dungeon, floorVisible, roomGroups)
@@ -777,22 +758,9 @@ function NativeDungeonRenderer:Build(dungeon, themeKey, options)
     local exactInstances, exactBatches, stagedEntries = exact:Flush(root, stagingConfig)
     self.instanceCount = self.instanceCount + exactInstances
     self.batchCount = self.batchCount + exactBatches
-    self:AddCurrentFloorCue(root, dungeon, currentFloor, viewMode, theme.accentObject)
     self:AddRoomGroupHighlights(root, dungeon, FloorVisible, options.roomGroups)
 
     local stairs = {}
-    local stairRailMaterial = CreateMaterial(theme.pillar, 0.38, 0.72)
-    local stairFinishMaterial = CreateMaterial(theme.wall, 0.78, 0.08)
-    local stairRailRoot = root:CreateChild("StairProtection")
-    local function AddHorizontalSegment(name, segment, connector, material, heightOffset, thickness)
-        local ax, ay, az = self:WorldPosition(dungeon, segment.a.x, segment.a.y,
-            connector.fromFloor, (segment.height or 0) + heightOffset)
-        local bx, by, bz = self:WorldPosition(dungeon, segment.b.x, segment.b.y,
-            connector.fromFloor, (segment.height or 0) + heightOffset)
-        local beam = self:AddBeam(stairRailRoot, name, Vector3(ax, ay, az), Vector3(bx, by, bz),
-            material, thickness)
-        if beam then Defer(beam:GetComponent("StaticModel"), timeline and timeline.rooms.start) end
-    end
     for _, connector in ipairs(dungeon.connectors) do
         if FloorVisible(connector.fromFloor) or FloorVisible(connector.toFloor) then
             local globalStep = 0
@@ -828,29 +796,6 @@ function NativeDungeonRenderer:Build(dungeon, themeKey, options)
             end
             AddFlight(platform and platform.second.start or nil, connector.secondDirectionVector,
                 connector.secondRun or 0, connector.secondFlightSteps or 0)
-
-            local stairPlan = StairRenderPlan.Build(dungeon, connector)
-            local railHeight = 1.05
-            for index, segment in ipairs(stairPlan.rails) do
-                AddHorizontalSegment("StairRail-" .. connector.id .. "-" .. index,
-                    segment, connector, stairRailMaterial, railHeight, 0.055)
-            end
-            for index, segment in ipairs(stairPlan.openingGuards) do
-                AddHorizontalSegment("OpeningGuard-" .. connector.id .. "-" .. index,
-                    segment, connector, stairRailMaterial, railHeight, 0.060)
-            end
-            for index, segment in ipairs(stairPlan.wallFinishes) do
-                AddHorizontalSegment("StairFinish-" .. connector.id .. "-" .. index,
-                    segment, connector, stairFinishMaterial, 0.08, 0.035)
-            end
-            local stairLightSpec = theme.torchLight or { theme.flameCore, 1.1, 7.0 }
-            for index, anchor in ipairs(stairPlan.lightingAnchors) do
-                local lx, ly, lz = self:WorldPosition(dungeon, anchor.x, anchor.y,
-                    connector.fromFloor, anchor.elevation)
-                self:AddPointLight(root, "StairLight-" .. connector.id .. "-" .. index,
-                    Vector3(lx, ly, lz), HexColor(stairLightSpec[1], 1.0),
-                    stairLightSpec[2], stairLightSpec[3], settingKey == "dungeon")
-            end
         end
     end
     local stairGroup = self:AddBatch(root, stairs, stairMaterial, "Stairs")

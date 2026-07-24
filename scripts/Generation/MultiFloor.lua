@@ -1,6 +1,5 @@
 local MultiFloor = {}
 local Themes = require("Config.Themes")
-local StairContract = require("Generation.StairContract")
 
 -- Authoritative floor-to-floor height in metres. Rendering, cameras, editor
 -- overlays and stair connectors must all derive their vertical spacing from it.
@@ -9,13 +8,8 @@ MultiFloor.FLOOR_HEIGHT = 5.0
 MultiFloor.VERTICAL_SCALE = MultiFloor.FLOOR_HEIGHT / MultiFloor.SOURCE_FLOOR_HEIGHT
 MultiFloor.MIN_FLOOR_HEIGHT = 2.5
 MultiFloor.MAX_FLOOR_HEIGHT = 8.0
--- Six floors is a usability/performance recommendation, not a generation cap.
-MultiFloor.RECOMMENDED_MAX_FLOORS = 6
 MultiFloor.STAIR_TARGET_STEP_RISE = 0.25
-MultiFloor.STAIR_REQUIRED_HEADROOM = StairContract.REQUIRED_HEADROOM
-MultiFloor.STAIR_MIN_WIDTH = StairContract.MIN_WIDTH
-MultiFloor.STAIR_MAX_WIDTH = StairContract.MAX_WIDTH
-MultiFloor.STAIR_WIDTH_STEP = StairContract.WIDTH_STEP
+MultiFloor.RECOMMENDED_MAX_FLOORS = 6
 MultiFloor.Tiles = { VOID = 0, FLOOR = 1, WALL = 2, POOL = 3 }
 
 function MultiFloor.NormalizeFloorHeight(value)
@@ -152,11 +146,6 @@ function MultiFloor.CreateLayer(floor, width, height)
         stairwellMask = {},
         stairClearance = {},
         stairLanding = {},
-        stairWallMask = {},
-        stairNoWallMask = {},
-        stairOwner = {},
-        sweptClearance = {},
-        openingBoundary = {},
         slabOpening = {},
         bfs = FilledArray(total, -1),
         maxBfs = 0,
@@ -170,20 +159,23 @@ function MultiFloor.CreateLayer(floor, width, height)
     }
 end
 
-function MultiFloor.NormalizeStairWidth(width)
-    return StairContract.NormalizeWidth(width)
-end
-
 local function StairGridSpan(width)
-    return StairContract.GridSpan(width)
+    return math.max(1, math.ceil(tonumber(width) or 1))
 end
 
 local function StairLateralCenterOffset(width, preservedOffset)
-    return StairContract.LateralCenterOffset(width, preservedOffset)
+    if tonumber(preservedOffset) then return tonumber(preservedOffset) end
+    return StairGridSpan(width) % 2 == 0 and 0.5 or 0
 end
 
 local function WidthOffsets(width, lateralCenterOffset)
-    return StairContract.WidthOffsets(width, lateralCenterOffset)
+    width = math.max(1, math.min(6, StairGridSpan(width)))
+    local result = {}
+    local first = tonumber(lateralCenterOffset)
+        and math.floor(tonumber(lateralCenterOffset) - (width - 1) * 0.5 + 0.5)
+        or -math.floor((width - 1) * 0.5)
+    for index = 0, width - 1 do result[#result + 1] = first + index end
+    return result
 end
 
 local function RoomDoorPoint(a, b, margin)
@@ -609,15 +601,41 @@ local function StairEndpoints(lower, direction, run, style)
 end
 
 local function StairRunCenter(point, direction, stairWidth, lateralCenterOffset)
-    return StairContract.RunCenter(point, direction, stairWidth, lateralCenterOffset)
+    local offset = StairLateralCenterOffset(stairWidth, lateralCenterOffset)
+    return { x = point.x - direction.y * offset, y = point.y + direction.x * offset }
 end
 
 local function StairTurnPlatformMetrics(connector)
-    return StairContract.TurnPlatformMetrics(connector)
+    if not connector or not connector.turn then return nil end
+    local first, second = connector.directionVector, connector.secondDirectionVector
+    if not first or not second then return nil end
+    local firstRun = math.max(0, tonumber(connector.firstRun) or 0)
+    local secondRun = math.max(0, tonumber(connector.secondRun) or 0)
+    local visualWidth = math.max(0.01, tonumber(connector.width) or 1)
+    local offset = StairLateralCenterOffset(visualWidth, connector.lateralCenterOffset)
+    local firstStart = StairRunCenter(connector.lower or connector.turn, first, visualWidth, offset)
+    local entry = { x = firstStart.x + first.x * firstRun, y = firstStart.y + first.y * firstRun }
+    local center = { x = entry.x + first.x * visualWidth * 0.5,
+        y = entry.y + first.y * visualWidth * 0.5 }
+    local exitPoint = { x = center.x + second.x * visualWidth * 0.5,
+        y = center.y + second.y * visualWidth * 0.5 }
+    local secondEnd = { x = exitPoint.x + second.x * secondRun,
+        y = exitPoint.y + second.y * secondRun }
+    return {
+        center = center, entry = entry, exit = exitPoint,
+        first = { start = firstStart, finish = entry, direction = first, length = firstRun },
+        second = { start = exitPoint, finish = secondEnd, direction = second, length = secondRun },
+        visualSpan = visualWidth, gridSpan = StairGridSpan(visualWidth), offset = offset,
+    }
 end
 
 local function VisualUpperCell(point, direction)
-    return StairContract.VisualUpperCell(point, direction)
+    local function AlongCell(value, axis)
+        if axis > 0 then return math.ceil(value - 0.000000001) end
+        if axis < 0 then return math.floor(value + 0.000000001) end
+        return math.floor(value + 0.5)
+    end
+    return { x = AlongCell(point.x, direction.x), y = AlongCell(point.y, direction.y) }
 end
 
 local function VisualPlatformCells(width, height, platform)
@@ -673,23 +691,56 @@ local function StairTurnPadCells(width, height, turn, firstDirection, secondDire
 end
 
 local function BuildStairContract(width, height, lower, direction, run, stairWidth, landingDepth, sideClearance,
-    requestedStyle, preservedLateralCenterOffset, floorHeight, stepCount)
-    return StairContract.Build({
-        mapWidth = width,
-        mapHeight = height,
-        lower = lower,
-        direction = direction,
-        run = run,
-        width = stairWidth,
-        landingDepth = landingDepth,
-        sideClearance = sideClearance,
-        style = requestedStyle,
-        lateralCenterOffset = preservedLateralCenterOffset,
-        floorHeight = floorHeight,
-        stepCount = stepCount,
-        headroom = MultiFloor.STAIR_REQUIRED_HEADROOM,
-        wallMode = "wall-backed",
-    })
+    requestedStyle, preservedLateralCenterOffset)
+    local style = NormalizeStairStyle(requestedStyle)
+    local turn, anchorUpper, secondDirection, firstRun, secondRun = StairEndpoints(lower, direction, run, style)
+    local lateralCenterOffset = StairLateralCenterOffset(stairWidth, preservedLateralCenterOffset)
+    local platform = style == "l-turn" and StairTurnPlatformMetrics({
+        lower = lower, turn = turn, upper = anchorUpper,
+        directionVector = direction, secondDirectionVector = secondDirection,
+        firstRun = firstRun, secondRun = secondRun, width = stairWidth,
+        lateralCenterOffset = lateralCenterOffset,
+    }) or nil
+    local upper = platform and VisualUpperCell(platform.second.finish, secondDirection) or anchorUpper
+    local lowerApproach = { x = lower.x - direction.x * landingDepth, y = lower.y - direction.y * landingDepth }
+    local upperApproach = { x = upper.x + secondDirection.x * landingDepth,
+        y = upper.y + secondDirection.y * landingDepth }
+    local firstFlight = StairStripCells(width, height, lower, direction, 1, firstRun - 1,
+        stairWidth, lateralCenterOffset)
+    local secondFlight = style == "l-turn" and VisualStripCells(width, height,
+        platform.exit, platform.second.finish, stairWidth) or {}
+    local turnCells = style == "l-turn" and VisualPlatformCells(width, height, platform) or {}
+    local shaft = firstFlight and secondFlight and turnCells and UniqueCells(firstFlight, turnCells, secondFlight) or nil
+    local lowerLanding = StairStripCells(width, height, lower, direction, -landingDepth, 0,
+        stairWidth, lateralCenterOffset)
+    local upperLanding = platform and VisualStripCells(width, height,
+        { x = platform.second.finish.x - secondDirection.x, y = platform.second.finish.y - secondDirection.y },
+        { x = platform.second.finish.x + secondDirection.x * (landingDepth + 1),
+            y = platform.second.finish.y + secondDirection.y * (landingDepth + 1) }, stairWidth)
+        or StairStripCells(width, height, upper, secondDirection, 0, landingDepth,
+            stairWidth, lateralCenterOffset)
+    local footprintOffsets = StairwellWidthOffsets(stairWidth, sideClearance, lateralCenterOffset)
+    local firstFootprint = StairStripCellsWithOffsets(width, height, lower, direction,
+        -landingDepth, firstRun, footprintOffsets)
+    local secondFootprint = style == "l-turn"
+        and VisualStripCells(width, height, platform.exit,
+            { x = platform.second.finish.x + secondDirection.x * landingDepth,
+                y = platform.second.finish.y + secondDirection.y * landingDepth },
+            stairWidth + math.max(0, math.floor((sideClearance or 0) + 0.5)) * 2)
+        or StairStripCellsWithOffsets(width, height, upper, secondDirection, 0, landingDepth, footprintOffsets)
+    local footprint = firstFootprint and secondFootprint
+        and RectangularEnvelope(UniqueCells(firstFootprint, secondFootprint), width, height) or nil
+    if not shaft or not lowerLanding or not upperLanding or not footprint then return nil end
+    return {
+        style = style, lower = { x = lower.x, y = lower.y }, turn = turn, upper = upper,
+        lowerApproach = lowerApproach, upperApproach = upperApproach,
+        direction = direction, secondDirection = secondDirection, run = run,
+        firstRun = firstRun, secondRun = secondRun, width = stairWidth,
+        lateralCenterOffset = lateralCenterOffset, turnPlatform = platform,
+        sideClearance = sideClearance or 1, landingDepth = landingDepth,
+        shaftCells = shaft, lowerLandingCells = lowerLanding, upperLandingCells = upperLanding,
+        sharedFootprintCells = footprint,
+    }
 end
 
 
@@ -700,7 +751,7 @@ MultiFloor.StairVisualUpperCell = VisualUpperCell
 local function StairContractClear(lowerLayer, upperLayer, contract, lowerRoomId, upperRoomId, allowRoomAdaptation)
     local function Blocked(layer, cell)
         return layer.stairMask[cell] or layer.stairwellMask[cell] or layer.stairClearance[cell]
-            or layer.stairLanding[cell] or layer.stairWallMask[cell] or layer.slabOpening[cell]
+            or layer.stairLanding[cell] or layer.slabOpening[cell]
     end
     for _, cell in ipairs(contract.sharedFootprintCells or {}) do
         if Blocked(lowerLayer, cell) or Blocked(upperLayer, cell) then return false end
@@ -743,39 +794,27 @@ local function DirectionByName(name)
 end
 
 local function ReserveStair(lowerLayer, upperLayer, contract, connectorId)
-    contract.ownerId = connectorId
     for _, cell in ipairs(contract.sharedFootprintCells or {}) do
         for _, layer in ipairs({ lowerLayer, upperLayer }) do
             layer.corridor[cell] = nil
             layer.corridorOwner[cell] = nil
             layer.doorway[cell] = nil
+            if layer.grid[cell] ~= MultiFloor.Tiles.FLOOR then layer.grid[cell] = MultiFloor.Tiles.FLOOR end
             layer.stairwellMask[cell] = true
-            layer.stairOwner[cell] = connectorId
         end
-    end
-    for _, cell in ipairs(contract.lowerNoWallCells or {}) do
-        lowerLayer.stairNoWallMask[cell] = true
-        lowerLayer.stairOwner[cell] = connectorId
-    end
-    for _, cell in ipairs(contract.upperNoWallCells or {}) do
-        upperLayer.stairNoWallMask[cell] = true
-        upperLayer.stairOwner[cell] = connectorId
     end
     for _, cell in ipairs(contract.lowerLandingCells) do
         lowerLayer.grid[cell] = MultiFloor.Tiles.FLOOR
         lowerLayer.corridor[cell] = true
         lowerLayer.corridorOwner[cell] = connectorId
         lowerLayer.stairLanding[cell] = true
-        lowerLayer.stairOwner[cell] = connectorId
     end
     for _, cell in ipairs(contract.upperLandingCells) do
         upperLayer.grid[cell] = MultiFloor.Tiles.FLOOR
         upperLayer.corridor[cell] = true
         upperLayer.corridorOwner[cell] = connectorId
         upperLayer.stairLanding[cell] = true
-        upperLayer.stairOwner[cell] = connectorId
     end
-    local openingSet = StairContract.CellSet(contract.openingCells)
     for _, cell in ipairs(contract.shaftCells) do
         lowerLayer.grid[cell] = MultiFloor.Tiles.FLOOR
         lowerLayer.corridor[cell] = true
@@ -783,28 +822,13 @@ local function ReserveStair(lowerLayer, upperLayer, contract, connectorId)
         lowerLayer.roomId[cell] = 0
         lowerLayer.stairMask[cell] = true
         lowerLayer.stairClearance[cell] = true
-        lowerLayer.stairOwner[cell] = connectorId
-        if not openingSet[cell] then
-            upperLayer.grid[cell] = MultiFloor.Tiles.FLOOR
-            upperLayer.roomId[cell] = 0
-            upperLayer.stairOwner[cell] = connectorId
-        end
-    end
-    for _, item in ipairs(contract.sweptClearanceCells or {}) do
-        upperLayer.stairClearance[item.cell] = true
-        upperLayer.sweptClearance[item.cell] = item
-        upperLayer.stairOwner[item.cell] = connectorId
-    end
-    for _, cell in ipairs(contract.openingCells or {}) do
+
         upperLayer.grid[cell] = MultiFloor.Tiles.VOID
         upperLayer.corridor[cell] = nil
         upperLayer.corridorOwner[cell] = connectorId
         upperLayer.roomId[cell] = 0
         upperLayer.slabOpening[cell] = true
-        upperLayer.stairOwner[cell] = connectorId
-    end
-    for _, edge in ipairs(contract.openingBoundaryEdges or {}) do
-        upperLayer.openingBoundary[edge.key] = connectorId
+        upperLayer.stairClearance[cell] = true
     end
 end
 
@@ -869,8 +893,8 @@ local function PlaceConnector(edge, rooms, layers, width, height, connectorId, f
     local stepCount = math.max(1, math.ceil(floorHeight / MultiFloor.STAIR_TARGET_STEP_RISE))
     local stepRise = floorHeight / stepCount
     local requestedWidth = spec.pending and spec.previewWidth or spec.width
-    local stairWidth = StairContract.NormalizeWidth(
-        tonumber(requestedWidth) or (edge.isCritical and 3 or 2))
+    local stairWidth = math.max(1, math.min(5,
+        math.floor((tonumber(requestedWidth) or (edge.isCritical and 3 or 2)) * 4 + 0.5) / 4))
     local requestedLanding = spec.pending and spec.previewLandingDepth or spec.landingDepth
     local landingDepth = math.max(1, math.min(4, math.floor((tonumber(requestedLanding) or 2) + 0.5)))
     local anchor = spec.pending and spec.previewAnchor or spec.anchor
@@ -892,8 +916,7 @@ local function PlaceConnector(edge, rooms, layers, width, height, connectorId, f
     for _, candidate in ipairs(candidates) do
         local sideClearance = (pinned or allowRoomAdaptation) and 0 or 1
         local contract = BuildStairContract(width, height, candidate.lower, candidate.direction, run,
-            stairWidth, landingDepth, sideClearance, style, spec.lateralCenterOffset,
-            floorHeight, stepCount)
+            stairWidth, landingDepth, sideClearance, style, spec.lateralCenterOffset)
         local upperCenter = Index(upperRoom.cx, upperRoom.cy, width)
         local cutsUpperCenter = false
         if contract then
@@ -958,20 +981,10 @@ local function PlaceConnector(edge, rooms, layers, width, height, connectorId, f
         lateralCenterOffset = best.contract.lateralCenterOffset,
         stepCount = stepCount, stepRise = stepRise, treadDepth = run / stepCount,
         firstRun = best.contract.firstRun, secondRun = best.contract.secondRun,
-        firstFlightSteps = best.contract.firstFlightSteps,
-        secondFlightSteps = best.contract.secondFlightSteps,
-        landingDepth = landingDepth,
-        openingCells = best.contract.openingCells,
-        slabOpeningCells = best.contract.openingCells,
-        shaftCells = best.contract.shaftCells,
-        headroomCells = best.contract.headroomCells,
-        sweptClearanceCells = best.contract.sweptClearanceCells,
-        stairwellInteriorCells = best.contract.stairwellInteriorCells,
-        lowerLandingCells = best.contract.lowerLandingCells,
-        upperLandingCells = best.contract.upperLandingCells,
+        firstFlightSteps = style == "straight" and stepCount or math.floor(stepCount * 0.5),
+        secondFlightSteps = style == "straight" and 0 or stepCount - math.floor(stepCount * 0.5),
+        landingDepth = landingDepth, openingCells = best.contract.shaftCells,
         sharedFootprintCells = best.contract.sharedFootprintCells,
-        wallMode = best.contract.wallMode,
-        contract = best.contract,
         lowerRoute = best.lowerRoute.points, upperRoute = best.upperRoute.points,
         mode = spec.mode or "stable-auto", candidateIndex = selectedIndex - 1,
         candidateCount = candidateCount, stairId = spec.id,
@@ -1017,8 +1030,7 @@ local function BuildWalls(layer, width, height)
                 local nx, ny = x + ox, y + oy
                 if InBounds(nx, ny, width, height) then
                     local neighbor = Index(nx, ny, width)
-                    if layer.grid[neighbor] == MultiFloor.Tiles.VOID and not layer.slabOpening[neighbor]
-                        and not layer.stairNoWallMask[neighbor] then
+                    if layer.grid[neighbor] == MultiFloor.Tiles.VOID and not layer.slabOpening[neighbor] then
                         layer.grid[neighbor] = MultiFloor.Tiles.WALL
                     end
                 end
@@ -1057,22 +1069,11 @@ function MultiFloor.Validate(layers, rooms, connectors, entranceId, width, heigh
                 end
             end
         end
-        local audit = connector.contract and StairContract.Audit(
-            connector.contract, lowerLayer, upperLayer, MultiFloor.Tiles) or {
-                contractComplete = false, traversable = false, slabsComplete = false,
-                wallsComplete = false, reachable = false, pass = false,
-                reasons = { "missing-contract" },
-            }
-        audit.pass = audit.pass and valid
-        if not valid and #audit.reasons == 0 then audit.reasons[#audit.reasons + 1] = "invalid-endpoint" end
-        connector.audit = audit
-        if not audit.pass then invalidConnectors[#invalidConnectors + 1] = connector.id end
+        if not valid then invalidConnectors[#invalidConnectors + 1] = connector.id end
         local lowerGlobal = GlobalIndex(connector.fromFloor, lowerCell)
         local upperGlobal = GlobalIndex(connector.toFloor, upperCell)
-        if audit.pass then
-            AddTransition(lowerGlobal, upperGlobal)
-            AddTransition(upperGlobal, lowerGlobal)
-        end
+        AddTransition(lowerGlobal, upperGlobal)
+        AddTransition(upperGlobal, lowerGlobal)
     end
 
     local entranceRoom = entranceId and rooms[entranceId]
@@ -1084,7 +1085,6 @@ function MultiFloor.Validate(layers, rooms, connectors, entranceId, width, heigh
         return {
             valid = #invalidConnectors == 0, distance = distance, reach = 0,
             unreachableRooms = {}, unreachableConnectors = {}, invalidConnectors = invalidConnectors,
-            stairAudits = {}, passedStairs = 0, totalStairs = #connectors,
         }
     end
     local startCell = Index(entranceRoom.cx, entranceRoom.cy, width)
@@ -1144,26 +1144,12 @@ function MultiFloor.Validate(layers, rooms, connectors, entranceId, width, heigh
         end
         layer.maxBfs = maxDistance
     end
-    local stairAudits, passedStairs = {}, 0
-    for _, connector in ipairs(connectors) do
-        local audit = connector.audit or { pass = false, reachable = false, reasons = { "missing-audit" } }
-        local lower = GlobalIndex(connector.fromFloor, Index(connector.lower.x, connector.lower.y, width))
-        local upper = GlobalIndex(connector.toFloor, Index(connector.upper.x, connector.upper.y, width))
-        audit.reachable = distance[lower] >= 0 and distance[upper] >= 0
-        audit.pass = audit.pass and audit.reachable
-        if not audit.reachable then audit.reasons[#audit.reasons + 1] = "stair-endpoint-unreachable" end
-        if audit.pass then passedStairs = passedStairs + 1 end
-        stairAudits[#stairAudits + 1] = { id = connector.id, audit = audit }
-    end
     return {
         valid = #unreachableRooms == 0 and #unreachableConnectors == 0 and #invalidConnectors == 0,
         distance = distance, reach = reach,
         unreachableRooms = unreachableRooms,
         unreachableConnectors = unreachableConnectors,
         invalidConnectors = invalidConnectors,
-        stairAudits = stairAudits,
-        passedStairs = passedStairs,
-        totalStairs = #connectors,
     }
 end
 
@@ -1268,31 +1254,6 @@ function MultiFloor.Build(options)
     end
     for _, layer in ipairs(layers) do BuildWalls(layer, width, height) end
     ApplyThemeCarving(layers, rooms, width, height, options)
-    for _, connector in ipairs(connectors) do
-        local lowerLayer = layers[connector.fromFloor + 1]
-        local upperLayer = layers[connector.toFloor + 1]
-        StairContract.FinalizeProtection(connector.contract, lowerLayer, upperLayer, MultiFloor.Tiles)
-        for _, cell in ipairs(connector.contract.doubleHeightWallCells or {}) do
-            lowerLayer.stairWallMask[cell] = "double-height"
-            upperLayer.stairWallMask[cell] = "double-height"
-        end
-        for _, cell in ipairs(connector.contract.lowerSingleHeightWallCells or {}) do
-            lowerLayer.stairWallMask[cell] = "single-height"
-        end
-        for _, cell in ipairs(connector.contract.upperSingleHeightWallCells or {}) do
-            upperLayer.stairWallMask[cell] = "single-height"
-        end
-        connector.openingAccessEdges = connector.contract.openingAccessEdges
-        connector.openingStairPassageEdges = connector.contract.openingStairPassageEdges
-        connector.openingWallSegments = connector.contract.openingWallSegments
-        connector.openingGuardSegments = connector.contract.openingGuardSegments
-        connector.stairWallSegments = connector.contract.stairWallSegments
-        connector.stairRailSegments = connector.contract.stairRailSegments
-        connector.wallFinishSegments = connector.contract.wallFinishSegments
-        connector.doubleHeightWallCells = connector.contract.doubleHeightWallCells
-        connector.lowerSingleHeightWallCells = connector.contract.lowerSingleHeightWallCells
-        connector.upperSingleHeightWallCells = connector.contract.upperSingleHeightWallCells
-    end
     local validation = MultiFloor.Validate(layers, rooms, connectors, options.entrance, width, height)
     for _, id in ipairs(validation.unreachableRooms) do errors[#errors + 1] = "room " .. id .. " is unreachable" end
     for _, id in ipairs(validation.unreachableConnectors) do errors[#errors + 1] = "connector " .. id .. " is unreachable" end
@@ -1300,9 +1261,6 @@ function MultiFloor.Build(options)
     return {
         layers = layers, edges = activeEdges, connectors = connectors,
         bfs3 = validation.distance, reach = validation.reach,
-        stairAudits = validation.stairAudits,
-        passedStairs = validation.passedStairs,
-        totalStairs = validation.totalStairs,
         valid = validation.valid and #errors == 0, errors = errors,
     }
 end

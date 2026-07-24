@@ -1,6 +1,9 @@
 local DungeonGenerator = require("Generation.DungeonGenerator")
+local PCGDungeonGenerator = require("Generation.PCGDungeonGenerator")
 local MultiFloor = require("Generation.MultiFloor")
 local NativeDungeonRenderer = require("Rendering.NativeDungeonRenderer")
+local PCGDungeonRenderer = require("Rendering.PCGDungeonRenderer")
+local PCGDungeonMarkerPipeline = require("Generation.PCGDungeonMarkerPipeline")
 local ForgeCameraController = require("Input.ForgeCameraController")
 local ControlPanel = require("UI.ControlPanel")
 local LayoutEditor = require("UI.LayoutEditor")
@@ -11,7 +14,6 @@ local FixedThemes = require("Config.FixedThemes")
 local ThemePacks = require("Config.ThemePacks")
 local GenericThemeRules = require("Config.GenericThemeRules")
 local CustomizationStore = require("Config.CustomizationStore")
-local TopicSeeds = require("Config.TopicSeeds")
 local RoomGroupColors = require("Config.RoomGroupColors")
 local DungeonGeometryLibrary = require("Rendering.DungeonGeometryLibrary")
 local ProceduralMaterialRules = require("Rendering.ProceduralMaterialRules")
@@ -27,8 +29,31 @@ local CUSTOMIZATION_CLOUD_KEY = "procedural_dungeon_customizations_v1"
 -- lightweight editor visuals, while authoritative generation is coalesced
 -- after the gesture has finished.
 local EDITOR_REBUILD_DEBOUNCE_SECONDS = 0.18
+local PCG_DUNGEON_CELL_SIZE = 5.0
+local PCG_DUNGEON_MAX_FLOORS = 6
+local DEFAULT_GENERATED_FLOOR_COUNT = 2
+local DEFAULT_GENERATED_ROOM_COUNT = 21
+local DEFAULT_GENERATED_LOOP_RATE = 15
+local DEFAULT_GENERATED_DECOR_DENSITY = 60
+local TOPIC_MODE_BASE = "base"
 local TOPIC_MODE_CUSTOM = "custom"
 local TOPIC_MODE_FIXED_PCG = "fixedPCG"
+
+local function ClampInteger(value, minimum, maximum, fallback)
+    value = tonumber(value)
+    if not value then return fallback end
+    return math.max(minimum, math.min(maximum, math.floor(value + 0.5)))
+end
+
+local function NormalizeRoomCounts(source, defaults, floorCount)
+    local result, total = {}, 0
+    for floor = 1, floorCount do
+        local fallback = defaults and (defaults[floor] or defaults[#defaults]) or 6
+        result[floor] = ClampInteger(source and source[floor], 6, 50, fallback or 6)
+        total = total + result[floor]
+    end
+    return result, total
+end
 
 local function HexColor(value, brightness)
     local factor = brightness or 1
@@ -55,15 +80,20 @@ local ENVIRONMENTS = {
 
 function DungeonApp.new()
     return setmetatable({
-        seed = 1337, floorCount = 2, floorHeight = MultiFloor.FLOOR_HEIGHT,
+        seed = 1337, floorCount = DEFAULT_GENERATED_FLOOR_COUNT, floorHeight = MultiFloor.FLOOR_HEIGHT,
         currentFloor = 0, floorViewMode = "neighbors",
         settingKey = "dungeon", themeKey = "ancient",
-        roomCounts = { 21, 21 }, loopRates = { 15, 15 }, decorDensities = { 60, 60 },
-        customSettings = TopicSeeds.Ensure({}), roomGroups = {}, customPalettes = {},
+        roomCounts = { DEFAULT_GENERATED_ROOM_COUNT, DEFAULT_GENERATED_ROOM_COUNT },
+        loopRates = { DEFAULT_GENERATED_LOOP_RATE, DEFAULT_GENERATED_LOOP_RATE },
+        decorDensities = { DEFAULT_GENERATED_DECOR_DENSITY, DEFAULT_GENERATED_DECOR_DENSITY },
+        customSettings = {}, roomGroups = {}, customPalettes = {},
         nextCustomSettingId = 1, nextRoomGroupId = 1, nextCustomPaletteId = 1,
-        activeCustomSettingId = TopicSeeds.DEFAULT_ID, customSettingName = "遗迹", activeFixedThemeId = nil,
-        topicMode = TOPIC_MODE_CUSTOM, topicSelectionVersion = 0,
+        activeCustomSettingId = nil, customSettingName = nil, activeFixedThemeId = nil,
+        topicMode = TOPIC_MODE_BASE, topicSelectionVersion = 0,
+        fixedSettingSwitchInProgress = false, fixedSettingInputCooldown = 0,
+        fixedSettingSceneId = nil,
         customizationRevision = 0, customizationUpdatedAt = "", cloudLoadPending = false,
+        cloudSyncEnabled = false,
         customizationSaveInFlight = false, customizationSaveQueued = false, queuedSaveCallback = nil,
         editorActive = false, editorMode = "3d", editorTransition = nil, editorEntryMode = nil,
         editorRooms = nil, editorLinks = nil, generationSerial = 0,
@@ -78,16 +108,16 @@ function DungeonApp.new()
 end
 
 function DungeonApp:NormalizeTopicSelection()
-    if self.activeFixedThemeId == FixedThemes.MODE_ID then
+    if self.activeFixedThemeId == FixedThemes.MODE_ID or FixedThemes.Get(self.activeFixedThemeId) then
         self.topicMode = TOPIC_MODE_FIXED_PCG
-        self.activeFixedThemeId = FixedThemes.MODE_ID
         self.activeCustomSettingId, self.customSettingName = nil, nil
-    else
+    elseif self.activeCustomSettingId ~= nil then
         self.topicMode = TOPIC_MODE_CUSTOM
         self.activeFixedThemeId = nil
-        if self.activeCustomSettingId == nil then
-            self.activeCustomSettingId = TopicSeeds.DEFAULT_ID
-        end
+    else
+        self.topicMode = TOPIC_MODE_BASE
+        self.activeCustomSettingId, self.customSettingName = nil, nil
+        self.activeFixedThemeId = nil
     end
     return self.topicMode
 end
@@ -99,27 +129,40 @@ end
 function DungeonApp:RestoreTopicSelection(selection)
     if not selection or selection.mode == TOPIC_MODE_FIXED_PCG then
         self.topicMode = TOPIC_MODE_FIXED_PCG
-        self.activeFixedThemeId = FixedThemes.MODE_ID
+        local fixedId = selection and selection.fixedId or FixedThemes.MODE_ID
+        if fixedId ~= FixedThemes.MODE_ID and not FixedThemes.Get(fixedId) then
+            fixedId = FixedThemes.MODE_ID
+        end
+        self.activeFixedThemeId = fixedId
         self.activeCustomSettingId, self.customSettingName = nil, nil
-        self.settingKey, self.themeKey = "dungeon", "ancient"
-        self.floorHeight = MultiFloor.FLOOR_HEIGHT
+        local preset = FixedThemes.Get(self.activeFixedThemeId)
+        self.settingKey, self.themeKey = preset and preset.settingKey or "dungeon",
+            preset and preset.themeKey or "ancient"
+        self.floorHeight = MultiFloor.NormalizeFloorHeight(preset and preset.floorHeight)
         return
     end
 
     self.activeFixedThemeId = nil
-    local customId = selection.customId
-    if not customId and selection.settingKey then customId = TopicSeeds.IdForSetting(selection.settingKey) end
-    local record = CustomizationStore.FindById(self.customSettings, customId)
-        or CustomizationStore.FindById(self.customSettings, TopicSeeds.DEFAULT_ID)
-    if record and record.packStatus ~= "draft" then
-        self.topicMode = TOPIC_MODE_CUSTOM
-        self.activeCustomSettingId, self.customSettingName = record.id, record.label
-        self.settingKey = Themes.settings[record.baseSettingKey] and record.baseSettingKey or "dungeon"
-        self.floorHeight = MultiFloor.NormalizeFloorHeight(record.floorHeight)
-        local palettes = Themes.GetSetting(self.settingKey).palettes
-        self.themeKey = Themes.IsPaletteForSetting(selection.themeKey, self.settingKey)
-            and selection.themeKey or palettes[1]
+    if selection.mode == TOPIC_MODE_CUSTOM then
+        local record = CustomizationStore.FindById(self.customSettings, selection.customId)
+        if record and record.packStatus ~= "draft" then
+            self.topicMode = TOPIC_MODE_CUSTOM
+            self.activeCustomSettingId, self.customSettingName = record.id, record.label
+            self.settingKey = Themes.settings[record.baseSettingKey] and record.baseSettingKey or "dungeon"
+            self.floorHeight = MultiFloor.NormalizeFloorHeight(record.floorHeight)
+            local palettes = Themes.GetSetting(self.settingKey).palettes
+            self.themeKey = Themes.IsPaletteForSetting(selection.themeKey, self.settingKey)
+                and selection.themeKey or palettes[1]
+            return
+        end
     end
+
+    self.topicMode = TOPIC_MODE_BASE
+    self.activeCustomSettingId, self.customSettingName = nil, nil
+    self.settingKey = Themes.settings[selection.settingKey] and selection.settingKey or "dungeon"
+    self.floorHeight = MultiFloor.FLOOR_HEIGHT
+    self.themeKey = Themes.IsPaletteForSetting(selection.themeKey, self.settingKey)
+        and selection.themeKey or Themes.GetSetting(self.settingKey).palettes[1]
 end
 
 function DungeonApp:ApplyCustomizationData(data, preserveTopicSelection)
@@ -129,6 +172,7 @@ function DungeonApp:ApplyCustomizationData(data, preserveTopicSelection)
         self:NormalizeTopicSelection()
         selection = {
             mode = self.topicMode,
+            fixedId = self.activeFixedThemeId,
             customId = self.activeCustomSettingId,
             settingKey = self.settingKey,
             themeKey = self.themeKey,
@@ -137,8 +181,6 @@ function DungeonApp:ApplyCustomizationData(data, preserveTopicSelection)
     local normalized = CustomizationStore.Normalize(data)
     self.customSettings = normalized.customSettings
     self.roomGroups = normalized.roomGroups
-    local builtinChanged, builtinReason = self:EnsureSeedRoomGroups()
-    if builtinChanged == false and builtinReason then return false end
     self.customPalettes = normalized.customPalettes
     self.nextCustomSettingId = normalized.nextCustomSettingId
     self.nextRoomGroupId = normalized.nextRoomGroupId
@@ -165,8 +207,9 @@ function DungeonApp:ApplyCustomizationData(data, preserveTopicSelection)
             for _, palette in ipairs(setting.palettes) do if palette == self.themeKey then validPalette = true; break end end
             if not validPalette then self.themeKey = setting.palettes[1] end
         else
-            local fallback = CustomizationStore.FindById(self.customSettings, TopicSeeds.DEFAULT_ID)
-            if fallback then self:UseCustomSetting(fallback) end
+            self.topicMode = TOPIC_MODE_BASE
+            self.activeCustomSettingId, self.customSettingName = nil, nil
+            self.floorHeight = MultiFloor.FLOOR_HEIGHT
         end
         self.activeFixedThemeId = nil
         self:NormalizeTopicSelection()
@@ -212,7 +255,13 @@ function DungeonApp:LoadCloudCustomizations(onComplete)
         if finished then return end
         finished = true
         self.cloudLoadPending = false
-        if onComplete then onComplete(success, source, reason) end
+        local topicSelectionChanged = self.topicSelectionVersion ~= topicSelectionVersionAtStart
+        if onComplete then onComplete(success, source, reason, topicSelectionChanged) end
+    end
+
+    if not self.cloudSyncEnabled then
+        Finish(true, "local", "cloud sync disabled")
+        return
     end
 
     if not clientCloud then
@@ -328,6 +377,11 @@ function DungeonApp:SaveCustomizations(onComplete)
         return false, localReason
     end
 
+    if not self.cloudSyncEnabled then
+        if onComplete then onComplete(true, nil, "local") end
+        return true
+    end
+
     if not clientCloud then
         local reason = "clientCloud unavailable"
         log:Write(LOG_WARNING, "[DungeonForge] " .. reason .. "; saved local cache only")
@@ -349,7 +403,9 @@ function DungeonApp:ReportCustomizationSave(success, successText, reason, target
     if success and target == "cloud" then
         self.panel:SetStatus(successText .. "（本地与云端）")
     elseif success and target == "local" then
-        self.panel:SetStatus(successText .. "（已保存本地；云端同步失败：" .. tostring(reason or "不可用") .. "）")
+        self.panel:SetStatus(self.cloudSyncEnabled
+            and (successText .. "（已保存本地；云端同步失败：" .. tostring(reason or "不可用") .. "）")
+            or (successText .. "（已保存本地）"))
     else
         self.panel:SetStatus("保存失败：" .. tostring(reason or "未知错误"))
     end
@@ -366,44 +422,144 @@ function DungeonApp:CreateScene()
     self.overviewViewport = Viewport:new(self.scene, self.camera)
     renderer:SetViewport(0, self.overviewViewport); renderer.hdrRendering = true
     self.dungeonRenderer = NativeDungeonRenderer.new(self.scene)
+    self.pcgDungeonRenderer = PCGDungeonRenderer.new(self.scene)
     self.forgeCamera = ForgeCameraController.new(self.cameraNode, self.camera)
     print("[DungeonForge] native UrhoX viewport ready")
 end
 
+function DungeonApp:IsEmptyFixedThemeActive()
+    local preset = FixedThemes.Get(self.activeFixedThemeId)
+    return preset ~= nil and preset.emptyScene == true
+end
+
+function DungeonApp:IsPCGDungeonThemeActive()
+    local preset = FixedThemes.Get(self.activeFixedThemeId)
+    return preset ~= nil and preset.dungeonFlow == "pcgDungeon"
+end
+
+function DungeonApp:ClearInactivePCGDungeonScene()
+    if self:IsPCGDungeonThemeActive() or not self.pcgDungeonRenderer then return false end
+    local renderer = self.pcgDungeonRenderer
+    local hasScene = renderer.root ~= nil
+        or renderer.lightDebugRoot ~= nil
+        or renderer.cellDebugRoot ~= nil
+        or renderer.stats ~= nil
+        or #(renderer.groups or {}) > 0
+        or #(renderer.lights or {}) > 0
+    if not hasScene then return false end
+    renderer:Clear()
+    self.lastPCGDungeonMarkerResult = nil
+    print("[DungeonForge] cleared inactive PCG Dungeon scene")
+    return true
+end
+
+function DungeonApp:IsSceneLightingEnabled()
+    local preset = FixedThemes.Get(self.activeFixedThemeId)
+    return not (preset and preset.lightingEnabled == false)
+end
+
+function DungeonApp:ClearSceneContent()
+    self.pendingPreviewMode, self.floorViewBeforePreview = nil, nil
+    renderer:SetViewport(0, nil)
+    if self.preview and self.preview.ClearScene then self.preview:ClearScene() end
+    if self.forgeCamera then
+        self.forgeCamera.enabled = true
+        self.forgeCamera:UsePerspectiveView(true)
+    end
+    if self.panel then
+        self.panel:SetPreviewActive(false, nil)
+        self.panel:SetEditorActive(false, self.editorMode)
+    end
+    self.editorActive, self.editorTransition, self.editorEntryMode = false, nil, nil
+    self.editorDirty, self.editorRebuildPending = false, false
+    self.editorRebuildAfterFrame, self.editorRebuildIdle = 0, 0
+    if self.editor2D then self.editor2D:SetVisible(false) end
+    if self.editor3D then self.editor3D:SetVisible(false) end
+    if self.dungeonRenderer then self.dungeonRenderer:Clear() end
+    if self.pcgDungeonRenderer then
+        self.pcgDungeonRenderer:ClearEditorSelection()
+        self.pcgDungeonRenderer:Clear()
+    end
+    if self.editor3D and self.editor3D.ClearOverlay then self.editor3D:ClearOverlay() end
+    if self.lightGroupNode then self.lightGroupNode:Dispose() end
+    self.lightGroupNode, self.zone, self.sun, self.lightPreset = nil, nil, nil, nil
+    if self.scene then
+        for _, child in ipairs(self.scene:GetChildren()) do
+            if child ~= self.cameraNode then child:Dispose() end
+        end
+    end
+    self.dungeon, self.editorRooms, self.editorLinks = nil, nil, nil
+    self.lastValidEditorRooms, self.lastValidEditorLinks = nil, nil
+    self.selectedEditorRoom, self.selectedEditorRoomGroupId = nil, nil
+    print("[DungeonForge] empty fixed theme: scene, atmosphere, editor overlays, and character cleared")
+end
+
 function DungeonApp:LoadLightingPreset(settingKey)
+    local fixedPreset = FixedThemes.Get(self.activeFixedThemeId)
+    local environmentOnly = not self:IsSceneLightingEnabled()
+        or (fixedPreset and fixedPreset.directionalLight == false)
+    local localLightOnly = fixedPreset and fixedPreset.localLightOnlyEnvironment == true
     local environment = ENVIRONMENTS[settingKey] or ENVIRONMENTS.dungeon
-    local preset = environment.preset
-    if self.lightPreset == preset and self.zone and self.sun then return end
+    local preset = environmentOnly and (fixedPreset and fixedPreset.environmentPreset or environment.preset)
+        or environment.preset
+    local presetKey = localLightOnly and "local-point-lights"
+        or (environmentOnly and (preset .. ":environment-only") or preset)
+    if self.lightPreset == presetKey and self.zone then return end
     if self.lightGroupNode then self.lightGroupNode:Remove() end
     self.lightGroupNode = self.scene:CreateChild("LightGroup")
+    if localLightOnly then
+        self.zone = self.lightGroupNode:CreateComponent("Zone")
+        self.zone.boundingBox = BoundingBox(Vector3(-1000, -1000, -1000), Vector3(1000, 1000, 1000))
+        self.sun = nil
+        self.lightPreset = presetKey
+        print("[DungeonForge] local point-light environment (IBL and directional light disabled)")
+        return
+    end
     local file = cache:GetResource("XMLFile", preset)
     if file then
         self.lightGroupNode:LoadXML(file:GetRoot())
         self.zone = self.lightGroupNode:GetComponent("Zone", true)
-        self.sun = self.lightGroupNode:GetComponent("Light", true)
-        self.lightPreset = preset
-        print("[DungeonForge] lighting preset=" .. preset)
+        local loadedSun = self.lightGroupNode:GetComponent("Light", true)
+        if environmentOnly then
+            if loadedSun then loadedSun:Dispose() end
+            self.sun = nil
+            print("[DungeonForge] environment preset=" .. preset .. " (directional light removed)")
+        else
+            self.sun = loadedSun
+            print("[DungeonForge] lighting preset=" .. preset)
+        end
+        self.lightPreset = presetKey
     else
         log:Write(LOG_ERROR, "[DungeonForge] missing lighting preset " .. preset)
         self.zone = self.lightGroupNode:CreateComponent("Zone")
         self.zone.boundingBox = BoundingBox(Vector3(-1000, -1000, -1000), Vector3(1000, 1000, 1000))
-        local sunNode = self.lightGroupNode:CreateChild("Sun")
-        sunNode.rotation = Quaternion(52, -36, 0)
-        self.sun = sunNode:CreateComponent("Light")
-        self.sun.lightType = LIGHT_DIRECTIONAL
+        self.sun = nil
+        self.lightPreset = environmentOnly and "disabled" or preset
+        if not environmentOnly then
+            local sunNode = self.lightGroupNode:CreateChild("Sun")
+            sunNode.rotation = Quaternion(52, -36, 0)
+            self.sun = sunNode:CreateComponent("Light")
+            self.sun.lightType = LIGHT_DIRECTIONAL
+        end
     end
 end
 
 function DungeonApp:State()
     self:NormalizeTopicSelection()
+    local activeFixedPreset = FixedThemes.Get(self.activeFixedThemeId)
     return {
         seed = self.seed, floorCount = self.floorCount, floorHeight = self.floorHeight,
         currentFloor = self.currentFloor,
         floorViewMode = self.floorViewMode, settingKey = self.settingKey, themeKey = self.themeKey,
-        roomCounts = self.roomCounts, loopRates = self.loopRates, decorDensities = self.decorDensities,
+        roomCounts = self.roomCounts,
+        loopRates = self.loopRates, decorDensities = self.decorDensities,
         customSettings = self.customSettings, roomGroups = self.roomGroups, customPalettes = self.customPalettes,
         activeCustomSettingId = self.activeCustomSettingId, customSettingName = self.customSettingName,
         activeFixedThemeId = self.activeFixedThemeId,
+        activeFixedThemeLabel = activeFixedPreset and activeFixedPreset.label or nil,
+        pcgDungeonStats = self.pcgDungeonRenderer and self.pcgDungeonRenderer.stats or nil,
+        lightDebugVisible = self.pcgDungeonRenderer and self.pcgDungeonRenderer.lightDebugVisible == true,
+        cellDebugVisible = self.pcgDungeonRenderer and self.pcgDungeonRenderer.cellDebugVisible == true,
         topicMode = self.topicMode,
         editorActive = self.editorActive, editorMode = self.editorMode,
         selectedEditorRoom = self.selectedEditorRoom,
@@ -412,24 +568,9 @@ function DungeonApp:State()
     }
 end
 
-function DungeonApp:EnsureSeedRoomGroups()
-    local merged, changed, reason = LocalRequirementPlanner.EnsureSeedRoomGroups(self.roomGroups)
-    if not merged then
-        log:Write(LOG_ERROR, "[DungeonForge] built-in room rules invalid: " .. tostring(reason))
-        return false, reason
-    end
-    self.roomGroups = merged
-    if changed then
-        print(string.format("[DungeonForge] materialized seed topic rooms hospital=%d school=%d",
-            #LocalRequirementPlanner.GroupsForTopic(self.roomGroups, TopicSeeds.IdForSetting("hospital")),
-            #LocalRequirementPlanner.GroupsForTopic(self.roomGroups, TopicSeeds.IdForSetting("school"))))
-    end
-    return changed
-end
-
 function DungeonApp:ActiveRoomGroups()
-    return LocalRequirementPlanner.GroupsForTopic(
-        self.roomGroups, self.activeCustomSettingId)
+    if not self.activeCustomSettingId then return {} end
+    return LocalRequirementPlanner.GroupsForTopic(self.roomGroups, self.activeCustomSettingId)
 end
 
 function DungeonApp:RefreshPanel()
@@ -447,6 +588,22 @@ function DungeonApp:UseCustomSetting(record)
     local palettes = Themes.GetSetting(self.settingKey).palettes
     if not Themes.IsPaletteForSetting(self.themeKey, self.settingKey) then self.themeKey = palettes[1] end
     return true
+end
+
+-- Fixed presets own their layout controls (for example, Shadow Castle uses
+-- three floors and a 8/7/7 room split). Once the user returns to an AI/base
+-- generated scene, restore the generic controls before the next generation so
+-- the scene and the left panel describe the same parameter set.
+function DungeonApp:ResetGeneratedSceneParameters()
+    self.floorCount = DEFAULT_GENERATED_FLOOR_COUNT
+    self.currentFloor = 0
+    self.roomCounts = { DEFAULT_GENERATED_ROOM_COUNT, DEFAULT_GENERATED_ROOM_COUNT }
+    self.loopRates = { DEFAULT_GENERATED_LOOP_RATE, DEFAULT_GENERATED_LOOP_RATE }
+    self.decorDensities = { DEFAULT_GENERATED_DECOR_DENSITY, DEFAULT_GENERATED_DECOR_DENSITY }
+end
+
+function DungeonApp:IsFixedTopicActive()
+    return self.activeFixedThemeId ~= nil or self.topicMode == TOPIC_MODE_FIXED_PCG
 end
 
 function DungeonApp:ClearRoomGroupAssignments(id)
@@ -467,42 +624,158 @@ function DungeonApp:CreatePanel()
             self.seed = ((os.time() * 1103515245 + math.floor(os.clock() * 1000000)) & 0xffffffff)
             self.editorRooms = nil; self:Generate(false, true)
         end,
-        onFixedPCG = function()
+        onFixedSetting = function(id)
+            local preset = FixedThemes.Get(id)
+            if not preset then return false, "固定题材不存在" end
+            if self.activeFixedThemeId == preset.id and self.fixedSettingSceneId == preset.id then
+                return true
+            end
+            if self.fixedSettingSwitchInProgress or (self.fixedSettingInputCooldown or 0) > 0 then
+                return true
+            end
+            local previousPreset = FixedThemes.Get(self.activeFixedThemeId)
+            self.fixedSettingSwitchInProgress = true
             self:MarkTopicSelectionChanged()
             self.topicMode = TOPIC_MODE_FIXED_PCG
-            self.activeFixedThemeId = FixedThemes.MODE_ID
+            self.activeFixedThemeId = preset.id
             self.activeCustomSettingId, self.customSettingName = nil, nil
-            self.settingKey, self.themeKey = "dungeon", "ancient"
-            self.floorHeight = MultiFloor.FLOOR_HEIGHT
+            self.settingKey, self.themeKey = preset.settingKey, preset.themeKey
+            self.floorCount = ClampInteger(preset.floorCount, 1, PCG_DUNGEON_MAX_FLOORS, self.floorCount)
+            self.currentFloor = math.min(self.currentFloor, self.floorCount - 1)
+            self.floorHeight = MultiFloor.NormalizeFloorHeight(preset.floorHeight)
+            self.roomCounts, self.loopRates, self.decorDensities = {}, {}, {}
+            if preset.id == "shadowCastle" then
+                self.seed = ClampInteger(preset.seed, 0, 0xffffffff, self.seed)
+                self.roomCounts = NormalizeRoomCounts(preset.roomCounts, preset.roomCounts, self.floorCount)
+            end
+            for floor = 1, self.floorCount do
+                self.roomCounts[floor] = self.roomCounts[floor] or preset.roomCount
+                self.loopRates[floor] = preset.loopRate
+                self.decorDensities[floor] = preset.decorDensity
+            end
             self.editorRooms = nil
-            self.editorLinks = nil
-            self:ApplyTheme()
-            self:Generate(false, true)
-            if self.panel then
-                self.panel:SetStatus("固定已进入空场景，等待 PCG 规则接入")
+            local switched, switchReason = true, nil
+            if preset.dungeonFlow == "pcgDungeon" then
+                switched, switchReason = self:RefreshPCGDungeon(true)
+            elseif preset.emptyScene then
+                self:ClearSceneContent()
+                self:RefreshPanel()
+            else
+                if previousPreset and previousPreset.dungeonFlow then
+                    self:ClearSceneContent()
+                end
+                self:ApplyTheme()
+                self:Generate(false, false)
+            end
+            self.fixedSettingSwitchInProgress = false
+            self.fixedSettingInputCooldown = 0.25
+            if not switched then return false, switchReason end
+            self.fixedSettingSceneId = preset.id
+            if self.panel and preset.dungeonFlow ~= "pcgDungeon" then
+                self.panel:SetStatus(preset.emptyScene
+                    and ("固定题材“" .. preset.label .. "”已切换为空场景")
+                    or ("固定题材“" .. preset.label .. "”已按 PCG 规则生成"))
             end
             return true
         end,
+        onPCGDungeonRefresh = function(parameters)
+            if not self:IsPCGDungeonThemeActive() then return false, "请先选择暗影古堡。" end
+            return self:RefreshPCGDungeon(true, parameters)
+        end,
+        onPCGDungeonLightDebug = function()
+            if not self:IsPCGDungeonThemeActive() then return nil, "请先选择暗影古堡。" end
+            local enabled, count = self.pcgDungeonRenderer:ToggleLightDebug()
+            self:RefreshPanel()
+            return enabled, count
+        end,
+        onPCGDungeonCellDebug = function()
+            if not self:IsPCGDungeonThemeActive() then return nil, "请先选择暗影古堡。" end
+            local enabled, statsOrReason = self.pcgDungeonRenderer:ToggleCellDebug()
+            renderer:SetViewport(0, nil)
+            renderer:SetViewport(0, self.overviewViewport)
+            self:RefreshPanel()
+            return enabled, statsOrReason
+        end,
+        onMarkerFlow = function()
+            return self:RunMarkerFlowValidation()
+        end,
+        onFixedPCG = function()
+            -- The fixed PCG mode button is the public entry point for the
+            -- authored castle flow. Keep it on the same callback as the
+            -- preset so initialization, resource preload, marker generation,
+            -- and scene rebuild cannot diverge between the two controls.
+            local onFixedSetting = self.panel and self.panel.callbacks
+                and self.panel.callbacks.onFixedSetting
+            if not onFixedSetting then return false, "固定题材生成回调尚未初始化" end
+            return onFixedSetting("shadowCastle")
+        end,
         onSetting = function(key)
-            local record = CustomizationStore.FindById(
-                self.customSettings, TopicSeeds.IdForSetting(key))
-            if record then return self.panel.callbacks.onCustomSettingSelect(record.id) end
-            return false, "题材不存在。"
+            self:MarkTopicSelectionChanged()
+            self.topicMode = TOPIC_MODE_BASE
+            local wasFixedTopic = self:IsFixedTopicActive()
+            local previousPreset = FixedThemes.Get(self.activeFixedThemeId)
+            local oldId, oldName, oldSetting, oldTheme =
+                self.activeCustomSettingId, self.customSettingName, self.settingKey, self.themeKey
+            local oldFloorHeight = self.floorHeight
+            self.activeCustomSettingId, self.customSettingName = nil, nil
+            self.activeFixedThemeId = nil
+            self.floorHeight = MultiFloor.FLOOR_HEIGHT
+            self.settingKey = key; self.themeKey = Themes.GetSetting(key).palettes[1]
+            if oldId then
+                self.customizationRevision = self.customizationRevision + 1
+                local saved, reason = self:SaveCustomizations(function(success, detail, target)
+                    self:ReportCustomizationSave(success, "当前题材已更新", detail, target)
+                end)
+                if not saved then
+                    self.activeCustomSettingId, self.customSettingName = oldId, oldName
+                    self.settingKey, self.themeKey = oldSetting, oldTheme
+                    self.floorHeight = oldFloorHeight
+                    self.customizationRevision = self.customizationRevision - 1
+                    return self.panel:SetStatus("题材切换未保存：" .. tostring(reason))
+                end
+            end
+            if previousPreset and previousPreset.dungeonFlow then
+                self:ClearSceneContent()
+                self.fixedSettingSceneId = nil
+            end
+            if wasFixedTopic then self:ResetGeneratedSceneParameters() end
+            self.editorRooms = nil; self:ApplyTheme(); self:Generate(false, false)
         end,
         onRandomSetting = function()
-            local ready = {}
-            for _, record in ipairs(self.customSettings) do
-                if record.packStatus ~= "draft" then ready[#ready + 1] = record end
+            self:MarkTopicSelectionChanged()
+            self.topicMode = TOPIC_MODE_BASE
+            local wasFixedTopic = self:IsFixedTopicActive()
+            local previousPreset = FixedThemes.Get(self.activeFixedThemeId)
+            local oldId, oldName, oldSetting, oldTheme =
+                self.activeCustomSettingId, self.customSettingName, self.settingKey, self.themeKey
+            local oldFloorHeight = self.floorHeight
+            local hadCustom = self.activeCustomSettingId ~= nil
+            self.activeCustomSettingId, self.customSettingName = nil, nil
+            self.activeFixedThemeId = nil
+            self.floorHeight = MultiFloor.FLOOR_HEIGHT
+            self.settingKey = Themes.NextSetting(self.settingKey)
+            self.themeKey = Themes.RandomPalette(self.settingKey)
+            if hadCustom then
+                self.customizationRevision = self.customizationRevision + 1
+                local saved = self:SaveCustomizations()
+                if not saved then
+                    self.activeCustomSettingId, self.customSettingName = oldId, oldName
+                    self.settingKey, self.themeKey = oldSetting, oldTheme
+                    self.floorHeight = oldFloorHeight
+                    self.customizationRevision = self.customizationRevision - 1
+                    return self.panel:SetStatus("随机题材切换未保存")
+                end
             end
-            if #ready == 0 then return false, "没有可使用的题材。" end
-            local nextIndex = 1
-            for index, record in ipairs(ready) do
-                if record.id == self.activeCustomSettingId then nextIndex = index % #ready + 1; break end
+            if previousPreset and previousPreset.dungeonFlow then
+                self:ClearSceneContent()
+                self.fixedSettingSceneId = nil
             end
-            return self.panel.callbacks.onCustomSettingSelect(ready[nextIndex].id)
+            if wasFixedTopic then self:ResetGeneratedSceneParameters() end
+            self.editorRooms = nil; self:ApplyTheme(); self:Generate(false, false)
         end,
         onCustomSettingSave = function(custom, mode)
             mode = mode == "draft" and "draft" or "generate"
+            local wasFixedTopic = self:IsFixedTopicActive()
             local previousActiveId, previousName = self.activeCustomSettingId, self.customSettingName
             local previousSetting, previousTheme = self.settingKey, self.themeKey
             local previousFloorHeight = self.floorHeight
@@ -567,14 +840,15 @@ function DungeonApp:CreatePanel()
                 print(string.format("[DungeonForge] compiled topic=%s groups=%d source=%s reference=%s",
                     prepared.id, #plan.roomGroups, plan.source, tostring(plan.referenceImageAvailable)))
             end
-            local _, replaced = CustomizationStore.UpsertFirstById(self.customSettings, prepared)
-            if self.panel then self.panel:SetCustomSettingExpanded(true) end
+            local _, replaced = CustomizationStore.UpsertById(self.customSettings, prepared)
             self.customizationRevision = self.customizationRevision + 1
             if mode == "generate" then
                 self:UseCustomSetting(prepared)
             elseif self.activeCustomSettingId == prepared.id then
-                local fallback = CustomizationStore.FindById(self.customSettings, TopicSeeds.DEFAULT_ID)
-                if fallback and fallback.id ~= prepared.id then self:UseCustomSetting(fallback) end
+                self:MarkTopicSelectionChanged()
+                self.topicMode = TOPIC_MODE_BASE
+                self.activeCustomSettingId, self.customSettingName = nil, nil
+                self.floorHeight = MultiFloor.FLOOR_HEIGHT
             end
             self.customizationUpdatedAt = os.date("!%Y-%m-%dT%H:%M:%SZ")
             local saved, reason = self:SaveLocalCustomizations()
@@ -597,12 +871,13 @@ function DungeonApp:CreatePanel()
                 return true
             end
             self.editorRooms = nil
+            if wasFixedTopic then self:ResetGeneratedSceneParameters() end
             self:ApplyTheme(); self:Generate(false, false)
             if prepared.generationMode == GenericThemeRules.GENERATION_MODE then
                 self.panel:SetStatus(string.format(
-                    "题材“%s”已使用通用 PCG 和特定规则生成基础预览；AI 3D 资产接口待接入", prepared.label))
+                    "题材“%s”已使用通用规则生成基础预览；AI 3D 资产接口待接入", prepared.label))
             else
-                self.panel:SetStatus(string.format("题材“%s”已生成 %d 个特定房间并执行预览",
+                self.panel:SetStatus(string.format("题材包“%s”已生成 %d 个房间组并执行预览",
                     prepared.label, plan and #plan.roomGroups or 0))
             end
             return true
@@ -638,6 +913,7 @@ function DungeonApp:CreatePanel()
         end,
         onCustomSettingSelect = function(id)
             if self.activeCustomSettingId == id then return true end
+            local wasFixedTopic = self:IsFixedTopicActive()
             local record = CustomizationStore.FindById(self.customSettings, id)
             if not record then return false, "题材组不存在或已被删除。" end
             if record.packStatus == "draft" then return false, "该题材仍是草稿，请先生成题材包。" end
@@ -657,6 +933,7 @@ function DungeonApp:CreatePanel()
                 return false, reason
             end
             self.editorRooms = nil
+            if wasFixedTopic then self:ResetGeneratedSceneParameters() end
             self:ApplyTheme(); self:Generate(false, false)
             self.panel:SetStatus(string.format("已切换到题材“%s”", record.label))
             return true
@@ -677,16 +954,11 @@ function DungeonApp:CreatePanel()
             end
             self.roomGroups = remainingGroups
             local wasActive = self.activeCustomSettingId == id
-            local fallback
             if wasActive then
-                for _, record in ipairs(self.customSettings) do
-                    if record.packStatus ~= "draft" then fallback = record; break end
-                end
-                if not fallback then
-                    fallback = TopicSeeds.Get(TopicSeeds.DEFAULT_ID)
-                    CustomizationStore.UpsertById(self.customSettings, fallback)
-                end
-                self:UseCustomSetting(fallback)
+                self:MarkTopicSelectionChanged()
+                self.activeCustomSettingId, self.customSettingName = nil, nil
+                self.topicMode = TOPIC_MODE_BASE
+                self.floorHeight = MultiFloor.FLOOR_HEIGHT
             end
             self.customizationRevision = self.customizationRevision + 1
             self:RefreshPanel()
@@ -720,11 +992,11 @@ function DungeonApp:CreatePanel()
             local _, replaced = CustomizationStore.UpsertById(self.customPalettes, palette)
             Themes.SetCustomPalettes(self.customPalettes)
             self.settingKey, self.themeKey = palette.baseSettingKey, palette.id
-            local activeTopic = CustomizationStore.FindById(self.customSettings, self.activeCustomSettingId)
-            if activeTopic and activeTopic.baseSettingKey ~= self.settingKey then
-                local seedTopic = CustomizationStore.FindById(
-                    self.customSettings, TopicSeeds.IdForSetting(self.settingKey))
-                if seedTopic then self:UseCustomSetting(seedTopic) end
+            if self.activeCustomSettingId and self.settingKey ~= oldSetting then
+                self:MarkTopicSelectionChanged()
+                self.topicMode = TOPIC_MODE_BASE
+                self.activeCustomSettingId, self.customSettingName = nil, nil
+                self.floorHeight = MultiFloor.FLOOR_HEIGHT
             end
             self.customizationRevision = self.customizationRevision + 1
             self:RefreshPanel()
@@ -774,22 +1046,18 @@ function DungeonApp:CreatePanel()
         onTheme = function(key)
             if not Themes.IsPaletteForSetting(key, self.settingKey) then return false, "该配色不适用于当前题材。" end
             if self.activeFixedThemeId == FixedThemes.MODE_ID then
-                local fallback = CustomizationStore.FindById(
-                    self.customSettings, TopicSeeds.IdForSetting(self.settingKey))
-                    or CustomizationStore.FindById(self.customSettings, TopicSeeds.DEFAULT_ID)
-                if fallback then self:UseCustomSetting(fallback) end
+                self:MarkTopicSelectionChanged()
+                self.topicMode = TOPIC_MODE_BASE
+                self.activeFixedThemeId = nil
             end
-            self.activeFixedThemeId = nil
             self.themeKey = key; self:ApplyTheme(); self:RebuildView(); self:RefreshPanel(); return true
         end,
         onRandomTheme = function()
             if self.activeFixedThemeId == FixedThemes.MODE_ID then
-                local fallback = CustomizationStore.FindById(
-                    self.customSettings, TopicSeeds.IdForSetting(self.settingKey))
-                    or CustomizationStore.FindById(self.customSettings, TopicSeeds.DEFAULT_ID)
-                if fallback then self:UseCustomSetting(fallback) end
+                self:MarkTopicSelectionChanged()
+                self.topicMode = TOPIC_MODE_BASE
+                self.activeFixedThemeId = nil
             end
-            self.activeFixedThemeId = nil
             self.themeKey = Themes.RandomPalette(self.settingKey, self.themeKey)
             self:ApplyTheme(); self:RebuildView(); self:RefreshPanel()
         end,
@@ -800,20 +1068,15 @@ function DungeonApp:CreatePanel()
             end
             local previous = CustomizationStore.FindById(self.roomGroups, group.id)
             if previous then
-                for _, field in ipairs({ "topicId", "settingKey", "plannerSource", "compiledFromRevision", "compiledSpecVersion",
+                for _, field in ipairs({ "topicId", "plannerSource", "compiledFromRevision", "compiledSpecVersion",
                     "sortOrder", "roleKeys", "defaultGroup", "minCount", "maxCount", "minArea", "maxArea",
-                    "propRules", "color", "ruleClass" }) do
+                    "propRules", "color" }) do
                     if group[field] == nil then group[field] = previous[field] end
                 end
                 group.source, group.locked = "manual", true
             else
                 group.topicId = group.topicId or self.activeCustomSettingId
-                group.settingKey = group.topicId and nil or self.settingKey
                 group.source, group.locked = "manual", true
-            end
-            if group.topicId then group.settingKey = nil end
-            if not group.topicId and not group.settingKey then
-                group.settingKey = "dungeon"
             end
             group.color = RoomGroupColors.Parse(group.color,
                 RoomGroupColors.Default(group, #self.roomGroups + 1))
@@ -825,7 +1088,7 @@ function DungeonApp:CreatePanel()
             self:RefreshPanel()
             local saved, reason = self:SaveCustomizations(function(success, detail, target)
                 self:ReportCustomizationSave(success,
-                    string.format("房间“%s”已保存", prepared.name), detail, target)
+                    string.format("房间组“%s”已保存", prepared.name), detail, target)
             end)
             if not saved then
                 CustomizationStore.DeleteById(self.roomGroups, prepared.id)
@@ -848,16 +1111,12 @@ function DungeonApp:CreatePanel()
         onRoomGroupDelete = function(id)
             local deleteIndex = nil
             for index, item in ipairs(self.roomGroups) do if item.id == id then deleteIndex = index; break end end
-            local target = CustomizationStore.FindById(self.roomGroups, id)
-            if target and tostring(target.id or ""):sub(1, 8) == "builtin-" then
-                return false, "内置房间不能删除，可以编辑其规则。"
-            end
             local deleted = CustomizationStore.DeleteById(self.roomGroups, id)
-            if not deleted then return false, "房间不存在。" end
+            if not deleted then return false, "房间组不存在。" end
             self.customizationRevision = self.customizationRevision + 1
             self:RefreshPanel()
             local saved, reason = self:SaveCustomizations(function(success, detail, target)
-                self:ReportCustomizationSave(success, "房间已删除", detail, target)
+                self:ReportCustomizationSave(success, "房间组已删除", detail, target)
             end)
             if not saved then
                 table.insert(self.roomGroups, deleteIndex or (#self.roomGroups + 1), deleted)
@@ -872,12 +1131,8 @@ function DungeonApp:CreatePanel()
         end,
         onRoomGroupAssign = function(id)
             local groupId = id ~= "" and id or nil
-            if groupId then
-                local visible = false
-                for _, group in ipairs(self:ActiveRoomGroups()) do
-                    if group.id == groupId then visible = true; break end
-                end
-                if not visible then return false, "该房间不属于当前题材或已被删除。" end
+            if groupId and not CustomizationStore.FindById(self.roomGroups, groupId) then
+                return false, "房间组不存在或已被删除。"
             end
             if not self.editor or not self.editor.SetSelectedRoomGroup then return false, "请先选择一个房间。" end
             return self.editor:SetSelectedRoomGroup(groupId)
@@ -909,8 +1164,8 @@ function DungeonApp:CreatePanel()
             -- need to perturb generation retries or stair ordering.
             self:Generate(self.editorRooms ~= nil, false)
         end,
-        onAddFloorBefore = function() self:AddFloor(self.currentFloor + 1) end,
         onAddFloorAfter = function() self:AddFloor(self.currentFloor + 2) end,
+        onAddFloorTop = function() self:AddFloor(self.floorCount + 1) end,
         onRemoveFloor = function() self:RemoveFloor() end,
         onFloorView = function(mode) self.floorViewMode = mode; self:RebuildView(); self:RefreshPanel() end,
         onToggleEditor = function() self:ToggleEditorMode("3d") end,
@@ -923,7 +1178,6 @@ end
 function DungeonApp:Start()
     input.mouseMode = MM_ABSOLUTE
     self:LoadLocalCustomizations()
-    self:EnsureSeedRoomGroups()
     self:CreateScene(); self:ApplyTheme()
     self.eventNode = Node(); self.eventObject = self.eventNode:CreateScriptObject("LuaScriptObject")
     self:CreatePanel()
@@ -933,6 +1187,17 @@ function DungeonApp:Start()
             local mirror = self.editorMode == "2d" and self.editor3D or self.editor2D
             if self.editor and mirror and mirror ~= self.editor and mirror.SyncEditorState then
                 mirror:SyncEditorState(self.editor)
+            end
+            if EditorData.HasPendingConnections(rooms) then
+                -- Keep newly drawn rooms in the editor until they join the
+                -- authored graph; rebuilding a disconnected graph would roll
+                -- the canvas back to the last generated dungeon.
+                self.editorDirty, self.editorRebuildPending = false, false
+                self.editorRebuildAfterFrame, self.editorRebuildIdle = 0, 0
+                if self.panel then
+                    self.panel:SetStatus("新房间已保留在画布中；连接到现有房间后更新场景")
+                end
+                return
             end
             -- Never rebuild inside the pointer callback. Queue one model rebuild
             -- after the gesture has fully released so dragging stays responsive.
@@ -949,10 +1214,15 @@ function DungeonApp:Start()
             if mode ~= self.editorMode then return end
             self.selectedEditorRoom = index
             self.selectedEditorRoomGroupId = room and room.roomGroupId or nil
-            if mode == "2d" then
+            if self:IsPCGDungeonThemeActive() then
+                self.dungeonRenderer:ClearEditorSelection()
+                self.pcgDungeonRenderer:SetEditorSelection(self.dungeon, index)
+            elseif mode == "2d" then
+                self.pcgDungeonRenderer:ClearEditorSelection()
                 self.dungeonRenderer:SetEditorSelection(self.dungeon, index, linkIndex, link)
             else
                 self.dungeonRenderer:ClearEditorSelection()
+                self.pcgDungeonRenderer:ClearEditorSelection()
             end
             self:RefreshPanel()
         end,
@@ -975,52 +1245,284 @@ function DungeonApp:Start()
     })
     self.eventObject:SubscribeToEvent("Update", function(_, _, eventData) self:HandleUpdate(eventData:GetFloat("TimeStep")) end)
     self:Generate(false, true)
-    self.panel:SetStatus("正在读取云端题材…")
-    self:LoadCloudCustomizations(function(success, source, reason)
-        if success and (source == "cloud" or source == "local-synced") then
-            self:ApplyTheme()
-            self.editorRooms, self.editorLinks = nil, nil
-            self:Generate(false, false)
-        end
+    if self.cloudSyncEnabled then
+        self.panel:SetStatus("正在读取云端题材…")
+        self:LoadCloudCustomizations(function(success, source, reason, topicSelectionChanged)
+            if success and not topicSelectionChanged
+                and (source == "cloud" or source == "local-synced") then
+                self:ApplyTheme()
+                self.editorRooms, self.editorLinks = nil, nil
+                self:Generate(false, false)
+            end
+            self:RefreshPanel()
+            if source == "cloud" then
+                self.panel:SetStatus("云端题材已加载")
+            elseif source == "migrated" then
+                self.panel:SetStatus("本地题材已迁移并保存到云端")
+            elseif source == "local-synced" then
+                self.panel:SetStatus("较新的本地题材已重新同步到云端")
+            elseif source == "empty" then
+                self.panel:SetStatus("云端暂无自定义题材")
+            elseif source == "local-newer" then
+                self.panel:SetStatus("已保留刚刚编辑的本地题材")
+            elseif not success then
+                self.panel:SetStatus("云端读取失败，已使用本地缓存：" .. tostring(reason or "未知错误"))
+            end
+        end)
+    else
         self:RefreshPanel()
-        if source == "cloud" then
-            self.panel:SetStatus("云端题材已加载")
-        elseif source == "migrated" then
-            self.panel:SetStatus("本地题材已迁移并保存到云端")
-        elseif source == "local-synced" then
-            self.panel:SetStatus("较新的本地题材已重新同步到云端")
-        elseif source == "empty" then
-            self.panel:SetStatus("云端暂无自定义题材")
-        elseif source == "local-newer" then
-            self.panel:SetStatus("已保留刚刚编辑的本地题材")
-        elseif not success then
-            self.panel:SetStatus("云端读取失败，已使用本地缓存：" .. tostring(reason or "未知错误"))
-        end
-    end)
+        self.panel:SetStatus("本地离线模式：题材仅保存在此设备")
+        print("[DungeonForge] offline mode enabled; cloud customization sync skipped")
+    end
 end
 
 function DungeonApp:ApplyTheme()
+    if self:IsEmptyFixedThemeActive() then
+        self:ClearSceneContent()
+        return
+    end
+    renderer:SetViewport(0, self.overviewViewport)
     local theme = Themes.Get(self.themeKey)
+    local fixedPreset = FixedThemes.Get(self.activeFixedThemeId)
+    if self.pcgDungeonRenderer then
+        self.pcgDungeonRenderer:SetLightingEnabled(self:IsSceneLightingEnabled())
+    end
     self:LoadLightingPreset(self.settingKey)
     self.zone.fogColor = HexColor(theme.fog, 1.0)
     self.zone.fogStart, self.zone.fogEnd = 0, 1000
     self.zone.fogDensity = theme.fogDensity
-    self.zone.ambientSource = AMBIENT_COLOR
-    self.zone.ambientGradient = true
-    self.zone.ambientStartColor = HexColor(theme.sky, 1.0)
-    self.zone.ambientEndColor = HexColor(theme.ground, 1.0)
-    self.zone.ambientColor = HexColor(theme.sky, 1.0)
-    self.zone.ambientIntensity = theme.ambient
+    local preserveEnvironmentLighting = fixedPreset
+        and fixedPreset.preserveEnvironmentLighting == true
+    if preserveEnvironmentLighting then
+        if fixedPreset.environmentIntensity ~= nil then
+            self.zone.ambientIntensity = fixedPreset.environmentIntensity
+        end
+    else
+        self.zone.ambientSource = AMBIENT_COLOR
+        local ambientGradient = true
+        if fixedPreset and fixedPreset.ambientGradient ~= nil then
+            ambientGradient = fixedPreset.ambientGradient
+        end
+        self.zone.ambientGradient = ambientGradient
+        self.zone.ambientStartColor = HexColor(theme.sky, 1.0)
+        self.zone.ambientEndColor = HexColor(theme.ground, 1.0)
+        self.zone.ambientColor = HexColor(
+            fixedPreset and fixedPreset.ambientColor or theme.sky, 1.0)
+        self.zone.ambientIntensity = fixedPreset and fixedPreset.ambientIntensity ~= nil
+            and fixedPreset.ambientIntensity or theme.ambient
+    end
     self.zone.autoExposureEnabled = false
     self.zone.bloomPlusEnabled = self.postEnabled
-    self.sun.color = HexColor(theme.sun, 1.0)
-    self.sun.brightness = theme.sunIntensity
-    self.sun.castShadows = true
-    self.sun.shadowBias = BiasParameters(0.00025, 0.5)
-    self.sun.shadowCascade = CascadeParameters(12.0, 45.0, 140.0, 0.0, 0.8)
+    if not self:IsSceneLightingEnabled() or (fixedPreset and fixedPreset.directionalLight == false) then
+        if self.sun then self.sun:Dispose(); self.sun = nil end
+        print("[DungeonForge] fixed scene directional light removed id="
+            .. tostring(fixedPreset and fixedPreset.id or "lighting-disabled"))
+    else
+        self.sun.color = HexColor(theme.sun, 1.0)
+        self.sun.brightness = theme.sunIntensity
+        self.sun.castShadows = true
+        self.sun.shadowBias = BiasParameters(0.00025, 0.5)
+        self.sun.shadowCascade = CascadeParameters(12.0, 45.0, 140.0, 0.0, 0.8)
+    end
+end
+
+function DungeonApp:ApplyPCGDungeonParameters(parameters)
+    parameters = parameters or {}
+    local preset = FixedThemes.Get("shadowCastle")
+    self.seed = ClampInteger(parameters.seed, 0, 0xffffffff, self.seed)
+    self.floorCount = ClampInteger(parameters.floorCount, 1, PCG_DUNGEON_MAX_FLOORS,
+        self.floorCount or preset.floorCount or 3)
+    self.currentFloor = math.min(self.currentFloor, self.floorCount - 1)
+    local normalizedRoomCounts, roomCount = NormalizeRoomCounts(
+        parameters.roomCountsByFloor or self.roomCounts, preset.roomCounts, self.floorCount)
+    self.roomCounts = normalizedRoomCounts
+    local loopRatesByFloor, decorDensitiesByFloor = {}, {}
+    for floor = 1, self.floorCount do
+        self.loopRates[floor] = self.loopRates[floor] or preset.loopRate
+        self.decorDensities[floor] = self.decorDensities[floor] or preset.decorDensity
+        loopRatesByFloor[floor] = math.max(0, math.min(1,
+            (tonumber(self.loopRates[floor]) or preset.loopRate or 0) / 100))
+        decorDensitiesByFloor[floor] = math.max(0, math.min(1,
+            (tonumber(self.decorDensities[floor]) or preset.decorDensity or 0) / 100))
+    end
+    for floor = #self.loopRates, self.floorCount + 1, -1 do self.loopRates[floor] = nil end
+    for floor = #self.decorDensities, self.floorCount + 1, -1 do self.decorDensities[floor] = nil end
+    return {
+        seed = self.seed,
+        floorCount = self.floorCount,
+        roomCount = roomCount,
+        roomCountsByFloor = self.roomCounts,
+        loopRatesByFloor = loopRatesByFloor,
+        decorDensitiesByFloor = decorDensitiesByFloor,
+    }
+end
+
+function DungeonApp:RefreshPCGDungeon(frameCamera, parameters, useEditor)
+    if not self:IsPCGDungeonThemeActive() then return false, "暗影古堡未激活" end
+    local preloadOk, preloadResult = self.pcgDungeonRenderer:PreloadResources()
+    if not preloadOk then
+        local reason = "暗影古堡资源加载失败：" .. tostring(preloadResult)
+        if self.panel then self.panel:SetStatus(reason) end
+        log:Write(LOG_ERROR, "[DungeonForge] " .. reason)
+        return false, reason
+    end
+    useEditor = useEditor == true
+    self.generationSerial = self.generationSerial + 1
+    print(string.format("[DungeonForge] PCG generate #%d seed=%u floors=%d editor=%s",
+        self.generationSerial, self.seed & 0xffffffff, self.floorCount, tostring(useEditor)))
+    local applied = self:ApplyPCGDungeonParameters(parameters)
+    local started = os.clock()
+    local topologyStarted = os.clock()
+    local previousLayout = self.dungeon and self.dungeon.layout or nil
+    local dungeon = PCGDungeonGenerator.Generate({
+        seed = applied.seed,
+        floorCount = applied.floorCount,
+        roomCountsByFloor = applied.roomCountsByFloor,
+        loopRatesByFloor = applied.loopRatesByFloor,
+        cellSize = PCG_DUNGEON_CELL_SIZE,
+        editorEnabled = useEditor,
+        editorRooms = useEditor and self.editorRooms or nil,
+        editorEdges = useEditor and self.editorLinks or nil,
+        editorGridCells = useEditor and previousLayout
+            and (previousLayout.editorGridCells or previousLayout.gridCells) or nil,
+    })
+    local topologyMs = (os.clock() - topologyStarted) * 1000
+    if not dungeon.valid then
+        local reason = dungeon.error or "PCG Dungeon 生成了无效布局"
+        if self.panel then self.panel:SetStatus("暗影古堡刷新失败：" .. tostring(reason)) end
+        return false, reason
+    end
+    self.seed = dungeon.requestedSeed or self.seed
+    applied.seed = self.seed
+    local markerStarted = os.clock()
+    local markerResult = PCGDungeonMarkerPipeline.GenerateFromTopology(dungeon.topology, {
+        cellSize = PCG_DUNGEON_CELL_SIZE,
+        pillarPlacementDistance = 1.2,
+    })
+    local markerMs = (os.clock() - markerStarted) * 1000
+    if markerResult.stairTopologyValid == false then
+        local reason = "stair topology invalid: "
+            .. table.concat(markerResult.stairTopologyErrors or {}, "; ")
+        if self.panel then self.panel:SetStatus("暗影古堡刷新失败：" .. reason) end
+        log:Write(LOG_ERROR, "[PCGDungeon] " .. reason)
+        return false, reason
+    end
+    if useEditor then
+        self.dungeonRenderer:Clear()
+    else
+        self:ClearSceneContent()
+    end
+    self:ApplyTheme()
+    local buildStarted = os.clock()
+    local ok, result = self.pcgDungeonRenderer:RebuildFromMarkers(markerResult, {
+        rooms = dungeon.rooms,
+        cells = dungeon.topology.cells,
+        cellSize = PCG_DUNGEON_CELL_SIZE,
+        decorDensitiesByFloor = applied.decorDensitiesByFloor,
+    }, {
+        currentFloor = self.currentFloor,
+        viewMode = self.floorViewMode,
+        floorHeight = self.floorHeight,
+    })
+    local sceneBuildMs = (os.clock() - buildStarted) * 1000
+    if not ok then
+        if self.panel then self.panel:SetStatus("暗影古堡刷新失败：" .. tostring(result)) end
+        log:Write(LOG_ERROR, "[PCGDungeon] refresh failed: " .. tostring(result))
+        return false, result
+    end
+    result.generationMs = (os.clock() - started) * 1000
+    result.topologyMs, result.markerMs, result.sceneBuildMs = topologyMs, markerMs, sceneBuildMs
+    result.seed, result.floorCount, result.roomCount = applied.seed, applied.floorCount, dungeon.roomCount
+    result.stairCount = dungeon.astar.stairCount
+    result.delaunayEdgeCount = #dungeon.delaunay.edges
+    result.mstEdgeCount = #dungeon.graph.mstEdges
+    result.loopEdgeCount = #dungeon.graph.loopEdges
+    result.dungeonHash = dungeon.hash
+    self.dungeon = dungeon
+    if not useEditor then self.editorRooms, self.editorLinks = nil, nil end
+    self.roomCounts = {}
+    for floor = 1, self.floorCount do
+        self.roomCounts[floor] = dungeon.roomCountsByFloor[floor] or 0
+    end
+    self.lastPCGDungeonMarkerResult = markerResult
+    if self.editor2D then self.editor2D:SyncDungeon(dungeon, self.currentFloor, self:ActiveRoomGroups()) end
+    if self.editor3D then self.editor3D:SyncDungeon(dungeon, self.currentFloor, self:ActiveRoomGroups()) end
+    if self.editor then
+        local editorShouldBeVisible = self.editorActive and not self.editorTransition
+        if self.editor:IsVisible() ~= editorShouldBeVisible then
+            self.editor:SetVisible(editorShouldBeVisible)
+        end
+    end
+    print(string.format(
+        "[PCGDungeon] ready topologyMs=%.1f markerMs=%.1f sceneBuildMs=%.1f totalMs=%.1f",
+        topologyMs, markerMs, sceneBuildMs, result.generationMs))
+    if frameCamera ~= false and self.forgeCamera then
+        self.forgeCamera.defaultTarget = Vector3(0, (self.floorCount - 1) * PCG_DUNGEON_CELL_SIZE * 0.5, 0)
+        local sceneInfo = dungeon.sceneInfo or {}
+        local worldSpan = math.max(sceneInfo.worldWidth or dungeon.width * PCG_DUNGEON_CELL_SIZE,
+            sceneInfo.worldDepth or dungeon.height * PCG_DUNGEON_CELL_SIZE)
+        self.forgeCamera.defaultDistance = math.max(80,
+            worldSpan * 1.18 / (2 * math.tan(math.rad(45) * 0.5)))
+        self.forgeCamera:Reset()
+    end
+    if self.panel then
+        if self.panel.SetPCGDungeonStats then self.panel:SetPCGDungeonStats(result) end
+        self.panel:SetStatus(string.format(
+            "暗影古堡已刷新：%d 层，%d 个总房间，%d 个回环，%d 组楼梯，%d 个 Marker，种子 %u",
+            applied.floorCount, dungeon.roomCount, result.loopEdgeCount or 0, result.stairCount or 0,
+            result.markerCount or 0, applied.seed))
+    end
+    self:RefreshPanel()
+    return true, result
+end
+
+function DungeonApp:RunMarkerFlowValidation()
+    local started = os.clock()
+    local valid, report = PCGDungeonMarkerPipeline.RunReferenceValidation()
+    report = report or { errors = { "Marker 流程验证没有返回报告" } }
+    report.elapsedMs = (os.clock() - started) * 1000
+    if not valid then
+        local reason = table.concat(report.errors or { "未知错误" }, "; ")
+        if self.panel then self.panel:SetStatus("Marker 流程失败：" .. reason) end
+        log:Write(LOG_ERROR, "[PCGDungeonMarkerFlow] " .. reason)
+        return false, reason
+    end
+
+    self.lastPCGDungeonMarkerResult = report.result
+    if self.panel then
+        if self.panel.SetMarkerFlowStats then self.panel:SetMarkerFlowStats(report) end
+        self.panel:SetStatus(string.format(
+            "Marker 流程通过：%d 类 Marker，%d 点，%d 面（%.1f ms）",
+            report.markerTypeCount or 0, report.markerCount or 0,
+            report.faceCount or 0, report.elapsedMs))
+    end
+    print(string.format(
+        "[PCGDungeonMarkerFlow] PASS fixture=%s markers=%d faces=%d types=%d time=%.1fms",
+        tostring(report.fixturePath), report.markerCount or 0, report.faceCount or 0,
+        report.markerTypeCount or 0, report.elapsedMs))
+    return true, report
 end
 
 function DungeonApp:RebuildView(animate)
+    if self:IsPCGDungeonThemeActive() then
+        if not self.pcgDungeonRenderer or not self.pcgDungeonRenderer.cachedBuild then return end
+        local ok, reason = self.pcgDungeonRenderer:RebuildView({
+            currentFloor = self.currentFloor,
+            viewMode = self.floorViewMode,
+            floorHeight = self.floorHeight,
+        })
+        if not ok then
+            local message = "固定 PCG 三维显示范围更新失败：" .. tostring(reason)
+            if self.panel then self.panel:SetStatus(message) end
+            log:Write(LOG_ERROR, "[DungeonForge] " .. message)
+        end
+        return
+    end
+    self:ClearInactivePCGDungeonScene()
+    if self:IsEmptyFixedThemeActive() then
+        self:ClearSceneContent()
+        return
+    end
     if not self.dungeon then return end
     self.dungeonRenderer:Build(self.dungeon, self.themeKey, {
         currentFloor = self.currentFloor, viewMode = self.floorViewMode,
@@ -1051,6 +1553,11 @@ function DungeonApp:GenerationOptions(useEditor, changedFloor, preserveDungeon)
 end
 
 function DungeonApp:Generate(useEditor, frameCamera, changedFloor, preserveDungeon)
+    if self:IsPCGDungeonThemeActive() then
+        local ok = self:RefreshPCGDungeon(frameCamera ~= false, nil, useEditor == true)
+        return ok == true
+    end
+    self:ClearInactivePCGDungeonScene()
     local started = os.clock(); self.generationSerial = self.generationSerial + 1
     print(string.format("[DungeonForge] generate #%d seed=%u floors=%d editor=%s", self.generationSerial,
         self.seed & 0xffffffff, self.floorCount, tostring(useEditor)))
@@ -1112,16 +1619,13 @@ function DungeonApp:GenerateEditorWithRollback(frameCamera)
 end
 
 function DungeonApp:AddFloor(luaIndex)
+    if self.floorCount >= 6 then self.panel:SetStatus("最多支持 6 层"); return end
     local source = math.max(1, math.min(self.floorCount, self.currentFloor + 1))
     table.insert(self.roomCounts, luaIndex, self.roomCounts[source] or 21)
     table.insert(self.loopRates, luaIndex, self.loopRates[source] or 15)
     table.insert(self.decorDensities, luaIndex, self.decorDensities[source] or 60)
     self.floorCount = self.floorCount + 1; self.currentFloor = luaIndex - 1
     self.editorRooms = nil; self:Generate(false, true)
-    if self.floorCount > MultiFloor.RECOMMENDED_MAX_FLOORS then
-        self.panel:SetStatus(string.format("已添加第 %d 层；建议不超过 %d 层以控制生成耗时和编辑复杂度。",
-            self.floorCount, MultiFloor.RECOMMENDED_MAX_FLOORS))
-    end
 end
 
 function DungeonApp:RemoveFloor()
@@ -1224,6 +1728,7 @@ function DungeonApp:ToggleEditor(force, preferredMode)
         self.editor2D:SetVisible(false)
         self.editor3D:SetVisible(false)
         self.dungeonRenderer:ClearEditorSelection()
+        self.pcgDungeonRenderer:ClearEditorSelection()
         if self.editorDirty then
             self.editorDirty = false
             self.editorRebuildPending = false
@@ -1231,6 +1736,9 @@ function DungeonApp:ToggleEditor(force, preferredMode)
             self.editorRebuildIdle = 0
             self:GenerateEditorWithRollback(false)
         end
+        -- A final rebuild can restore selection while synchronizing editors.
+        self.dungeonRenderer:ClearEditorSelection()
+        self.pcgDungeonRenderer:ClearEditorSelection()
         self:FinishEditorExit()
     end
     self.panel:SetEditorActive(nextValue, self.editorMode)
@@ -1269,11 +1777,19 @@ function DungeonApp:FlushEditorModelRebuild(timeStep)
 end
 
 function DungeonApp:ActivatePreview(mode)
-    if not self.preview or not self.dungeon then return end
+    if not self.preview then return end
+    local cameraOnly = self:IsPCGDungeonThemeActive()
+    if not cameraOnly and not self.dungeon then return end
     if self.forgeCamera:IsTransitioning() then return end
     if self.editorActive then
         self.pendingPreviewMode = mode or "third"
         self:ToggleEditor(false)
+        return
+    end
+    if cameraOnly then
+        if not self.preview:IsActive() then self.floorViewBeforePreview = self.floorViewMode end
+        self.forgeCamera.enabled = false
+        self.preview:ActivateCameraOnly(self.pcgDungeonRenderer:GetPreviewStart())
         return
     end
     if not self.preview:IsActive() then
@@ -1302,7 +1818,9 @@ function DungeonApp:ConfirmCameraKeyboardInput()
 end
 
 function DungeonApp:HandleUpdate(timeStep)
+    self.fixedSettingInputCooldown = math.max(0, (self.fixedSettingInputCooldown or 0) - timeStep)
     self.dungeonRenderer:Update(timeStep)
+    self.pcgDungeonRenderer:Update(timeStep)
     if self.preview and self.preview:IsActive() then self.preview:Update(timeStep); return end
     if input:GetKeyPress(KEY_E) then self:ToggleEditorMode("3d") end
     if self.editorTransition then
@@ -1338,20 +1856,13 @@ function DungeonApp:HandleUpdate(timeStep)
     end
     if input:GetKeyPress(KEY_T) then
         if input:GetKeyDown(KEY_LSHIFT) or input:GetKeyDown(KEY_RSHIFT) then
-            local ready = {}
-            for _, record in ipairs(self.customSettings) do
-                if record.packStatus ~= "draft" then ready[#ready + 1] = record end
-            end
-            if #ready > 0 then
-                local nextIndex = 1
-                for index, record in ipairs(ready) do
-                    if record.id == self.activeCustomSettingId then nextIndex = index % #ready + 1; break end
-                end
-                local nextTopic = ready[nextIndex]
-                self:UseCustomSetting(nextTopic)
-                self.themeKey = Themes.GetSetting(self.settingKey).palettes[1]
-                self.editorRooms = nil; self:ApplyTheme(); self:Generate(false, false)
-            end
+            self:MarkTopicSelectionChanged()
+            self.topicMode = TOPIC_MODE_BASE
+            self.activeCustomSettingId, self.customSettingName = nil, nil
+            self.activeFixedThemeId = nil
+            self.floorHeight = MultiFloor.FLOOR_HEIGHT
+            self.settingKey = Themes.NextSetting(self.settingKey); self.themeKey = Themes.GetSetting(self.settingKey).palettes[1]
+            self.editorRooms = nil; self:ApplyTheme(); self:Generate(false, false)
         else
             self.themeKey = Themes.Next(self.themeKey, self.settingKey); self:ApplyTheme(); self:RebuildView(); self:RefreshPanel()
         end
@@ -1362,7 +1873,8 @@ function DungeonApp:HandleUpdate(timeStep)
         self.heatVisible = not self.heatVisible; self:RebuildView()
         self.panel:SetStatus("难度热区 " .. (self.heatVisible and "已开启" or "已关闭"))
     elseif input:GetKeyPress(KEY_P) then
-        self.postEnabled = not self.postEnabled; self.zone.bloomPlusEnabled = self.postEnabled
+        self.postEnabled = not self.postEnabled
+        if self.zone then self.zone.bloomPlusEnabled = self.postEnabled end
         self.panel:SetStatus("后处理 " .. (self.postEnabled and "已开启" or "已关闭"))
     end
     if self.forgeCamera:Update(timeStep) then self:ConfirmCameraKeyboardInput() end
@@ -1375,6 +1887,7 @@ function DungeonApp:Stop()
     if self.panel then self.panel:Dispose() end
     renderer:SetViewport(0, nil)
     if self.preview then self.preview:Dispose() end
+    if self.pcgDungeonRenderer then self.pcgDungeonRenderer:Dispose() end
     self.preview, self.editor, self.editor2D, self.editor3D = nil, nil, nil, nil
     self.panel, self.eventObject, self.eventNode, self.scene = nil, nil, nil, nil
 end

@@ -1,17 +1,17 @@
 local DungeonApp = require("App.DungeonApp")
 local FixedThemes = require("Config.FixedThemes")
 local DungeonGenerator = require("Generation.DungeonGenerator")
-local LocalRequirementPlanner = require("AI.LocalRequirementPlanner")
-local TopicSeeds = require("Config.TopicSeeds")
 
 local function Check(condition, message)
     if not condition then error(message, 2) end
 end
 
 function Start()
+    local ok, errorMessage = xpcall(function()
     local app = DungeonApp.new()
     app:Start()
     local panel = app.panel
+    Check(app.cloudSyncEnabled == false, "offline mode did not disable cloud sync by default")
     Check(panel.buildAnimationCheckbox == nil, "removed build-animation checkbox is still present")
     for name, button in pairs({
         seed = panel.randomSeedButton,
@@ -23,13 +23,16 @@ function Start()
         Check(button.props.borderRadius ~= 999, name .. " random control still uses the pill appearance")
     end
     Check(panel.diceButton == nil, "legacy dice-only random seed control is still present")
-    Check(panel.fixedSettingModeButton and panel.fixedSettingList == nil and panel.fixedSettingToggleButton == nil,
-        "fixed PCG still exposes an expandable topic list")
+    Check(panel.fixedSettingModeButton and panel.fixedSettingList and panel.fixedSettingToggleButton
+            and panel.aiTopicPanel and panel.fixedTopicPanel,
+        "fixed PCG presets were not preserved inside the split topic layout")
     Check(app.dungeon and app.dungeon.sceneInfo, "generated dungeon has no basic scene information")
     Check(app.dungeon.sceneInfo.floorHeight == 5.0 and app.dungeon.sceneInfo.cellSize == 1.0,
         "basic scene information diverged from the authoritative geometry contract")
     Check(panel.sceneFloorHeightValue == nil,
         "floor height is still displayed in the side result panel instead of theme generation")
+    Check(panel.pcgDungeonRoomSlider == nil and panel.pcgDungeonRoomValue == nil,
+        "PCG Dungeon still displays a separate total room control")
     local empty = DungeonGenerator.Generate({
         seed = 20260720, floorCount = 2, roomCountsByFloor = { 21, 21 },
         emptyScene = true, floorHeight = 5.0, settingKey = "dungeon", theme = "ancient",
@@ -73,18 +76,134 @@ function Start()
         "generation plan did not include the configured floor height")
     panel.customSettingModal:Close()
 
+    app.preview:Activate("third")
+    Check(app.preview:IsActive() and app.preview.root and app.preview.root:IsEnabled(),
+        "preview character was not active before the dynamic-scene test")
+    local emptyApplied, emptyApplyReason = panel.callbacks.onFixedSetting("shadowCastle")
+    Check(emptyApplied, emptyApplyReason or "legacy reference fixed PCG theme callback failed")
+    Check(app.dungeon ~= nil and app.pcgDungeonRenderer.root ~= nil
+            and (app.pcgDungeonRenderer.stats.markerCount or 0) > 0,
+        "shadow castle did not retain its generated Dungeon and legacy reference scene")
+    Check(app.preview.root == nil and app.preview.character == nil,
+        "shadow castle retained character preview nodes")
+    Check(not app.editorActive and not app.preview:IsActive(),
+        "shadow castle left editor or character preview mode active")
+    app.fixedSettingInputCooldown = 0
+    local restored, restoreReason = panel.callbacks.onFixedSetting("frozenSanctum")
+    Check(restored, restoreReason or "non-empty fixed PCG theme did not restore the scene")
+    Check(app.dungeon and app.preview.root and app.preview.character,
+        "non-empty fixed PCG theme did not rebuild dungeon and preview character state")
+    Check(app.pcgDungeonRenderer.root == nil and app.pcgDungeonRenderer.stats == nil,
+        "non-empty fixed PCG theme retained the shadow castle PCG Dungeon scene")
+
+    app:ToggleEditorMode("3d")
+    Check(app.editorActive and app.forgeCamera:IsTransitioning(),
+        "3D editor did not start its camera transition")
+    app.fixedSettingInputCooldown = 0
+    local transitionApplied, transitionReason = panel.callbacks.onFixedSetting("shadowCastle")
+    Check(transitionApplied, transitionReason or "shadow castle failed during an editor camera transition")
+    Check(not app.forgeCamera:IsTransitioning(),
+        "shadow castle retained an orphaned editor camera transition")
+    app:ActivatePreview("first")
+    Check(app.preview:IsFirstPerson() and app.preview.cameraOnly,
+        "shadow castle first-person camera did not activate after the scene switch")
+    local pcgDungeonRoot = app.pcgDungeonRenderer.root
+    panel.callbacks.onRandomTheme()
+    Check(app.topicMode == "fixedPCG" and app.activeFixedThemeId == "shadowCastle",
+        "random palette cleared the active shadow castle preset")
+    Check(app.pcgDungeonRenderer.root == pcgDungeonRoot and app.preview:IsFirstPerson()
+            and app.preview.cameraOnly,
+        "random palette replaced the shadow castle scene or disabled its first-person camera")
+    Check(panel.cameraOnlyTheme
+            and not panel.pcgDungeonParametersPanel:IsVisible()
+            and not panel.pcgDungeonCellDebugButton:IsVisible()
+            and not panel.pcgDungeonLightDebugButton:IsVisible(),
+        "random palette exposed internal shadow castle controls")
+    local paletteApplied, paletteReason = panel.callbacks.onTheme("ancient")
+    Check(paletteApplied, paletteReason or "shadow castle palette selection failed")
+    Check(app.topicMode == "fixedPCG" and app.activeFixedThemeId == "shadowCastle"
+            and not panel.pcgDungeonParametersPanel:IsVisible(),
+        "manual palette selection cleared the shadow castle preset")
+    panel:SetFixedSettingExpanded(true)
+    Check(panel.markerFlowButton == nil,
+        "fixed-topic expansion retained the internal legacy reference flow control")
+    panel:SetFixedSettingExpanded(false)
+    app.fixedSettingInputCooldown = 0
+    local transitionRestored, transitionRestoreReason = panel.callbacks.onFixedSetting("frozenSanctum")
+    Check(transitionRestored, transitionRestoreReason or "scene did not recover after first-person regression test")
+
     app.SaveLocalCustomizations = function() return true end
-    app.ApplyTheme = function() end
-    app.Generate = function(self) self:RefreshPanel() end
+    local applyThemeCalls, generateCalls, clearSceneCalls = 0, 0, 0
+    app.ApplyTheme = function() applyThemeCalls = applyThemeCalls + 1 end
+    app.Generate = function() generateCalls = generateCalls + 1 end
+    app.ClearSceneContent = function() clearSceneCalls = clearSceneCalls + 1 end
     -- Keep this smoke test independent from the editor's persisted local cache.
-    app.customSettings = TopicSeeds.Ensure({})
+    app.customSettings = {}
     app.roomGroups = {}
-    app:EnsureSeedRoomGroups()
-    Check(#LocalRequirementPlanner.GroupsForTopic(app.roomGroups, "theme-hospital") == 7,
-        "hospital seed rooms were not materialized for the UI flow")
-    Check(#LocalRequirementPlanner.GroupsForTopic(app.roomGroups, "theme-school") == 5,
-        "school seed rooms were not materialized for the UI flow")
     app.activeCustomSettingId = nil
+
+    local pcgDungeonRefreshCalls = 0
+    app.RefreshPCGDungeon = function()
+        pcgDungeonRefreshCalls = pcgDungeonRefreshCalls + 1
+        return true
+    end
+    app.fixedSettingInputCooldown = 0
+    local pcgGenerated, pcgReason = panel.callbacks.onFixedSetting("shadowCastle")
+    Check(pcgGenerated, pcgReason or "shadow castle fixed PCG callback failed")
+    Check(app.topicMode == "fixedPCG" and app.activeFixedThemeId == "shadowCastle"
+            and app.activeCustomSettingId == nil and pcgDungeonRefreshCalls == 1,
+        "shadow castle did not remain an exclusive fixed PCG preset")
+    Check(applyThemeCalls == 0 and generateCalls == 0,
+        "shadow castle bypass did not use its dedicated legacy reference refresh path")
+
+    Check(panel.callbacks.onFixedSetting("shadowCastle"),
+        "reselecting the active fixed preset failed")
+    Check(pcgDungeonRefreshCalls == 1,
+        "reselecting the active fixed preset rebuilt the scene")
+
+    app.fixedSettingSwitchInProgress = true
+    Check(panel.callbacks.onFixedSetting("frozenSanctum"),
+        "an in-progress fixed preset click was not ignored")
+    app.fixedSettingSwitchInProgress = false
+    Check(app.activeFixedThemeId == "shadowCastle" and generateCalls == 0,
+        "an in-progress fixed preset click changed the scene")
+
+    Check(panel.callbacks.onFixedSetting("frozenSanctum"),
+        "a queued fixed preset click was not ignored during cooldown")
+    Check(app.activeFixedThemeId == "shadowCastle" and generateCalls == 0,
+        "a queued fixed preset click changed the scene during cooldown")
+
+    app.fixedSettingInputCooldown = 0
+    local presetGenerated, presetReason = panel.callbacks.onFixedSetting("frozenSanctum")
+    Check(presetGenerated, presetReason or "fixed PCG preset callback failed")
+    Check(app.topicMode == "fixedPCG" and app.activeFixedThemeId == "frozenSanctum"
+            and app.activeCustomSettingId == nil,
+        "fixed PCG preset did not become active without creating a custom theme")
+    Check(app.settingKey == "dungeon" and app.themeKey == "frost" and app.floorHeight == 5.6,
+        "fixed PCG preset did not apply its authored scene rules")
+    Check(app.roomCounts[1] == 15 and app.loopRates[1] == 6 and app.decorDensities[1] == 38,
+        "fixed PCG preset did not apply its authored generation parameters")
+    Check(applyThemeCalls == 1 and generateCalls == 1,
+        "non-external fixed PCG preset did not use native generation")
+    Check(clearSceneCalls == 1,
+        "switching away from shadow castle did not clear its external scene")
+    Check(app:ApplyCustomizationData({
+        customSettings = {
+            { id = "cloud-preset-topic", label = "云端预设题材", baseSettingKey = "school", packStatus = "ready" },
+        },
+        activeCustomSettingId = "cloud-preset-topic",
+    }, true), "cloud customization reload for a fixed preset failed")
+    Check(app.topicMode == "fixedPCG" and app.activeFixedThemeId == "frozenSanctum"
+            and app.activeCustomSettingId == nil,
+        "cloud customization reload replaced the selected fixed preset")
+
+    app.RefreshPCGDungeon = function() return false, "synthetic refresh failure" end
+    app.fixedSettingInputCooldown = 0
+    local failedShadow, failedShadowReason = panel.callbacks.onFixedSetting("shadowCastle")
+    Check(failedShadow == false and failedShadowReason == "synthetic refresh failure",
+        "shadow castle refresh failure was not returned to the fixed preset callback")
+    app.customSettings = {}
+
     local fixedGenerated, fixedReason = panel.callbacks.onFixedPCG()
     Check(fixedGenerated, fixedReason or "fixed PCG theme callback failed")
     Check(app.activeFixedThemeId == FixedThemes.MODE_ID and app.activeCustomSettingId == nil,
@@ -93,25 +212,13 @@ function Start()
         "fixed PCG mode did not reset to the empty-scene baseline")
     Check(app:GenerationOptions(false).emptyScene == true,
         "fixed PCG mode did not mark the generation request as emptyScene")
-    Check(panel.callbacks.onSetting("hospital"), "hospital topic selection failed")
-    Check(app.topicMode == "custom" and app.activeFixedThemeId == nil
-            and app.activeCustomSettingId == "theme-hospital",
-        "seed topic did not use the unified custom topic state")
-    Check(#app:ActiveRoomGroups() == 7, "hospital topic did not expose seven specific rooms")
-    panel:SetState(app:State())
-    Check(panel.roomGroupList:GetNumChildren() == 7,
-        "hospital specific rooms were not rendered in the room UI")
-    panel.callbacks.onSetting("school")
-    Check(#app:ActiveRoomGroups() == 5, "school base topic did not expose five specific rooms")
-    panel:SetState(app:State())
-    Check(panel.roomGroupList:GetNumChildren() == 5,
-        "school specific rooms were not rendered in the room UI")
+    panel.callbacks.onSetting("hospital")
+    Check(app.topicMode == "base" and app.activeFixedThemeId == nil and app.activeCustomSettingId == nil,
+        "base topic was not mutually exclusive with fixed PCG")
     Check(panel.callbacks.onFixedPCG(), "fixed PCG callback failed after base topic")
     Check(app.topicMode == "fixedPCG" and app.activeFixedThemeId == FixedThemes.MODE_ID
             and app.activeCustomSettingId == nil,
         "fixed PCG retained a base or custom topic selection")
-    Check(panel.currentTopicValue:GetText() == "未启用" and panel.currentTopicStatus:GetText() == "固定 PCG",
-        "fixed PCG mode did not clear the current AI topic indicator")
     Check(app:ApplyCustomizationData({
         customSettings = {
             { id = "cloud-topic", label = "浜戠棰樻潗", baseSettingKey = "school", packStatus = "ready" },
@@ -121,17 +228,14 @@ function Start()
     Check(app.topicMode == "fixedPCG" and app.activeFixedThemeId == FixedThemes.MODE_ID
             and app.activeCustomSettingId == nil,
         "cloud customization reload broke fixed PCG exclusivity")
-    app.customSettings = TopicSeeds.Ensure({
-        { id = "older-topic", label = "旧题材", prompt = "旧题材", baseSettingKey = "dungeon", packStatus = "ready" },
-    })
+    app.customSettings = {}
     local genericGenerated, genericReason = panel.callbacks.onCustomSettingSave({
-        label = "超市", prompt = "现代超市、货架、收银台和商品区",
+        label = "深海研究站", prompt = "海沟中的金属研究站和观景窗",
         baseSettingKey = "hospital", floorHeight = 4.2,
     }, "generate")
     Check(genericGenerated, genericReason or "generic theme generation callback failed")
-    Check(#app.customSettings == 5 and app.customSettings[1].label == "超市"
-            and app.customSettings[1].packStatus == "ready",
-        "new generic theme was not persisted at the front of the list")
+    Check(#app.customSettings == 1 and app.customSettings[1].packStatus == "ready",
+        "generic theme was not persisted as executable")
     Check(app.customSettings[1].generationMode == "generic"
             and app.customSettings[1].plannerSource == "generic-programmatic-v1",
         "generic theme generation metadata was not persisted")
@@ -141,23 +245,9 @@ function Start()
         "generic theme did not save and activate its configured floor height")
     Check(app.topicMode == "custom" and app.activeFixedThemeId == nil,
         "custom topic was not mutually exclusive with fixed PCG")
-    Check(panel.currentTopicValue:GetText() == "超市" and panel.currentTopicStatus:GetText() == "已生成",
-        "generated supermarket topic was not shown as the current UI topic")
-    Check(panel.customSettingExpanded and panel.customSettingList:IsVisible(),
-        "generated custom topic did not automatically expand the saved topic list")
-    local supermarketCard = panel.customSettingList:GetChildAt(1)
-    Check(supermarketCard and supermarketCard.props.borderWidth == 2,
-        "generated supermarket topic card was not visibly active")
-    Check(#LocalRequirementPlanner.GroupsForTopic(app.roomGroups, app.activeCustomSettingId) == 0,
-        "generic theme invented room groups without room definitions")
+    Check(#app.roomGroups == 0, "generic theme invented room groups without room definitions")
     local genericTopicId = app.activeCustomSettingId
     Check(panel.callbacks.onCustomSettingDelete(genericTopicId), "generic topic deletion failed")
-    Check(#app.customSettings == 4 and app.customSettings[1].id == "older-topic",
-        "deleting the new topic also removed an older or seed topic")
-
-    app.customSettings = TopicSeeds.Ensure({})
-    app.roomGroups = {}
-    app:EnsureSeedRoomGroups()
 
     local generated, generatedReason = panel.callbacks.onCustomSettingSave({
         label = "UI生成学校", prompt = "学校、教室、图书馆、实验室、食堂和大厅",
@@ -167,12 +257,9 @@ function Start()
     Check(app.customSettings[1].generationMode == "theme-pack",
         "specialized topic did not persist ThemePack generation mode")
     Check(app.floorHeight == 5.5, "specialized topic did not activate its configured floor height")
-    Check(#LocalRequirementPlanner.GroupsForTopic(
-            app.roomGroups, app.activeCustomSettingId) == 5,
-        "UI topic generation did not create five child room groups")
+    Check(#app.roomGroups == 5, "UI topic generation did not create five child room groups")
     Check(app.activeCustomSettingId == app.customSettings[1].id, "generated topic was not activated")
-    for _, group in ipairs(LocalRequirementPlanner.GroupsForTopic(
-        app.roomGroups, app.activeCustomSettingId)) do
+    for _, group in ipairs(app.roomGroups) do
         Check(group.topicId == app.activeCustomSettingId, "generated child group lost its parent topic")
         Check(#(group.propRules or {}) > 0, "generated child group has no executable rules")
         Check(group.prompt:find("5.50 米", 1, true) ~= nil,
@@ -180,8 +267,7 @@ function Start()
     end
     local generatedTopicId = app.activeCustomSettingId
     Check(panel.callbacks.onCustomSettingDelete(generatedTopicId), "generated topic deletion failed")
-    Check(#LocalRequirementPlanner.GroupsForTopic(app.roomGroups, generatedTopicId) == 0,
-        "deleting a topic did not cascade to its child room groups")
+    Check(#app.roomGroups == 0, "deleting a topic did not cascade to its child room groups")
 
     local managed = {
         id = "ui-flow-managed", label = "可管理学校", prompt = "学校", baseSettingKey = "school",
@@ -194,8 +280,7 @@ function Start()
     Check(panel.callbacks.onCustomSettingRename(managed.id, "重命名学校"), "rename callback failed")
     Check(app.customSettings[1].label == "重命名学校", "rename did not update local theme data")
     Check(panel.callbacks.onCustomSettingDelete(managed.id), "delete callback failed")
-    Check(#app.customSettings == 1 and app.customSettings[1].id == TopicSeeds.DEFAULT_ID,
-        "deleting the only ready topic did not restore the default seed topic")
+    Check(#app.customSettings == 0, "delete did not remove local theme data")
 
     local record = {
         id = "ui-flow-ready", label = "测试学校", prompt = "学校", baseSettingKey = "school",
@@ -212,7 +297,28 @@ function Start()
     panel:CloseCustomSettingContextMenu()
     Check(not panel.customContextMenuLayer:IsVisible(), "right-click menu did not close")
 
-    print("[test] PASS theme pack one-page and context-menu flow")
+    app.activeCustomSettingId, app.customSettingName = nil, nil
+    app.activeFixedThemeId, app.topicMode = "shadowCastle", "fixedPCG"
+    app.fixedSettingSceneId = "shadowCastle"
+    local clearBeforeBaseSetting = clearSceneCalls
+    panel.callbacks.onSetting("school")
+    Check(clearSceneCalls == clearBeforeBaseSetting + 1
+            and app.activeFixedThemeId == nil and app.fixedSettingSceneId == nil,
+        "base setting switch did not clear the Shadow Castle external scene")
+
+    app.activeFixedThemeId, app.topicMode = "shadowCastle", "fixedPCG"
+    app.fixedSettingSceneId = "shadowCastle"
+    local clearBeforeRandomSetting = clearSceneCalls
+    panel.callbacks.onRandomSetting()
+    Check(clearSceneCalls == clearBeforeRandomSetting + 1
+            and app.activeFixedThemeId == nil and app.fixedSettingSceneId == nil,
+        "random setting switch did not clear the Shadow Castle external scene")
+
     app:Stop()
-    engine:Exit()
+    end, debug.traceback)
+    if not ok then
+        ErrorExit("[test] FAIL theme pack one-page and context-menu flow\n" .. tostring(errorMessage), 1)
+        return
+    end
+    ErrorExit("[test] PASS theme pack one-page and context-menu flow", 0)
 end

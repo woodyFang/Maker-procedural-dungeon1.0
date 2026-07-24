@@ -290,7 +290,16 @@ end
 function ControlPanel.new(callbacks, initial)
     local self = setmetatable({ callbacks = callbacks, seed = initial.seed, collapsed = false }, ControlPanel)
     if not nvgSetRenderOrder then nvgSetRenderOrder = function() end end
-    UI.Init({ theme = "default-dark", scale = UI.Scale.DEFAULT })
+    UI.Init({
+        theme = "default-dark",
+        fonts = {
+            { family = "sans", weights = {
+                normal = "Fonts/MiSans-Regular.ttf",
+                bold = "Fonts/MiSans-Bold.ttf",
+            } },
+        },
+        scale = UI.Scale.DEFAULT,
+    })
     activeDropOwner = self
     if not dropEventSubscribed then
         SubscribeToEvent("DropFile", "HandleDungeonReferenceImageDropped")
@@ -1753,6 +1762,14 @@ function ControlPanel:SetState(state)
     local fixedActive = state.topicMode == "fixedPCG"
         or (state.topicMode == nil and state.activeFixedThemeId ~= nil)
     local aiActive = not fixedActive
+    local enteredFixedMode = fixedActive and self.lastFixedModeActive ~= true
+    -- Fixed PCG and AI topics are mutually exclusive generation modes, but
+    -- the AI topic browser must remain available so the user can switch back
+    -- without losing the generated topic list.
+    self.aiTopicPanel:SetVisible(true)
+    self.customSettingButton:SetVisible(true)
+    self.customSettingToggleTooltip:SetVisible(true)
+    self.randomSettingTooltip:SetVisible(true)
     self.fixedSettingModeButton:SetText("固定PCG")
     self.fixedSettingModeButton:SetStyle({
         backgroundColor = fixedActive and { 48, 36, 29, 255 } or C.input,
@@ -1775,7 +1792,11 @@ function ControlPanel:SetState(state)
         self:SetCustomSettingExpanded(true)
         self.customSettingsHaveBeenShown = true
     end
-    local currentTopicName = fixedActive and "未启用"
+    if enteredFixedMode and hasCustomSettings then
+        self:SetCustomSettingExpanded(true)
+    end
+    self.lastFixedModeActive = fixedActive
+    local currentTopicName = fixedActive and (state.activeFixedThemeLabel or "固定 PCG")
         or (customActive and state.customSettingName)
         or setting.label
     self.currentTopicValue:SetText(currentTopicName or setting.label)
@@ -1803,7 +1824,7 @@ function ControlPanel:SetState(state)
     self.subtitle:SetText(string.format("%s · %s · 种子 %u · %s", state.customSettingName or setting.label, theme.label,
         self.seed & 0xffffffff, state.valid == false and "生成失败" or "已连通 ✓"))
     if fixedActive then
-        self.subtitle:SetText("固定 · 空场景 · " .. theme.label)
+        self.subtitle:SetText("固定 · " .. (state.activeFixedThemeLabel or "PCG") .. " · " .. theme.label)
     end
     self:RebuildPaletteExpandedList(state)
     local options, total = {}, 0

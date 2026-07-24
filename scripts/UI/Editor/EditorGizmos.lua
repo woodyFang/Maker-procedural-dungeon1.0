@@ -85,6 +85,9 @@ end
 local function AddLinkDescriptors(editor, viewport, descriptors)
     local link = editor.links[editor.selectedLink]
     if not link then return end
+    -- A* geometry is regenerated from the authored room graph. It remains
+    -- selectable, but generic bend and stair handles would imply unsupported edits.
+    if link.runtimeGenerated then return end
     if link.kind == "stairs" and link.connector and link.connector.lower and link.connector.upper then
         local segments = StairEditing.VisualSegments(link.connector)
         local rotation = StairEditing.RotationHandle(link.connector)
@@ -165,7 +168,15 @@ function EditorGizmos.CorridorEntries(editor)
     local entries = {}
     for index, link in ipairs(editor.links) do
         local roomA, roomB = editor.rooms[link.a], editor.rooms[link.b]
-        if link.kind ~= "stairs" and roomA and roomB
+        if link.runtimeGenerated then
+            for _, runtimeRoute in ipairs(link.runtimeRoutes or {}) do
+                if runtimeRoute.floor == editor.floor and #(runtimeRoute.points or {}) > 1 then
+                    entries[#entries + 1] = {
+                        index = index, link = link, route = runtimeRoute.points, runtime = true,
+                    }
+                end
+            end
+        elseif link.kind ~= "stairs" and roomA and roomB
             and roomA.floor == editor.floor and roomB.floor == editor.floor then
             entries[#entries + 1] = { index = index, link = link, route = editor:DisplayLinkRoute(link) }
         end
@@ -173,40 +184,152 @@ function EditorGizmos.CorridorEntries(editor)
     return entries
 end
 
+local function PointInsideRoom(room, x, y)
+    if not room then return false end
+    return x > room.cx - room.w * 0.5 + 0.00001
+        and x < room.cx + room.w * 0.5 - 0.00001
+        and y > room.cy - room.h * 0.5 + 0.00001
+        and y < room.cy + room.h * 0.5 - 0.00001
+end
+
+local function PointInsideCurrentFloorRoom(editor, x, y)
+    for _, room in ipairs(editor.rooms or {}) do
+        if room.floor == editor.floor and PointInsideRoom(room, x, y) then return true end
+    end
+    return false
+end
+
+local function SegmentOutsideRooms(editor, a, b)
+    local dx, dy = b.x - a.x, b.y - a.y
+    local cuts = { 0, 1 }
+    local function AddCut(value)
+        if value > 0.00001 and value < 0.99999 then cuts[#cuts + 1] = value end
+    end
+    local function AddRoomInterval(room)
+        local enter, exit = 0, 1
+        local function Clip(p, q)
+            if math.abs(p) < 0.000001 then return q >= 0 end
+            local value = q / p
+            if p < 0 then
+                if value > exit then return false end
+                if value > enter then enter = value end
+            else
+                if value < enter then return false end
+                if value < exit then exit = value end
+            end
+            return true
+        end
+        if not Clip(-dx, a.x - (room.cx - room.w * 0.5))
+            or not Clip(dx, (room.cx + room.w * 0.5) - a.x)
+            or not Clip(-dy, a.y - (room.cy - room.h * 0.5))
+            or not Clip(dy, (room.cy + room.h * 0.5) - a.y) then return end
+        if exit > enter + 0.00001 then AddCut(enter); AddCut(exit) end
+    end
+    for _, room in ipairs(editor.rooms or {}) do
+        if room.floor == editor.floor then AddRoomInterval(room) end
+    end
+    table.sort(cuts)
+    local pieces = {}
+    for index = 1, #cuts - 1 do
+        local t0, t1 = cuts[index], cuts[index + 1]
+        if t1 - t0 > 0.00001 then
+            local middle = (t0 + t1) * 0.5
+            if not PointInsideCurrentFloorRoom(editor, a.x + dx * middle, a.y + dy * middle) then
+                pieces[#pieces + 1] = {
+                    a = { x = a.x + dx * t0, y = a.y + dy * t0 },
+                    b = { x = a.x + dx * t1, y = a.y + dy * t1 },
+                }
+            end
+        end
+    end
+    return pieces
+end
+
+function EditorGizmos.OutsideRoomSegments(editor, route)
+    local result = {}
+    for index = 1, #(route or {}) - 1 do
+        for _, piece in ipairs(SegmentOutsideRooms(editor, route[index], route[index + 1])) do
+            result[#result + 1] = piece
+        end
+    end
+    return result
+end
+
+function EditorGizmos.HitRuntimeLink(link, floor, gridX, gridY, tolerance)
+    if not link or not link.runtimeGenerated then return nil end
+    local best = nil
+    local function TestSegment(a, b, segment, stair)
+        local distance = DistanceToSegment(gridX, gridY, a, b)
+        local width = stair and (stair.width or 1) or (link.width or 1)
+        if distance <= math.max(tolerance, width * 0.5)
+            and (not best or distance < best.distance) then
+            best = {
+                segment = segment,
+                distance = distance,
+                stair = stair ~= nil,
+                runtime = true,
+            }
+        end
+    end
+    for _, runtimeRoute in ipairs(link.runtimeRoutes or {}) do
+        if runtimeRoute.floor == floor then
+            for segment = 1, #(runtimeRoute.points or {}) - 1 do
+                TestSegment(runtimeRoute.points[segment], runtimeRoute.points[segment + 1], segment, nil)
+            end
+        end
+    end
+    for _, connector in ipairs(link.runtimeStairs or {}) do
+        if connector.fromFloor == floor or connector.toFloor == floor then
+            local segments = StairEditing.VisualSegments(connector)
+            for segment, stairSegment in ipairs(segments) do
+                TestSegment(stairSegment.start, stairSegment.finish, segment, connector)
+            end
+        end
+    end
+    return best
+end
+
 local function DrawCorridors(editor, vg, viewport)
     nvgLineCap(vg, NVG_ROUND)
     nvgLineJoin(vg, NVG_ROUND)
     for _, entry in ipairs(EditorGizmos.CorridorEntries(editor)) do
         local index, link, route = entry.index, entry.link, entry.route
-        local points = ProjectRoute(editor, viewport, route)
-        local scale = viewport:PixelsPerGrid(editor, route[1] or { x = 0, y = 0 })
         local selected = editor.selectedLink == index
         local hovered = not selected and editor.hoveredLink == index
-        local band = RouteEditing.CorridorScreenWidth(link.width, scale)
         -- Opaque base colors keep one route visually identical over black void,
         -- generated floors and room overlays. The outline carries selection.
         local bandColor = selected and nvgRGBA(118, 78, 35, 255)
             or (hovered and nvgRGBA(58, 92, 113, 255) or nvgRGBA(48, 74, 94, 255))
         local outlineColor = selected and nvgRGBA(232, 151, 63, 255)
             or (hovered and nvgRGBA(139, 207, 244, 255) or nvgRGBA(83, 164, 176, 255))
-        StrokePolyline(vg, points, bandColor, band)
-        StrokePolyline(vg, points, outlineColor, selected and 1.8 or 1.2)
+        for _, piece in ipairs(EditorGizmos.OutsideRoomSegments(editor, route)) do
+            local points = ProjectRoute(editor, viewport, { piece.a, piece.b })
+            local scale = viewport:PixelsPerGrid(editor, piece.a)
+            local band = RouteEditing.CorridorScreenWidth(link.width, scale)
+            StrokePolyline(vg, points, bandColor, band)
+            StrokePolyline(vg, points, outlineColor, selected and 1.8 or 1.2)
+        end
     end
 end
 
 local function DrawStairs(editor, vg, viewport)
     for index, link in ipairs(editor.links) do
-        local connector = link.connector
         local roomA, roomB = editor.rooms[link.a], editor.rooms[link.b]
-        if (editor:GetViewMode() == "2d" or index == editor.selectedLink)
-            and connector and roomA and roomB and roomA.floor ~= roomB.floor
-            and (roomA.floor == editor.floor or roomB.floor == editor.floor) then
+        local connectors = link.runtimeGenerated and link.runtimeStairs or { link.connector }
+        for _, connector in ipairs(connectors or {}) do
+        local fromFloor = connector and (connector.fromFloor
+            or (roomA and roomB and math.min(roomA.floor, roomB.floor)))
+        local toFloor = connector and (connector.toFloor
+            or (roomA and roomB and math.max(roomA.floor, roomB.floor)))
+        if connector and fromFloor ~= nil and toFloor ~= nil and fromFloor ~= toFloor
+            and (fromFloor == editor.floor or toFloor == editor.floor)
+            and (link.runtimeGenerated or editor:GetViewMode() == "2d" or index == editor.selectedLink) then
             local segments, platform = StairEditing.VisualSegments(connector)
             local scale = viewport:PixelsPerGrid(editor,
                 segments[1] and segments[1].start or connector.lower)
             local selected = editor.selectedLink == index
-            local invalid = link.stairSpec and link.stairSpec.invalid
-            local lower = (connector.fromFloor or math.min(roomA.floor, roomB.floor)) == editor.floor
+            local invalid = not link.runtimeGenerated and link.stairSpec and link.stairSpec.invalid
+            local lower = fromFloor == editor.floor
             local outline = invalid and nvgRGBA(255, 95, 95, 255)
                 or (selected and nvgRGBA(255, 211, 106, 255)
                     or (lower and nvgRGBA(232, 151, 63, 255) or nvgRGBA(181, 140, 255, 255)))
@@ -253,16 +376,16 @@ local function DrawStairs(editor, vg, viewport)
             end
             local anchorPoint = segments[1] and segments[1].start or connector.lower
             local anchor = viewport:ProjectGrid(editor, anchorPoint, 0.69)
-            if anchor then
+            if anchor and (not link.runtimeGenerated or index == editor.selectedLink) then
                 nvgFontSize(vg, 11)
                 nvgFillColor(vg, outline)
-                local targetFloor = lower and (connector.toFloor or math.max(roomA.floor, roomB.floor))
-                    or (connector.fromFloor or math.min(roomA.floor, roomB.floor))
+                local targetFloor = lower and toFloor or fromFloor
                 local style = (connector.style or (link.stairSpec and link.stairSpec.style)) == "straight" and "Straight" or "L"
                 nvgText(vg, anchor.x + 9, anchor.y - 9,
                     (lower and "UP" or "DOWN") .. " F" .. (targetFloor + 1) .. "  " .. style
                         .. "  W " .. string.format("%.2f", connector.width or 2), nil)
             end
+        end
         end
     end
 end

@@ -74,6 +74,8 @@ function CameraPreviewController.new(scene, dungeonRenderer, cameraNode, callbac
         transition = 0,
         moving = false,
         elapsed = 0,
+        cameraOnly = false,
+        freePosition = nil,
     }, CameraPreviewController)
     self:CreateCharacter()
     return self
@@ -138,12 +140,30 @@ function CameraPreviewController:FindStart()
 end
 
 function CameraPreviewController:SyncDungeon(dungeon, floor)
+    self.cameraOnly, self.freePosition = false, nil
     self.dungeon = dungeon
-    if not dungeon then return end
+    if not dungeon then
+        self.layer = nil
+        return
+    end
+    if not self.root then self:CreateCharacter() end
     self.floor = Clamp(floor or 0, 0, dungeon.floorCount - 1)
     self.layer = dungeon.layers[self.floor + 1]
     self.character.position = self:FindStart()
     if self:IsActive() then self:SnapCamera() end
+end
+
+function CameraPreviewController:ClearScene()
+    if self:IsActive() and self.observerPosition and self.observerRotation then
+        self.cameraNode.position = self.observerPosition
+        self.cameraNode.rotation = self.observerRotation
+    end
+    self.phase, self.mode, self.transition, self.moving = "idle", nil, 0, false
+    self.cameraOnly, self.freePosition = false, nil
+    self.dungeon, self.layer = nil, nil
+    if self.root then self.root:Dispose() end
+    self.root, self.character, self.visual = nil, nil, nil
+    print("[CameraPreview] scene character cleared")
 end
 
 -- Collision sampling contract (top view):
@@ -182,7 +202,7 @@ function CameraPreviewController:MoveCharacter(dx, dz)
 end
 
 function CameraPreviewController:DesiredCamera()
-    local position = self.character.position
+    local position = self.cameraOnly and self.freePosition or self.character.position
     local desiredPosition
     local desiredTarget
     if self.mode == "first" then
@@ -219,6 +239,7 @@ end
 
 function CameraPreviewController:Activate(mode)
     if not self.dungeon or (mode ~= "third" and mode ~= "first") then return end
+    self.cameraOnly, self.freePosition = false, nil
     if self.phase == "idle" then
         self.observerPosition = Vector3(self.cameraNode.position.x, self.cameraNode.position.y, self.cameraNode.position.z)
         self.observerRotation = Quaternion(self.cameraNode.rotation)
@@ -233,6 +254,26 @@ function CameraPreviewController:Activate(mode)
     self.root:GetChild("GroundMarker", true):SetEnabled(mode == "third")
     self:Notify(true)
     print("[CameraPreview] activate " .. mode)
+end
+
+function CameraPreviewController:ActivateCameraOnly(position)
+    if not position then return end
+    if self.phase == "idle" then
+        self.observerPosition = Vector3(self.cameraNode.position.x, self.cameraNode.position.y, self.cameraNode.position.z)
+        self.observerRotation = Quaternion(self.cameraNode.rotation)
+    end
+    if self.root then self.root:SetEnabled(false) end
+    self.transitionPosition = Vector3(self.cameraNode.position.x, self.cameraNode.position.y, self.cameraNode.position.z)
+    self.transitionRotation = Quaternion(self.cameraNode.rotation)
+    self.freePosition = Vector3(position.x, position.y, position.z)
+    self.cameraOnly = true
+    self.mode = "first"
+    self.phase = "transitioning"
+    self.transition = 0
+    self.moving = false
+    self:Notify(true)
+    print(string.format("[CameraPreview] activate camera-only first at %.2f %.2f %.2f",
+        position.x, position.y, position.z))
 end
 
 function CameraPreviewController:Exit()
@@ -255,7 +296,8 @@ function CameraPreviewController:UpdateTransition(timeStep)
         if self.transition >= 1 then
             self.phase = "idle"
             self.mode = nil
-            self.root:SetEnabled(false)
+            self.cameraOnly, self.freePosition = false, nil
+            if self.root then self.root:SetEnabled(false) end
             self:Notify(false)
             print("[CameraPreview] idle")
         end
@@ -277,8 +319,8 @@ function CameraPreviewController:Update(timeStep)
     end
 
     if input:GetKeyPress(KEY_ESCAPE) then self:Exit(); return end
-    if input:GetKeyPress(KEY_1) then self:Activate("third"); return end
-    if input:GetKeyPress(KEY_2) then self:Activate("first"); return end
+    if input:GetKeyPress(KEY_1) and not self.cameraOnly then self:Activate("third"); return end
+    if input:GetKeyPress(KEY_2) and not self.cameraOnly then self:Activate("first"); return end
 
     if input:GetMouseButtonDown(MOUSEB_RIGHT) and not UI.IsPointerOverUI() then
         local move = input.mouseMove
@@ -296,7 +338,13 @@ function CameraPreviewController:Update(timeStep)
         if camera then camera.farClip = math.max(camera.farClip, self.distance * 2.0) end
     end
 
-    local forward = Vector3(-math.sin(self.yaw), 0, -math.cos(self.yaw))
+    local forward
+    if self.cameraOnly then
+        local cp = math.cos(self.lookPitch)
+        forward = Vector3(-math.sin(self.yaw) * cp, math.sin(self.lookPitch), -math.cos(self.yaw) * cp)
+    else
+        forward = Vector3(-math.sin(self.yaw), 0, -math.cos(self.yaw))
+    end
     local right = Vector3(-math.cos(self.yaw), 0, math.sin(self.yaw))
     local move = Vector3.ZERO
     if IsPhysicalKeyDown(KEY_W, SCANCODE_W) then move = move + forward end
@@ -309,16 +357,22 @@ function CameraPreviewController:Update(timeStep)
         local running = IsPhysicalKeyDown(KEY_LSHIFT, SCANCODE_LSHIFT)
             or IsPhysicalKeyDown(KEY_RSHIFT, SCANCODE_RSHIFT)
         local speed = running and RUN_SPEED or WALK_SPEED
-        self:MoveCharacter(move.x * speed * timeStep, move.z * speed * timeStep)
+        if self.cameraOnly then
+            self.freePosition = self.freePosition + move * speed * timeStep
+        else
+            self:MoveCharacter(move.x * speed * timeStep, move.z * speed * timeStep)
 
-        local target = math.atan(move.x, move.z)
-        local current = math.rad(self.character.rotation:YawAngle())
-        local delta = math.atan(math.sin(target - current), math.cos(target - current))
-        current = current + delta * math.min(1, timeStep * 14)
-        self.character.rotation = Quaternion(math.deg(current), Vector3.UP)
+            local target = math.atan(move.x, move.z)
+            local current = math.rad(self.character.rotation:YawAngle())
+            local delta = math.atan(math.sin(target - current), math.cos(target - current))
+            current = current + delta * math.min(1, timeStep * 14)
+            self.character.rotation = Quaternion(math.deg(current), Vector3.UP)
+        end
     end
-    local bob = self.mode == "third" and self.moving and math.abs(math.sin(self.elapsed * 10)) * 0.045 or 0
-    self.visual.position = Vector3(0, bob, 0)
+    if self.visual then
+        local bob = self.mode == "third" and self.moving and math.abs(math.sin(self.elapsed * 10)) * 0.045 or 0
+        self.visual.position = Vector3(0, bob, 0)
+    end
 
     local desiredPosition, desiredRotation = self:DesiredCamera()
     local smoothing = 1 - math.exp(-timeStep * 10)
@@ -327,7 +381,9 @@ function CameraPreviewController:Update(timeStep)
 end
 
 function CameraPreviewController:Dispose()
-    if self.root then self.root:Remove(); self.root = nil end
+    if self.root then self.root:Dispose(); self.root = nil end
+    self.character, self.visual, self.dungeon, self.layer = nil, nil, nil, nil
+    self.cameraOnly, self.freePosition = false, nil
 end
 
 return CameraPreviewController

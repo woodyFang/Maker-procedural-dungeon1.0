@@ -2,11 +2,10 @@ local Themes = require("Config.Themes")
 local PaletteData = require("Config.PaletteData")
 local RoomGroupColors = require("Config.RoomGroupColors")
 local MultiFloor = require("Generation.MultiFloor")
-local TopicSeeds = require("Config.TopicSeeds")
 
 local CustomizationStore = {}
 
-CustomizationStore.SCHEMA_VERSION = 10
+CustomizationStore.SCHEMA_VERSION = 8
 CustomizationStore.IMAGE_DIRECTORY = "customization-images"
 CustomizationStore.MAX_SOURCE_BYTES = 20 * 1024 * 1024
 CustomizationStore.MAX_IMAGE_BYTES = CustomizationStore.MAX_SOURCE_BYTES
@@ -82,10 +81,7 @@ local function NormalizeRecords(items, kind)
             local name = Trim(kind == "theme" and source.label or source.name)
             local topicId = kind == "room" and Trim(source.topicId) or ""
             local folded = string.lower(name)
-            local settingKey = kind == "room" and topicId == ""
-                and (IsKnownSetting(source.settingKey) and source.settingKey or "dungeon") or ""
-            local scopeKey = topicId ~= "" and ("topic:" .. topicId) or ("setting:" .. settingKey)
-            local nameKey = kind == "room" and (scopeKey .. "\0" .. folded) or folded
+            local nameKey = kind == "room" and (topicId .. "\0" .. folded) or folded
             if id ~= "" and name ~= "" and not ids[id] and not names[nameKey] then
                 local imagePath, imageName, imageData = NormalizeImage(source)
                 local record = {
@@ -120,15 +116,7 @@ local function NormalizeRecords(items, kind)
                     record.color = RoomGroupColors.Parse(source.color,
                         RoomGroupColors.Default(source, #result + 1))
                     record.topicId = topicId ~= "" and topicId or nil
-                    record.settingKey = record.topicId == nil and settingKey or nil
-                    if source.source == "builtin" then
-                        record.source = "builtin"
-                    elseif source.source == "ai" then
-                        record.source = "ai"
-                    else
-                        record.source = "manual"
-                    end
-                    record.ruleClass = source.ruleClass == "specific-room" and "specific-room" or nil
+                    record.source = source.source == "ai" and "ai" or "manual"
                     record.locked = source.locked == true
                     record.plannerSource = Trim(source.plannerSource) ~= "" and Trim(source.plannerSource) or nil
                     record.compiledFromRevision = math.max(0, math.floor(tonumber(source.compiledFromRevision) or 0))
@@ -215,14 +203,6 @@ function CustomizationStore.UpsertById(items, record)
     return #items, nil
 end
 
-function CustomizationStore.UpsertFirstById(items, record)
-    for index, item in ipairs(items) do
-        if item.id == record.id then items[index] = record; return index, item end
-    end
-    table.insert(items, 1, record)
-    return 1, nil
-end
-
 function CustomizationStore.DeleteById(items, id)
     for index, item in ipairs(items) do
         if item.id == id then return table.remove(items, index) end
@@ -230,28 +210,13 @@ function CustomizationStore.DeleteById(items, id)
     return nil
 end
 
-local function MigrateRoomScopes(roomGroups)
-    local idsBySetting = TopicSeeds.IdsBySetting()
-    for _, room in ipairs(roomGroups) do
-        if room.topicId == nil and room.settingKey and idsBySetting[room.settingKey] then
-            room.topicId = idsBySetting[room.settingKey]
-            room.settingKey = nil
-        end
-    end
-    return roomGroups
-end
-
 function CustomizationStore.Normalize(data)
     data = type(data) == "table" and data or {}
-    local customSettings = TopicSeeds.Ensure(NormalizeRecords(data.customSettings, "theme"))
-    local roomGroups = MigrateRoomScopes(NormalizeRecords(data.roomGroups, "room"))
+    local customSettings = NormalizeRecords(data.customSettings, "theme")
+    local roomGroups = NormalizeRecords(data.roomGroups, "room")
     local customPalettes = NormalizePalettes(data.customPalettes)
     local activeId = type(data.activeCustomSettingId) == "string" and data.activeCustomSettingId or nil
-    if not activeId and type(data.settingKey) == "string" then
-        activeId = TopicSeeds.IdForSetting(data.settingKey)
-    end
     if activeId and not CustomizationStore.FindById(customSettings, activeId) then activeId = nil end
-    if not activeId then activeId = TopicSeeds.DEFAULT_ID end
     return {
         version = CustomizationStore.SCHEMA_VERSION,
         customSettings = customSettings,

@@ -5,8 +5,6 @@ local LocalRequirementPlanner = {
 
 local GeometryRules = require("Generation.GeometryRules")
 local RoomGroupColors = require("Config.RoomGroupColors")
-local BuiltinRoomRules = require("Config.BuiltinRoomRules")
-local TopicSeeds = require("Config.TopicSeeds")
 
 local function CopyRules(rules)
     local result = {}
@@ -36,7 +34,6 @@ local function Group(topic, pack, revision, spec)
         name = spec.name,
         color = RoomGroupColors.Default(spec, spec.sortOrder),
         prompt = TopicPrompt(topic, spec.name, spec.purpose),
-        ruleClass = "specific-room",
         source = "ai",
         locked = false,
         plannerSource = LocalRequirementPlanner.SOURCE,
@@ -62,10 +59,33 @@ function LocalRequirementPlanner.Compile(topic, pack, revision)
     end
 
     revision = math.max(1, math.floor(tonumber(revision) or 1))
-    local specs = BuiltinRoomRules.Get(pack.key)
-    if type(specs) ~= "table" or #specs == 0 then
-        return nil, "题材包缺少可执行的特定房间定义。"
-    end
+    local specs = {
+        {
+            key = "lobby", name = "大厅", purpose = "承担入口、接待和校园导览功能。",
+            sortOrder = 1, roleKeys = { "entrance" }, ruleKey = "entrance",
+            minCount = 1, maxCount = 1, minArea = 64,
+        },
+        {
+            key = "classroom", name = "教室", purpose = "以课桌、教师桌和黑板形成清晰授课布局。",
+            sortOrder = 2, roleKeys = { "combat", "secret" }, ruleKey = "combat",
+            defaultGroup = true, minCount = 1, minArea = 35,
+        },
+        {
+            key = "library", name = "图书馆", purpose = "使用成组书架形成安静的阅读和藏书区域。",
+            sortOrder = 3, roleKeys = { "treasure" }, ruleKey = "treasure",
+            minCount = 1, minArea = 40,
+        },
+        {
+            key = "laboratory", name = "实验室", purpose = "使用实验台、地球仪和资料架表达科学教学。",
+            sortOrder = 4, roleKeys = { "elite", "shrine" }, ruleKey = "elite",
+            minCount = 1, minArea = 48,
+        },
+        {
+            key = "cafeteria", name = "食堂", purpose = "使用餐桌和舞台构成大型公共活动空间。",
+            sortOrder = 5, roleKeys = { "boss" }, ruleKey = "boss",
+            minCount = 1, maxCount = 1, minArea = 80,
+        },
+    }
 
     local groups = {}
     for _, spec in ipairs(specs) do groups[#groups + 1] = Group(topic, pack, revision, spec) end
@@ -79,18 +99,6 @@ function LocalRequirementPlanner.Compile(topic, pack, revision)
         referenceImageName = topic.imageName,
         referenceImageAvailable = topic.imageData ~= nil or topic.imagePath ~= nil,
         verticalProfile = GeometryRules.CurrentVerticalProfile(topic.floorHeight),
-        roomGroups = groups,
-    }
-end
-
-function LocalRequirementPlanner.CompileSeedTopic(settingKey, topicId)
-    local groups, reason = BuiltinRoomRules.Materialize(settingKey, topicId)
-    if not groups then return nil, reason end
-    return {
-        schemaVersion = BuiltinRoomRules.SCHEMA_VERSION,
-        source = BuiltinRoomRules.SOURCE,
-        settingKey = settingKey,
-        topicId = topicId,
         roomGroups = groups,
     }
 end
@@ -111,98 +119,10 @@ function LocalRequirementPlanner.MergeRoomGroups(existing, topicId, generated)
     return result
 end
 
-local function GroupSignature(group)
-    local parts = {
-        tostring(group.id), tostring(group.settingKey), tostring(group.name), tostring(group.prompt),
-        tostring(group.source), tostring(group.ruleClass), tostring(group.compiledSpecVersion),
-        tostring(group.sortOrder), tostring(group.defaultGroup), tostring(group.minCount),
-        tostring(group.maxCount), tostring(group.minArea), tostring(group.maxArea),
-    }
-    for _, key in ipairs(group.roleKeys or {}) do parts[#parts + 1] = "role:" .. tostring(key) end
-    for _, rule in ipairs(group.propRules or {}) do
-        parts[#parts + 1] = table.concat({ "prop", tostring(rule.kind), tostring(rule.count),
-            tostring(rule.chance), tostring(rule.scaleMin), tostring(rule.scaleMax) }, ":")
-    end
-    return table.concat(parts, "|")
-end
-
-local function SeedRoomId(settingKey, id)
-    local suffix = tostring(id or ""):match("^[^-]+%-[^-]+%-(.+)$") or tostring(id or "")
-    return string.format("seed-%s-%s", settingKey, suffix)
-end
-
-function LocalRequirementPlanner.MergeSeedRoomGroups(existing, settingKey, topicId, generated)
-    local untouched, selected, reservedById, existingSeed = {}, {}, {}, {}
-    for _, group in ipairs(existing or {}) do
-        local legacyScope = group.topicId == nil and group.settingKey == settingKey
-        local belongsToTopic = group.topicId == topicId or legacyScope
-        if not belongsToTopic then
-            untouched[#untouched + 1] = group
-        else
-            if legacyScope then
-                group.topicId, group.settingKey = topicId, nil
-                group.id = SeedRoomId(settingKey, group.id)
-            end
-            if (group.source == "builtin" or group.source == "seed") and group.locked ~= true then
-                group.source = "seed"
-                existingSeed[group.id] = group
-            else
-                reservedById[group.id] = group
-            end
-        end
-    end
-    local consumed = {}
-    for _, group in ipairs(generated or {}) do
-        local reserved = reservedById[group.id]
-        if reserved then
-            selected[#selected + 1] = reserved
-            consumed[group.id] = true
-        else
-            local previous = existingSeed[group.id]
-            selected[#selected + 1] = previous and GroupSignature(previous) == GroupSignature(group) and previous or group
-        end
-    end
-    for _, group in ipairs(existing or {}) do
-        local belongsToTopic = group.topicId == topicId
-        if belongsToTopic and group.source ~= "builtin" and group.source ~= "seed"
-            and not consumed[group.id] then
-            selected[#selected + 1] = group
-        end
-    end
-    for _, group in ipairs(selected) do untouched[#untouched + 1] = group end
-    return untouched
-end
-
-function LocalRequirementPlanner.EnsureSeedRoomGroups(existing)
-    local original = existing or {}
-    local result = original
-    local valid, reason = BuiltinRoomRules.Validate()
-    if not valid then return nil, false, reason end
-    for _, settingKey in ipairs(BuiltinRoomRules.SettingKeys()) do
-        local topicId = TopicSeeds.IdForSetting(settingKey)
-        local plan, planReason = LocalRequirementPlanner.CompileSeedTopic(settingKey, topicId)
-        if not plan then return nil, false, planReason end
-        result = LocalRequirementPlanner.MergeSeedRoomGroups(
-            result, settingKey, topicId, plan.roomGroups)
-    end
-    local changed = #result ~= #original
-    if not changed then
-        for index, group in ipairs(result) do
-            if group ~= original[index] then changed = true; break end
-        end
-    end
-    return result, changed
-end
-
--- Compatibility alias for callers and old tests while the persisted records migrate.
-LocalRequirementPlanner.EnsureBuiltinRoomGroups = LocalRequirementPlanner.EnsureSeedRoomGroups
-
-function LocalRequirementPlanner.GroupsForContext(groups, topicId, settingKey)
+function LocalRequirementPlanner.GroupsForTopic(groups, topicId)
     local result = {}
     for _, group in ipairs(groups or {}) do
-        local matchesTopic = topicId ~= nil and group.topicId == topicId
-        local matchesSetting = topicId == nil and group.topicId == nil and group.settingKey == settingKey
-        if matchesTopic or matchesSetting then result[#result + 1] = group end
+        if group.topicId == topicId then result[#result + 1] = group end
     end
     table.sort(result, function(a, b)
         local orderA, orderB = tonumber(a.sortOrder) or 999, tonumber(b.sortOrder) or 999
@@ -210,10 +130,6 @@ function LocalRequirementPlanner.GroupsForContext(groups, topicId, settingKey)
         return orderA < orderB
     end)
     return result
-end
-
-function LocalRequirementPlanner.GroupsForTopic(groups, topicId)
-    return LocalRequirementPlanner.GroupsForContext(groups, topicId, nil)
 end
 
 return LocalRequirementPlanner

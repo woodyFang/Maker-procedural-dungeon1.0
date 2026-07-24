@@ -18,6 +18,16 @@ LayoutEditor.__index = LayoutEditor
 
 local function Clamp(v, lo, hi) return math.max(lo, math.min(hi, v)) end
 local function Inside(x, y, r) return r and x >= r.x and y >= r.y and x <= r.x + r.w and y <= r.y + r.h end
+local function PointInsideCurrentFloorRoom(editor, x, y)
+    for _, room in ipairs(editor.rooms or {}) do
+        if room.floor == editor.floor
+            and x >= room.cx - room.w * 0.5 and x <= room.cx + room.w * 0.5
+            and y >= room.cy - room.h * 0.5 and y <= room.cy + room.h * 0.5 then
+            return true
+        end
+    end
+    return false
+end
 local CopyRooms = EditorData.CopyRooms
 local CopyLink = EditorData.CopyLink
 local CopyPoint = RouteEditing.CopyPoint
@@ -33,12 +43,26 @@ local function RoundedRect(ctx, x, y, w, h, radius, color)
     Fill(ctx, color[1], color[2], color[3], color[4]); nvgFill(ctx)
 end
 
+local function DrawRoomNumber(vg, rect, index)
+    local label = string.format("#%d", index)
+    local widthLimit = math.max(1, rect.w - 6)
+    local fontSize = math.max(4, math.min(9, rect.h * 0.36, widthLimit / (#label * 0.62)))
+    nvgFontSize(vg, fontSize); Fill(vg, 236, 238, 243, 230)
+    local baseline = rect.y + math.min(math.max(1, rect.h - 1), math.max(fontSize + 1, rect.h * 0.42))
+    nvgText(vg, rect.x + 3, baseline, label, nil)
+end
+
 function LayoutEditor.new(eventObject, callbacks)
     local self = setmetatable({
         eventObject = eventObject, callbacks = callbacks or {}, visible = false, mode = "select",
         floor = 0, floorCount = 1, floorHeight = MultiFloor.FLOOR_HEIGHT,
         dungeonWidth = 1, dungeonHeight = 1, rooms = {}, links = {},
+        roomMinimumWidth = RoomEditing.DEFAULT_MINIMUM_SIZE,
+        roomMinimumHeight = RoomEditing.DEFAULT_MINIMUM_SIZE,
         generatedOffset = { x = 0, y = 0 },
+        editorWorldScale = 1,
+        editorSwapAxes = false,
+        editorCenterOffset = 0.5,
         selected = nil, selectedLink = nil, linkStart = nil, drag = nil, draw = nil,
         panel = nil, canvas = nil, roomRects = {}, buttons = {}, scale = 1, originX = 0, originY = 0,
         hoveredRoom = nil, hoveredLink = nil, hoveredGizmo = nil,
@@ -82,7 +106,12 @@ function LayoutEditor:SyncDungeon(dungeon, floor, roomGroups)
     self.floorCount = dungeon and dungeon.floorCount or self.floorCount
     self.dungeonWidth = dungeon and dungeon.width or self.dungeonWidth
     self.dungeonHeight = dungeon and dungeon.height or self.dungeonHeight
+    self.roomMinimumWidth, self.roomMinimumHeight = RoomEditing.ResolveMinimumSize(dungeon)
     self.generatedOffset = { x = 0, y = 0 }
+    self.editorWorldScale = math.max(0.001, tonumber(dungeon and dungeon.editorWorldScale) or 1)
+    self.editorSwapAxes = dungeon and dungeon.editorSwapAxes == true or false
+    self.editorCenterOffset = tonumber(dungeon and dungeon.editorCenterOffset)
+    if self.editorCenterOffset == nil then self.editorCenterOffset = 0.5 end
     self.floorHeight = MultiFloor.FLOOR_HEIGHT
     self.selected = self.rooms[selected] and selected or nil
     self.selectedLink = nil
@@ -176,6 +205,7 @@ function LayoutEditor:SyncGeneratedStairs(dungeon)
 end
 
 function LayoutEditor:Commit()
+    EditorData.ResolvePendingConnections(self.rooms, self.links)
     for i, room in ipairs(self.rooms) do room.id = i end
     if self.callbacks.onCommit then self.callbacks.onCommit(self:GetRooms(), self:GetLinks()) end
 end
@@ -346,11 +376,20 @@ function LayoutEditor:HitTolerance()
 end
 
 function LayoutEditor:HitLink(gridX, gridY)
+    -- Runtime A* routes include room endpoint cells. Room cells must win the
+    -- first click so an underlying corridor cannot steal room selection.
+    if PointInsideCurrentFloorRoom(self, gridX, gridY) then return nil end
     local best, tolerance = nil, self:HitTolerance()
     for linkIndex, link in ipairs(self.links) do
         local roomA, roomB = self.rooms[link.a], self.rooms[link.b]
         local route = nil
-        if roomA and roomB and roomA.floor ~= roomB.floor and link.connector
+        if link.runtimeGenerated then
+            local runtimeHit = EditorGizmos.HitRuntimeLink(link, self.floor, gridX, gridY, tolerance)
+            if runtimeHit and (not best or runtimeHit.distance < best.distance) then
+                runtimeHit.index = linkIndex
+                best = runtimeHit
+            end
+        elseif roomA and roomB and roomA.floor ~= roomB.floor and link.connector
             and (roomA.floor == self.floor or roomB.floor == self.floor) then
             local segments = StairEditing.VisualSegments(link.connector)
             route = {}
@@ -361,7 +400,7 @@ function LayoutEditor:HitLink(gridX, gridY)
         elseif roomA and roomB and roomA.floor == self.floor and roomB.floor == self.floor then
             route = self:DisplayLinkRoute(link)
         end
-        if route then
+        if route and not link.runtimeGenerated then
             local linkTolerance = math.max(tolerance, ((link.connector and link.connector.width) or link.width or 2) * 0.5)
             for segment = 1, #route - 1 do
                 local distance = DistanceToSegment(gridX, gridY, route[segment], route[segment + 1])
@@ -376,13 +415,14 @@ function LayoutEditor:HitLink(gridX, gridY)
 end
 
 function LayoutEditor:ResizeRoom(room, start, gridX, gridY, mode)
-    local resized = RoomEditing.Resize(start, { x = gridX, y = gridY }, mode)
+    local resized = RoomEditing.Resize(start, { x = gridX, y = gridY }, mode,
+        self.roomMinimumWidth, self.roomMinimumHeight)
     room.cx, room.cy, room.w, room.h = resized.cx, resized.cy, resized.w, resized.h
 end
 
 function LayoutEditor:AddBend()
     local link = self.links[self.selectedLink]
-    if not link or link.kind == "stairs" then return end
+    if not link or link.runtimeGenerated or link.kind == "stairs" then return end
     local route, bestSegment, bestLength = self:LinkRoute(link), nil, -1
     for segment = 1, #route - 1 do
         local dx, dy = route[segment + 1].x - route[segment].x, route[segment + 1].y - route[segment].y
@@ -447,7 +487,7 @@ end
 function LayoutEditor:DeleteSelected()
     if self.selectedLink then
         local link = self.links[self.selectedLink]
-        if link and link.kind == "stairs" then return self:DeleteSelectedStair() end
+        if link and link.kind == "stairs" and not link.runtimeGenerated then return self:DeleteSelectedStair() end
         table.remove(self.links, self.selectedLink)
         self.selectedLink = nil
         self:MarkDisconnectedRoomsSecret()
@@ -483,7 +523,7 @@ end
 
 function LayoutEditor:AdjustPathWidth(delta)
     local link = self.links[self.selectedLink]
-    if not link or link.kind == "stairs" then return end
+    if not link or link.runtimeGenerated or link.kind == "stairs" then return end
     local width = Clamp((link.width or 2) + delta, 1, 6)
     if width ~= link.width then link.width, link.isManual = width, true; self:Commit() end
 end
@@ -556,7 +596,11 @@ function LayoutEditor:ContextItems(kind, context)
         }
     end
     if kind == "stair" then
-        local spec = self.links[context.link] and self.links[context.link].stairSpec
+        local selectedLink = self.links[context.link]
+        if selectedLink and selectedLink.runtimeGenerated then
+            return { { action = "deleteLink", label = "删除路径", danger = true } }
+        end
+        local spec = selectedLink and selectedLink.stairSpec
         return {
             { action = "rotateStair", label = "旋转楼梯 90°" },
             { action = "stairStyleL", label = "切换为 L 型楼梯" },
@@ -566,6 +610,10 @@ function LayoutEditor:ContextItems(kind, context)
         }
     end
     if kind == "path" then
+        local selectedLink = self.links[context.link]
+        if selectedLink and selectedLink.runtimeGenerated then
+            return { { action = "deleteLink", label = "删除路径", danger = true } }
+        end
         return {
             { action = "addBendHere", label = "在此添加折点" },
             { action = "straightenLink", label = "正交拉直路径" },
@@ -582,8 +630,8 @@ function LayoutEditor:OpenContextMenu(logicalX, logicalY)
     if not self.canvas or not Inside(logicalX, logicalY, self.canvas) then return end
     local gridX, gridY = self.editorViewport:ScreenToGrid(logicalX, logicalY)
     local handle = EditorGizmos.Hit(self.gizmoDescriptors, logicalX, logicalY)
-    local path = self:HitLink(gridX, gridY)
     local hit = self:HitRoom({ x = gridX, y = 0, z = gridY })
+    local path = not hit and self:HitLink(gridX, gridY) or nil
     local kind, context
     if handle and handle.kind ~= "roomResize" and self.selectedLink then
         local link = self.links[self.selectedLink]
@@ -855,10 +903,7 @@ function LayoutEditor:LegacyRender()
         RoundedRect(self.vg, rect.x, rect.y, rect.w, rect.h, 3, color)
         nvgBeginPath(self.vg); nvgRoundedRect(self.vg, rect.x, rect.y, rect.w, rect.h, 3)
         Stroke(self.vg, selected and 255 or 114, selected and 215 or 132, selected and 157 or 151, 255, selected and 2 or 1); nvgStroke(self.vg)
-        if rect.w > 38 and rect.h > 20 then
-            nvgFontSize(self.vg, 9); Fill(self.vg, 236, 238, 243, 230)
-            nvgText(self.vg, rect.x + 5, rect.y + 11, string.format("#%d%s", i, room.locked and "  🔒" or ""), nil)
-        end
+        DrawRoomNumber(self.vg, rect, i)
     end
     if self.draw then
         local x, y = math.min(self.draw.x, self.draw.ex), math.min(self.draw.y, self.draw.ey)
@@ -919,7 +964,9 @@ function LayoutEditor:Render()
 
     local selectedLink = self.links[self.selectedLink]
     bx, by = px + 18, py + 103
-    if selectedLink and selectedLink.kind == "stairs" then
+    if selectedLink and selectedLink.runtimeGenerated then
+        Button("deletePath", "删除路径", bx, by, 78, false)
+    elseif selectedLink and selectedLink.kind == "stairs" then
         local spec = selectedLink.stairSpec or {}
         local style = spec.previewStyle or spec.style or "l-turn"
         bx = Button("stairStyleL", "L 型", bx, by, 52, style == "l-turn")
@@ -980,12 +1027,7 @@ function LayoutEditor:Render()
             nvgBeginPath(self.vg); nvgRoundedRect(self.vg, rect.x, rect.y, rect.w, rect.h, 3)
             Stroke(self.vg, selected and 255 or 114, selected and 215 or 132,
                 selected and 157 or 151, 255, selected and 2 or 1); nvgStroke(self.vg)
-            if rect.w > 38 and rect.h > 20 then
-                nvgFontSize(self.vg, 9); Fill(self.vg, 236, 238, 243, 230)
-                nvgText(self.vg, rect.x + 5, rect.y + 11,
-                    string.format("#%d%s%s", index, room.locked and " [L]" or "",
-                        room.roleHint and (" " .. room.roleHint) or ""), nil)
-            end
+            DrawRoomNumber(self.vg, rect, index)
         end
     end
     EditorGizmos.RenderForeground(self, self.vg, self.editorViewport, self.gizmoDescriptors)
@@ -1055,7 +1097,8 @@ function LayoutEditor:Update(_)
     end
     if input:GetKeyPress(KEY_DELETE) or input:GetKeyPress(KEY_BACKSPACE) then
         local link = self.links[self.selectedLink]
-        if link and link.kind == "stairs" then self:DeleteSelectedStair()
+        if link and link.runtimeGenerated then self:DeleteSelected()
+        elseif link and link.kind == "stairs" then self:DeleteSelectedStair()
         elseif self.selectedLink or self.selected then self:DeleteSelected() end
         return
     end
@@ -1089,7 +1132,7 @@ function LayoutEditor:Update(_)
             local handle = self.hoveredGizmo
             local roomHandle = handle and handle.kind == "roomResize" and handle.mode or nil
             local linkHandle = handle and handle.kind ~= "roomResize" and handle or nil
-            local path = not roomHandle and not linkHandle and self:HitLink(gridX, gridY) or nil
+            local path = not hit and not roomHandle and not linkHandle and self:HitLink(gridX, gridY) or nil
             if roomHandle and self.selected then
                 local room = self.rooms[self.selected]
                 if not room.locked then
@@ -1117,7 +1160,9 @@ function LayoutEditor:Update(_)
                 end
             elseif path then
                 self.selected, self.selectedLink = nil, path.index; self:NotifySelection()
-                if path.stair then
+                if path.runtime then
+                    self.drag = nil
+                elseif path.stair then
                     local stair = self:CaptureStairDrag(path.index)
                     local anchor = stair and (stair.spec.previewAnchor or stair.spec.anchor or stair.connector.lower)
                     if stair and anchor then
@@ -1129,9 +1174,10 @@ function LayoutEditor:Update(_)
                         startX = gridX, startY = gridY, pending = true }
                 end
             elseif hit then
+                local wasSelected = self.selected == hit and self.selectedLink == nil
                 self.selected, self.selectedLink = hit, nil; self:NotifySelection()
                 local room = self.rooms[hit]
-                if not room.locked then
+                if wasSelected and not room.locked then
                     local stairEdit = self:CaptureRoomStairEdit(hit)
                     self.drag = { kind = "roomMove", index = hit, startX = gridX, startY = gridY,
                         start = { cx = room.cx, cy = room.cy },
